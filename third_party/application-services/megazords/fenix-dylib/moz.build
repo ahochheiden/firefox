@@ -12,7 +12,7 @@ UNIFIED_SOURCES += [
 
 # This name confusion is a reflection of the 2 megazord parts. It should be
 # fixed after we land in m-c.
-if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android" or CONFIG["MOZ_LIBMEGAZORD_ARTIFACTS"]:
     SharedLibrary("megazord-so")
 else:
     SharedLibrary("megazord-so", output_category="uniffi-target")

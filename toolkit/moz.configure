@@ -4530,3 +4530,18 @@ def enable_appservices_in_tree(value):
 
 
 set_config("MOZ_APPSERVICES_IN_TREE", enable_appservices_in_tree)
+
+
+option(
+    env="MOZ_LIBMEGAZORD_ARTIFACTS",
+    help="Build libmegazord.so in the default build so it can be packaged as an artifact",
+)
+
+
+@depends("MOZ_LIBMEGAZORD_ARTIFACTS")
+def libmegazord_artifacts(value):
+    if value:
+        return True
+
+
+set_config("MOZ_LIBMEGAZORD_ARTIFACTS", libmegazord_artifacts)

@@ -66,6 +66,10 @@ TALOS_PACKAGE = $(PKG_BASENAME).talos.tests.tar.zst
 AWSY_PACKAGE = $(PKG_BASENAME).awsy.tests.tar.zst
 GTEST_PACKAGE = $(PKG_BASENAME).gtest.tests.tar.zst
 
+ifdef MOZ_APPSERVICES_IN_TREE
+# `libmegazord.so` artifacts: for use in Android unit tests run on host.
+LIBMEGAZORD_SO_ARTIFACTS_ARCHIVE_BASENAME = $(PKG_BASENAME).libmegazord_so_artifacts
+endif
 # `.xpt` artifacts: for use in artifact builds.
 XPT_ARTIFACTS_ARCHIVE_BASENAME = $(PKG_BASENAME).xpt_artifacts
 ifeq (Darwin, $(OS_ARCH))

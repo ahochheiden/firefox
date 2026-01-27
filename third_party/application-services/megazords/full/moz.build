@@ -13,7 +13,7 @@ UNIFIED_SOURCES += [
 megazord_rust_features = ["mozbuild-rustlib"]
 
 # This is the name of the .a file created.
-if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android" or CONFIG["MOZ_LIBMEGAZORD_ARTIFACTS"]:
     RustLibrary("megazord", features=megazord_rust_features)
 else:
     RustLibrary(
