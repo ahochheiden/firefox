@@ -4518,12 +4518,12 @@ with only_when(target_is_windows):
 
 
 option(
-    "--enable-appservices-in-tree",
-    help="Enables building from an in-tree app-services",
+    "--disable-appservices-in-tree",
+    help="{Enable|Disable} building from an in-tree app-services",
 )
 
 
-@depends("--enable-appservices-in-tree")
+@depends("--disable-appservices-in-tree")
 def enable_appservices_in_tree(value):
     if value:
         return True

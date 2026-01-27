@@ -47,7 +47,6 @@ def _ensure_uniffi_mozconfig(uniffi_objdir):
     contents = textwrap.dedent(
         f"""\
         ac_add_options --enable-application=browser
-        ac_add_options --enable-appservices-in-tree
 
         mk_add_options MOZ_OBJDIR={uniffi_objdir}
         """
