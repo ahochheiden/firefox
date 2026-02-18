@@ -230,29 +230,37 @@ abstract class DependenciesPlugin : Plugin<Settings> {
     }
 }
 
+fun getVersionNumber(): String {
+    // On try, relax version pin to allow for --use-existing-task.
+    if ("https://hg.mozilla.org/try" == System.getenv("GECKO_HEAD_REPOSITORY")) {
+        return "+"
+    }
+    return ApplicationServicesConfig.version
+}
+
 // Synchronized dependencies used by (some) modules
 @Suppress("Unused", "MaxLineLength")
 object ComponentsDependencies {
-    val mozilla_appservices_ads_client = "${ApplicationServicesConfig.groupId}:ads-client:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_fxaclient = "${ApplicationServicesConfig.groupId}:fxaclient:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_nimbus = "${ApplicationServicesConfig.groupId}:nimbus:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_autofill = "${ApplicationServicesConfig.groupId}:autofill:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_logins = "${ApplicationServicesConfig.groupId}:logins:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_merino = "${ApplicationServicesConfig.groupId}:merino:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_places = "${ApplicationServicesConfig.groupId}:places:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_syncmanager = "${ApplicationServicesConfig.groupId}:syncmanager:${ApplicationServicesConfig.version}"
-    val mozilla_remote_settings = "${ApplicationServicesConfig.groupId}:remotesettings:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_push = "${ApplicationServicesConfig.groupId}:push:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_search = "${ApplicationServicesConfig.groupId}:search:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_tabs = "${ApplicationServicesConfig.groupId}:tabs:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_suggest = "${ApplicationServicesConfig.groupId}:suggest:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_httpconfig = "${ApplicationServicesConfig.groupId}:httpconfig:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_init_rust_components = "${ApplicationServicesConfig.groupId}:init_rust_components:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_full_megazord = "${ApplicationServicesConfig.groupId}:full-megazord:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_full_megazord_libsForTests = "${ApplicationServicesConfig.groupId}:full-megazord-libsForTests:${ApplicationServicesConfig.version}"
+    val mozilla_appservices_ads_client = "${ApplicationServicesConfig.groupId}:ads-client:${getVersionNumber()}"
+    val mozilla_appservices_fxaclient = "${ApplicationServicesConfig.groupId}:fxaclient:${getVersionNumber()}"
+    val mozilla_appservices_nimbus = "${ApplicationServicesConfig.groupId}:nimbus:${getVersionNumber()}"
+    val mozilla_appservices_autofill = "${ApplicationServicesConfig.groupId}:autofill:${getVersionNumber()}"
+    val mozilla_appservices_logins = "${ApplicationServicesConfig.groupId}:logins:${getVersionNumber()}"
+    val mozilla_appservices_merino = "${ApplicationServicesConfig.groupId}:merino:${getVersionNumber()}"
+    val mozilla_appservices_places = "${ApplicationServicesConfig.groupId}:places:${getVersionNumber()}"
+    val mozilla_appservices_syncmanager = "${ApplicationServicesConfig.groupId}:syncmanager:${getVersionNumber()}"
+    val mozilla_remote_settings = "${ApplicationServicesConfig.groupId}:remotesettings:${getVersionNumber()}"
+    val mozilla_appservices_push = "${ApplicationServicesConfig.groupId}:push:${getVersionNumber()}"
+    val mozilla_appservices_search = "${ApplicationServicesConfig.groupId}:search:${getVersionNumber()}"
+    val mozilla_appservices_tabs = "${ApplicationServicesConfig.groupId}:tabs:${getVersionNumber()}"
+    val mozilla_appservices_suggest = "${ApplicationServicesConfig.groupId}:suggest:${getVersionNumber()}"
+    val mozilla_appservices_httpconfig = "${ApplicationServicesConfig.groupId}:httpconfig:${getVersionNumber()}"
+    val mozilla_appservices_init_rust_components = "${ApplicationServicesConfig.groupId}:init_rust_components:${getVersionNumber()}"
+    val mozilla_appservices_full_megazord = "${ApplicationServicesConfig.groupId}:full-megazord:${getVersionNumber()}"
+    val mozilla_appservices_full_megazord_libsForTests = "${ApplicationServicesConfig.groupId}:full-megazord-libsForTests:${getVersionNumber()}"
 
-    val mozilla_appservices_errorsupport = "${ApplicationServicesConfig.groupId}:errorsupport:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_rust_log_forwarder = "${ApplicationServicesConfig.groupId}:rust-log-forwarder:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_sync15 = "${ApplicationServicesConfig.groupId}:sync15:${ApplicationServicesConfig.version}"
-    val mozilla_appservices_fxrelay = "${ApplicationServicesConfig.groupId}:relay:${ApplicationServicesConfig.version}"
+    val mozilla_appservices_errorsupport = "${ApplicationServicesConfig.groupId}:errorsupport:${getVersionNumber()}"
+    val mozilla_appservices_rust_log_forwarder = "${ApplicationServicesConfig.groupId}:rust-log-forwarder:${getVersionNumber()}"
+    val mozilla_appservices_sync15 = "${ApplicationServicesConfig.groupId}:sync15:${getVersionNumber()}"
+    val mozilla_appservices_fxrelay = "${ApplicationServicesConfig.groupId}:relay:${getVersionNumber()}"
 }
