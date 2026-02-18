@@ -273,6 +273,7 @@ linux64-android-gradle-dependencies:
             - 'mobile/android/config/mozconfigs/common*'
             - 'mobile/android/gradle.configure'
             - 'taskcluster/scripts/misc/android-gradle-dependencies/**'
+            - 'third_party/application-services/**/*.gradle'
         toolchain-artifact: public/build/android-gradle-dependencies.tar.zst
         toolchain-alias: android-gradle-dependencies
     fetches:
@@ -311,6 +312,7 @@ linux64-android-gradle-dependencies-lite:
             - 'mobile/android/config/mozconfigs/common*'
             - 'mobile/android/gradle.configure'
             - 'taskcluster/scripts/misc/android-gradle-dependencies/**'
+            - 'third_party/application-services/**/*.gradle'
         toolchain-artifact: public/build/android-gradle-dependencies.tar.zst
         toolchain-alias: android-gradle-dependencies-lite
     fetches:
