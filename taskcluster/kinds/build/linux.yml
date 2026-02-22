@@ -19,6 +19,7 @@ linux64/opt:
     worker:
         max-run-time: 7200
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             # bug 1690154 - enable full symbols on all branches, but only
             # upload them on the official set. In conjunction with
@@ -1190,6 +1191,7 @@ linux64-shippable/opt:
     worker:
         max-run-time: 9000
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             # bug 1690154 - enable full symbols on all branches, but only
             # upload them on the official set. In conjunction with
@@ -1533,6 +1535,8 @@ linux64-aarch64/opt:
         symbol: B
     worker:
         max-run-time: 7200
+        env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
     run:
         using: mozharness
         actions: [get-secrets, build]
@@ -1626,6 +1630,7 @@ linux64-aarch64-shippable/opt:
     worker:
         max-run-time: 9000
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
             # bug 1690154 - enable full symbols on all branches, but only
             # upload them on the official set. In conjunction with

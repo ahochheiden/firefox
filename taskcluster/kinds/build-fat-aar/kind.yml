@@ -37,6 +37,13 @@ task-defaults:
             MOZ_ANDROID_FAT_AAR_ARMEABI_V7A: "/builds/worker/fetches/armeabi-v7a/target.maven.zip"
             MOZ_ANDROID_FAT_AAR_ARM64_V8A: "/builds/worker/fetches/arm64-v8a/target.maven.zip"
             MOZ_ANDROID_FAT_AAR_X86_64: "/builds/worker/fetches/x86_64/target.maven.zip"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_ARCHITECTURES: "linux-x86-64,linux-aarch64,darwin-x86-64,darwin-aarch64,win32-x86-64,win32-aarch64"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_LINUX_X86_64: "/builds/worker/fetches/linux-x86-64/target.libmegazord_so_artifacts.zip"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_LINUX_AARCH64: "/builds/worker/fetches/linux-aarch64/target.libmegazord_so_artifacts.zip"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_DARWIN_X86_64: "/builds/worker/fetches/darwin-x86-64/target.libmegazord_so_artifacts.zip"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_DARWIN_AARCH64: "/builds/worker/fetches/darwin-aarch64/target.libmegazord_so_artifacts.zip"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_WIN32_X86_64: "/builds/worker/fetches/win32-x86-64/target.libmegazord_so_artifacts.zip"
+            MOZ_ANDROID_FAT_AAR_DESKTOP_WIN32_AARCH64: "/builds/worker/fetches/win32-aarch64/target.libmegazord_so_artifacts.zip"
         artifacts:
             - name: public/build/maven
               path: /builds/worker/workspace/obj-build/gradle/maven/
@@ -126,6 +133,30 @@ task-defaults:
             - artifact: target.maven.zip
               dest: x86_64
               extract: false
+        linux-x86-64:
+            - artifact: target.libmegazord_so_artifacts.zip
+              dest: linux-x86-64
+              extract: false
+        linux-aarch64:
+            - artifact: target.libmegazord_so_artifacts.zip
+              dest: linux-aarch64
+              extract: false
+        darwin-x86-64:
+            - artifact: target.libmegazord_so_artifacts.zip
+              dest: darwin-x86-64
+              extract: false
+        darwin-aarch64:
+            - artifact: target.libmegazord_so_artifacts.zip
+              dest: darwin-aarch64
+              extract: false
+        win32-x86-64:
+            - artifact: target.libmegazord_so_artifacts.zip
+              dest: win32-x86-64
+              extract: false
+        win32-aarch64:
+            - artifact: target.libmegazord_so_artifacts.zip
+              dest: win32-aarch64
+              extract: false
 
 tasks:
     android-geckoview-fat-aar-shippable/opt:
@@ -148,6 +179,12 @@ tasks:
             x86_64: build-android-x86_64-shippable/opt
             armeabi-v7a: build-android-arm-shippable/opt
             arm64-v8a: build-android-aarch64-shippable/opt
+            linux-x86-64: build-linux64-shippable/opt
+            linux-aarch64: build-linux64-aarch64-shippable/opt
+            darwin-x86-64: build-macosx64-shippable/opt
+            darwin-aarch64: build-macosx64-aarch64-shippable/opt
+            win32-x86-64: build-win64-shippable/opt
+            win32-aarch64: build-win64-aarch64-shippable/opt
         worker-type: b-linux-docker-xlarge-amd
         worker:
             env:
@@ -185,6 +222,12 @@ tasks:
             x86_64: build-android-x86_64-shippable-lite/opt
             armeabi-v7a: build-android-arm-shippable-lite/opt
             arm64-v8a: build-android-aarch64-shippable-lite/opt
+            linux-x86-64: build-linux64-shippable/opt
+            linux-aarch64: build-linux64-aarch64-shippable/opt
+            darwin-x86-64: build-macosx64-shippable/opt
+            darwin-aarch64: build-macosx64-aarch64-shippable/opt
+            win32-x86-64: build-win64-shippable/opt
+            win32-aarch64: build-win64-aarch64-shippable/opt
         worker-type: b-linux-docker-xlarge-amd
         worker:
             env:
@@ -216,6 +259,12 @@ tasks:
             x86_64: build-android-x86_64/opt
             armeabi-v7a: build-android-arm/opt
             arm64-v8a: build-android-aarch64/opt
+            linux-x86-64: build-linux64/opt
+            linux-aarch64: build-linux64-aarch64/opt
+            darwin-x86-64: build-macosx64/opt
+            darwin-aarch64: build-macosx64-aarch64/opt
+            win32-x86-64: build-win64/opt
+            win32-aarch64: build-win64-aarch64/opt
         worker:
             env:
                 PERFHERDER_EXTRA_OPTIONS: android-geckoview-fat-aar-opt

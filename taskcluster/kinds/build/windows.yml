@@ -381,6 +381,7 @@ win64/opt:
     worker:
         max-run-time: 7200
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
         options: [append-env-variables-from-configs]
@@ -548,6 +549,7 @@ win64-shippable/opt:
     worker:
         max-run-time: 10800
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
         actions: [get-secrets, build]
@@ -1442,6 +1444,7 @@ win64-aarch64/opt:
     worker:
         max-run-time: 7200
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             PERFHERDER_EXTRA_OPTIONS: aarch64
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
@@ -1500,6 +1503,7 @@ win64-aarch64-shippable/opt:
     worker:
         max-run-time: 10800
         env:
+            MOZ_LIBMEGAZORD_ARTIFACTS: "1"
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
     run:
         actions: [get-secrets, build]
