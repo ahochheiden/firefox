@@ -33,6 +33,10 @@
           ],
         }],
       ],
+      'variables': {
+        # Build mozpkix as a real static library so it can be linked statically and used as a build dependency.
+        'no_expand_libs': 1,
+      },
     },
     {
       'target_name': 'mozpkix-testlib',
