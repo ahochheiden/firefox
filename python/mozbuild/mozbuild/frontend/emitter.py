@@ -633,11 +633,13 @@ class TreeMetadataEmitter(LoggingMixin):
                 "Can't determine a crate-type for %s from Cargo.toml" % libname, context
             )
 
-        crate_type = crate_type[0]
-        if crate_type != "staticlib":
+        if "staticlib" not in crate_type:
             raise SandboxValidationError(
-                "crate-type %s is not permitted for %s" % (crate_type, libname), context
+                f"crate-type {crate_type} for {libname} must include 'staticlib'",
+                context,
             )
+
+        crate_type = "staticlib"
 
         dependencies = set(config.get("dependencies", {}).keys())
 

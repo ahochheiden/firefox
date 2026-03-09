@@ -20,3 +20,7 @@ MOZ_SRC_FILES += [
 
 with Files("**"):
     BUG_COMPONENT = ("Toolkit", "UniFFI Bindings")
+
+RustLibrary(
+    "gkrust-uniffi-components", features=["mozbuild"], output_category="uniffi-target"
+)

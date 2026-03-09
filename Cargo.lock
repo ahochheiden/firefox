@@ -3031,6 +3031,8 @@ dependencies = [
  "filter_adult",
  "init_rust_components",
  "logins",
+ "mozilla-central-workspace-hack",
+ "rc_crypto",
  "relevancy",
  "search",
  "suggest",
@@ -8416,6 +8418,7 @@ dependencies = [
  "extend",
  "heck",
  "indexmap",
+ "mozilla-central-workspace-hack",
  "serde",
  "textwrap",
  "toml 0.5.999",
@@ -8428,6 +8431,7 @@ dependencies = [
 name = "uniffi-bindgen-gecko-js-test-fixtures"
 version = "0.29.0"
 dependencies = [
+ "mozilla-central-workspace-hack",
  "uniffi_bindings_tests",
  "uniffi_bindings_tests_collision",
  "uniffi_bindings_tests_external_types",

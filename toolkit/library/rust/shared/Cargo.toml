@@ -134,7 +134,7 @@ gecko-trace = { path = "../../../components/gecko-trace" }
 osclientcerts = { path = "../../../../security/manager/ssl/osclientcerts" }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-gkrust-uniffi-components = { path = "../../../components/uniffi-bindgen-gecko-js/components/", features = ["xpcom"] }
+gkrust-uniffi-components = { path = "../../../components/uniffi-bindgen-gecko-js/components/", features = ["xpcom", "mozbuild"] }
 uniffi-bindgen-gecko-js-test-fixtures = { path = "../../../components/uniffi-bindgen-gecko-js/test-fixtures/", optional = true }
 viaduct = "0.1"
 viaduct-necko = { path = "../../../../services/application-services/components/viaduct-necko" }
