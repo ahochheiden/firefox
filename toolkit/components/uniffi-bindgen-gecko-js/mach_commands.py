@@ -14,6 +14,8 @@ import mozpack.path as mozpath
 from mach.decorators import Command, CommandArgument, SubCommand
 from mozbuild.backend.configenvironment import ConfigEnvironment
 from mozbuild.util import get_rust_build_kind
+from mozpack.copier import FileCopier
+from mozpack.files import FileFinder
 
 CPP_PATH = "toolkit/components/uniffi-js/GeneratedScaffolding.cpp"
 JS_DIR = "toolkit/components/uniffi-bindgen-gecko-js/components/generated"
@@ -22,7 +24,14 @@ DOCS_PATH = "docs/rust-components/api/js/"
 
 
 UniffiTargets = namedtuple(
-    "UniffiTargets", ["binary_path", "library_path", "fixtures_library_path"]
+    "UniffiTargets",
+    [
+        "binary_path",
+        "library_path",
+        "fixtures_library_path",
+        "embedded_uniffi_bindgen_path",
+        "megazord_path",
+    ],
 )
 
 
@@ -114,10 +123,114 @@ def build_uniffi_targets(command_context):
         f"{lib_prefix}uniffi_bindgen_gecko_js_test_fixtures.{lib_suffix}",
     )
 
+    embedded_uniffi_bindgen_path = mozpath.join(
+        uniffi_objdir,
+        "dist",
+        "host",
+        "bin",
+        f"embedded-uniffi-bindgen{substs['HOST_BIN_SUFFIX']}",
+    )
+
+    if substs.get("OS_ARCH") == "WINNT":
+        # On Windows the C-sourced megazord cdylib doesn't export the
+        # `UNIFFI_META_*` statics from the Rust staticlib it consumes
+        # (MSVC link.exe has no equivalent of Rust's cdylib export
+        # generation for `pub static` items brought in from a
+        # dependency). Read the megazord staticlib directly; its COFF
+        # archive preserves every `UNIFFI_META_*` symbol.
+        megazord_build_kind = get_rust_build_kind(substs, megazord=True)
+        megazord_path = mozpath.join(
+            uniffi_objdir,
+            substs["RUST_TARGET"],
+            megazord_build_kind,
+            f"{lib_prefix}megazord.{lib_suffix}",
+        )
+    else:
+        # Like "$uniffi_objdir/dist/bin/libmegazord.dylib".
+        dll_prefix = substs["DLL_PREFIX"]
+        dll_suffix = substs["DLL_SUFFIX"]
+        megazord_path = mozpath.join(
+            uniffi_objdir,
+            "dist",
+            "bin",
+            f"{dll_prefix}megazord{dll_suffix}",
+        )
+
     return UniffiTargets(
         binary_path=binary_path,
         library_path=library_path,
         fixtures_library_path=fixtures_library_path,
+        embedded_uniffi_bindgen_path=embedded_uniffi_bindgen_path,
+        megazord_path=megazord_path,
+    )
+
+
+COMPONENT_MAPPING = {
+    "mozilla/appservices/adsclient": "components/ads-client",
+    "mozilla/appservices/autofill": "components/autofill",
+    "mozilla/appservices/crashtest": "components/crashtest",
+    "mozilla/appservices/errorsupport": "components/errorsupport",
+    "mozilla/appservices/fxaclient": "components/fxaclient",
+    "mozilla/appservices/init_rust_components": "components/init_rust_components",
+    "mozilla/appservices/logins": "components/logins",
+    "mozilla/appservices/merino": "components/merino",
+    "mozilla/appservices/places": "components/places",
+    "mozilla/appservices/push": "components/push",
+    "mozilla/appservices/relay": "components/relay",
+    "mozilla/appservices/remotesettings": "components/remotesettings",
+    "mozilla/appservices/remotetabs": "components/tabs",
+    "mozilla/appservices/rust_log_forwarder": "components/rust-log-forwarder",
+    "mozilla/appservices/search": "components/search",
+    "mozilla/appservices/suggest": "components/suggest",
+    "mozilla/appservices/sync15": "components/sync15",
+    "mozilla/appservices/syncmanager": "components/syncmanager",
+    "mozilla/appservices/tracing": "components/tracing",
+    "mozilla/appservices/viaduct": "components/httpconfig",
+    "org/mozilla/experiments/nimbus": "components/nimbus",
+}
+
+
+def generate_android(command_context, uniffi_targets):
+    uniffi_objdir = _uniffi_objdir(command_context.topsrcdir)
+    android_objdir = mozpath.join(
+        uniffi_objdir, "toolkit/components/uniffi-bindgen-gecko-js/android"
+    )
+
+    cmdline = [
+        uniffi_targets.embedded_uniffi_bindgen_path,
+        "generate",
+        "--no-format",
+        "--language",
+        "kotlin",
+        "--out-dir",
+        android_objdir,
+        uniffi_targets.megazord_path,
+    ]
+    subprocess.check_call(cmdline, cwd=command_context.topsrcdir)
+
+    # Copy generated Kotlin files to app-services Android Gradle project structure.
+
+    copier = FileCopier()
+    for source_dir, target_component in COMPONENT_MAPPING.items():
+        source_base = mozpath.join(android_objdir, source_dir)
+        if not os.path.isdir(source_base):
+            raise Exception(
+                f"COMPONENT_MAPPING entry '{source_dir}' has no generated bindings "
+                f"at '{source_base}'. The mapping is out of sync with the megazord."
+            )
+        target_base = mozpath.join(
+            target_component,
+            "android/src/main/java",
+            source_dir,
+        )
+        for p, f in FileFinder(source_base).find("**"):
+            copier.add(mozpath.join(target_base, p), f)
+
+    copier.copy(
+        mozpath.join(
+            command_context.topsrcdir,
+            "toolkit/components/uniffi-bindgen-gecko-js/android",
+        ),
     )
 
 
@@ -157,6 +270,9 @@ def generate_command(command_context):
         DOCS_PATH,
     ]
     subprocess.check_call(cmdline, cwd=command_context.topsrcdir)
+
+    generate_android(command_context, uniffi_targets)
+
     return 0
 
 
