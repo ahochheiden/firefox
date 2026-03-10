@@ -24,3 +24,8 @@ with Files("**"):
 RustLibrary(
     "gkrust-uniffi-components", features=["mozbuild"], output_category="uniffi-target"
 )
+
+if CONFIG["MOZ_APPSERVICES_IN_TREE"]:
+    USE_LIBS += [
+        "megazord-so",
+    ]

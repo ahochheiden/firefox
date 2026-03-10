@@ -647,7 +647,8 @@ class RecursiveMakeBackend(MakeBackend):
         elif isinstance(obj, SharedLibrary):
             self._process_shared_library(obj, backend_file)
             self._process_linked_libraries(obj, backend_file)
-            self._no_skip["syms"].add(backend_file.relobjdir)
+            if not obj.output_category:
+                self._no_skip["syms"].add(backend_file.relobjdir)
 
         elif isinstance(obj, StaticLibrary):
             self._process_static_library(obj, backend_file)
@@ -1494,8 +1495,29 @@ class RecursiveMakeBackend(MakeBackend):
             )
 
     def _process_non_default_target(self, libdef, target_name, backend_file):
-        backend_file.write("%s:: %s\n" % (libdef.output_category, target_name))
-        backend_file.write("MOZBUILD_NON_DEFAULT_TARGETS += %s\n" % target_name)
+        backend_file.write(f"{libdef.output_category}:: {target_name}\n")
+        backend_file.write(f"MOZBUILD_NON_DEFAULT_TARGETS += {target_name}\n")
+        # A category member's USE_LIBS dependencies normally get built when
+        # something (libxul or another consumer) links the member. When the
+        # category is built on its own (e.g. via `./mach uniffi generate`),
+        # nothing links it, so wire each dependency into the tier directly.
+        if isinstance(libdef, StaticLibrary):
+            for dep in libdef.linked_libraries:
+                # External libraries are prebuilt, so there is nothing to build.
+                if isinstance(dep, ExternalLibrary):
+                    continue
+                # Depend on each dependency's built artifact: a shared
+                # library's output file, or the archive a static or rust
+                # library produces.
+                dep_path = (
+                    dep.output_path
+                    if isinstance(dep, SharedLibrary)
+                    else dep.import_path
+                )
+                backend_file.write(
+                    f"{libdef.output_category}:: "
+                    f"{self._pretty_path(dep_path, backend_file)}\n"
+                )
 
     def _process_shared_library(self, libdef, backend_file):
         backend_file.write_once("LIBRARY_NAME := %s\n" % libdef.basename)

@@ -1532,6 +1532,24 @@ class TestRecursiveMakeBackend(BackendTester):
             root_content = fh.read()
         self.assertNotIn("generated.plist:", root_content)
 
+    def test_shared_library_output_category(self):
+        """SharedLibrary with output_category should be excluded from
+        syms_targets, since the default %/syms: %/target static pattern in
+        recurse.mk doesn't apply to non-default tier libs."""
+        env = self._consume("shared-library-output-category", RecursiveMakeBackend)
+
+        root_path = mozpath.join(env.topobjdir, "root.mk")
+        with open(root_path) as fh:
+            content = fh.read()
+
+        syms_line = next(
+            (l for l in content.splitlines() if l.startswith("syms_targets :=")),
+            "",
+        )
+
+        self.assertIn("without-output-category/syms", syms_line)
+        self.assertNotIn("with-output-category/syms", syms_line)
+
     def test_shared_lib_paths(self):
         """SHARED_LIBRARYs with various moz.build settings that change the destination should
         produce the expected paths in backend.mk."""
