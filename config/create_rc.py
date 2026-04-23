@@ -234,6 +234,14 @@ def generate_module_rc():
     )
     parser.add_argument("--include", help="Included resources")
     parser.add_argument("--dep-file", help="Path to the dependency file")
+    parser.add_argument(
+        "--srcdir",
+        help="Source directory for module.ver / <binary>.manifest lookup. "
+        "Defaults to the directory derived from cwd relative to topobjdir.",
+    )
+    parser.add_argument(
+        "-o", "--output", help="Output .rc path (default: <binary>.rc in cwd)"
+    )
     args = parser.parse_args()
 
     binary = args.binary
@@ -270,8 +278,11 @@ def generate_module_rc():
         "MOZ_APP_WINVERSION": app_winversion,
     }
 
-    relobjdir = os.path.relpath(".", buildconfig.topobjdir)
-    srcdir = os.path.join(buildconfig.topsrcdir, relobjdir)
+    if args.srcdir:
+        srcdir = args.srcdir
+    else:
+        relobjdir = os.path.relpath(".", buildconfig.topobjdir)
+        srcdir = os.path.join(buildconfig.topsrcdir, relobjdir)
     module_ver = os.path.join(srcdir, "module.ver")
     if os.path.exists(module_ver):
         deps.add(module_ver)
@@ -320,7 +331,8 @@ def generate_module_rc():
             extra_deps.add(manifest_path)
 
     target = binary or "module"
-    with open(f"{target}.rc", "w", encoding="latin1") as fh:
+    output_path = args.output or f"{target}.rc"
+    with open(output_path, "w", encoding="latin1") as fh:
         fh.write(data)
 
     if dep_file is not None and extra_deps:
@@ -328,7 +340,10 @@ def generate_module_rc():
         os.makedirs(dep_dirname, exist_ok=True)
 
         mk = Makefile()
-        rule = mk.create_rule([target, f"{target}.rc"])
+        if args.output:
+            rule = mk.create_rule([output_path])
+        else:
+            rule = mk.create_rule([target, f"{target}.rc"])
         rule.add_dependencies(sorted(extra_deps))
         with open(dep_file, "w") as dep_fd:
             mk.dump(dep_fd)

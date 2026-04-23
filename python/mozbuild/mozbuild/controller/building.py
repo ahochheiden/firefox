@@ -18,6 +18,7 @@ from datetime import datetime
 from itertools import dropwhile, islice, takewhile
 from pathlib import Path
 from textwrap import TextWrapper
+from typing import Optional, Protocol
 
 from mach.logging import BUILD_ERROR, SUPPRESSED_WARNING, THIRD_PARTY_WARNING
 from mach.site import CommandSiteManager
@@ -69,6 +70,7 @@ RE_BUILD_OUTPUT = re.compile(
     |(?P<warning_summary>^\d+\s+(?:compiler\s+)?warnings?\s+(?:generated|present)\.)
     |(?P<error_summary>^\d+\s+errors?\s+generated\.)
     |(?P<python_traceback>^Traceback\ \(most\ recent\ call\ last\):)
+    |(?P<failed_status>^FAILED:\s*\[code=\d+\])
     |(?P<make_error>make(?:\[\d+\])?\s*:\s*\*\*\*)
     |(?P<nsis_warning_block>^\d+\s+warnings?:)
     |(?P<error_block>^error(?:\[e\d+\])?:\s?)
@@ -83,6 +85,27 @@ RE_BUILD_OUTPUT = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE,
 )
+
+
+class BuildOutputHandler(Protocol):
+    """Backend hooks for progress parsing and footer rendering.
+
+    Installed on `BuildMonitor` once the active backend is known.
+    `None` means default behavior: TIER-based footer, no progress
+    parsing, and the live region starts in `_build` after configure.
+    Handlers with `defers_live_start = True` skip the post-configure
+    start and start the live region themselves."""
+
+    defers_live_start: bool
+
+    def parse_progress(self, line: str) -> Optional[str]:
+        """Return None for non-status lines (fall through to default
+        handling), otherwise the tail to log (empty string suppresses)."""
+
+    def render_footer(self) -> Optional[Text]:
+        """Return a footer to render, or None to fall back to the
+        default TIER-based renderer."""
+
 
 FINDER_SLOW_MESSAGE = """
 ===================
@@ -203,17 +226,22 @@ def record_cargo_timings(resource_monitor, timings_path):
                 )
                 for entry in entries
             ]
-        starts = [
-            start
+        active_rust = [
+            (marker, start)
             for marker, start in resource_monitor._active_markers.items()
             if marker.startswith("Rust:")
         ]
         # The build system is not supposed to be running more than one cargo
         # at the same time, which thankfully makes it easier to find the start
         # of the one we got the timings for.
-        if len(starts) != 1:
+        if len(active_rust) != 1:
             return
-        cargo_start = starts[0]
+        marker_key, cargo_start = active_rust[0]
+        # _active_markers key shape is `<name>:<text>[:<disambiguator>]`.
+        # Drop the disambiguator (if any) so the sub-crate markers carry
+        # `Rust:<label>` — same row as the parent edge in the profiler.
+        parts = marker_key.split(":", 2)
+        crate_marker = ":".join(parts[:2]) if len(parts) >= 2 else marker_key
     except Exception:
         return
 
@@ -222,7 +250,10 @@ def record_cargo_timings(resource_monitor, timings_path):
 
     for name, start, duration in data:
         resource_monitor.record_marker(
-            "RustCrate", cargo_start + start, cargo_start + start + duration, name
+            crate_marker,
+            cargo_start + start,
+            cargo_start + start + duration,
+            name,
         )
 
 
@@ -274,6 +305,7 @@ class BuildMonitor(MozbuildObject):
 
         self.build_objects = []
         self.build_dirs = set()
+        self.output_handler: Optional[BuildOutputHandler] = None
 
     def start(self):
         """Record the start of the build."""
@@ -374,6 +406,11 @@ class BuildMonitor(MozbuildObject):
             cargo_timings = plain_line[len("Timing report saved to ") :]
             record_cargo_timings(self.resources, cargo_timings)
             return BuildOutputResult(None, False, None)
+
+        if self.output_handler is not None:
+            tail = self.output_handler.parse_progress(plain_line)
+            if tail is not None:
+                return BuildOutputResult(None, True, tail or None)
 
         if log_record := read_serialized_record(line):
             return BuildOutputResult(None, False, log_record)
@@ -615,12 +652,21 @@ class BuildProgressFooter:
     When mach builds inside a terminal, it will render progress information
     collected from a BuildMonitor. This class converts the state of
     BuildMonitor into terminal output.
+
+    Delegates to `monitor.output_handler.render_footer` when one is
+    installed. Otherwise falls back to the recursivemake TIER row.
     """
 
     def __init__(self, monitor):
         self.monitor = monitor
 
     def __rich__(self):
+        handler = self.monitor.output_handler
+        if handler is not None:
+            footer = handler.render_footer()
+            if footer is not None:
+                return footer
+
         tiers = list(self.monitor.tiers.tier_status.items())
         if not tiers:
             return Text("")
@@ -682,16 +728,25 @@ class OutputManager(LoggingMixin):
                 auto_refresh=False,
                 transient=True,
             )
+        self._live_started = False
 
     def __enter__(self):
-        if self.live is not None:
-            self.live.start()
+        self.start_progress()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.live is not None:
+        self.stop_progress()
+        self.live = None
+
+    def start_progress(self):
+        if self.live is not None and not self._live_started:
+            self.live.start()
+            self._live_started = True
+
+    def stop_progress(self):
+        if self.live is not None and self._live_started:
             self.live.stop()
-            self.live = None
+            self._live_started = False
 
     def write_line(self, line):
         if self.console is not None:
@@ -713,6 +768,11 @@ class BuildOutputManager(OutputManager):
         self._stdout_warning_lines_remaining = 0
         self._third_party_dirs = self._load_third_party_paths()
         OutputManager.__init__(self, log_manager, footer)
+
+    def __enter__(self):
+        # Defer the live region until _build decides: non-Ninja backends
+        # start it after configure, Ninja starts it inside ninja.build().
+        return self
 
     def _load_third_party_paths(self):
         paths = []
@@ -780,6 +840,8 @@ class BuildOutputManager(OutputManager):
                         match_type = match.lastgroup
                         if match_type == "error_block":
                             log_level = BUILD_ERROR
+                        elif match_type == "failed_status":
+                            log_level = BUILD_ERROR
                         elif match_type in ("warning_block", "warning_num"):
                             log_level = logging.WARNING
                         elif match_type == "nsis_warning_block":
@@ -829,6 +891,7 @@ class BuildOutputManager(OutputManager):
                             "python_traceback",
                             "make_error",
                             "error_block",
+                            "failed_status",
                         ):
                             self._active_log_level = log_level = BUILD_ERROR
                         elif match_type in ("warning_block", "warning_num"):
@@ -1498,6 +1561,18 @@ class BuildDriver(MozbuildObject):
 
             all_backends = config.substs.get("BUILD_BACKENDS", [None])
             active_backend = all_backends[0]
+
+            # Backends that drive their own progress display (e.g. Ninja)
+            # install a `BuildOutputHandler` and ask to defer the live
+            # region until they call `output.start_progress()` themselves.
+            monitor.output_handler = get_backend_class(
+                active_backend
+            ).build_output_handler()
+            if (
+                monitor.output_handler is None
+                or not monitor.output_handler.defers_live_start
+            ):
+                output.start_progress()
 
             status = None
 
