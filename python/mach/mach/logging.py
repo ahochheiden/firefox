@@ -9,6 +9,7 @@
 import codecs
 import logging
 import os
+import re
 import sys
 import time
 
@@ -18,6 +19,8 @@ from mozfile import json
 from packaging.version import Version
 
 IS_WINDOWS = sys.platform.startswith("win")
+
+ANSI_RE = re.compile(r"\x1b\[[\d;]*[mK]")
 
 # Custom log levels for 'weaker' warnings, between DEBUG (10) and INFO (20)
 # to make them suppressed by default.
@@ -133,6 +136,8 @@ class StructuredJSONFormatter(logging.Formatter):
         action = getattr(record, "action", "UNKNOWN")
         params = getattr(record, "params", {})
         msg = record.msg
+        if isinstance(msg, str):
+            msg = ANSI_RE.sub("", msg)
 
         return json.dumps([record.created, action, params, msg])
 
@@ -160,7 +165,9 @@ class StructuredHumanFormatter(logging.Formatter):
         self.last_time = None
 
     def format(self, record):
-        formatted_msg = record.msg.format(**getattr(record, "params", {}))
+        formatted_msg = ANSI_RE.sub(
+            "", record.msg.format(**getattr(record, "params", {}))
+        )
 
         elapsed_time = (
             format_seconds(self._time(record)) + " " if self.write_times else ""

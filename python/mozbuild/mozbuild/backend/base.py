@@ -195,6 +195,11 @@ class BuildBackend(LoggingMixin):
         """
         return None
 
+    @staticmethod
+    def build_output_handler():
+        """Return a `BuildOutputHandler` for this backend, or None."""
+        return None
+
     def _write_purgecaches(self, config):
         """Write .purgecaches sentinels.
 

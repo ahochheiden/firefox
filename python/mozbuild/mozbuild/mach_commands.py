@@ -4003,7 +4003,8 @@ def run_mach(command_context, cmd, **kwargs):
     + "default: UPLOAD_PATH environment variable if set; '$topobjdir/dist/repackage-single-locales' if not set",
 )
 def repackage_single_locales(command_context, verbose=False, locales=[], dest=None):
-    if "RecursiveMake" not in command_context.substs["BUILD_BACKENDS"]:
+    backends = command_context.substs["BUILD_BACKENDS"]
+    if "RecursiveMake" not in backends and "Ninja" not in backends:
         print(
             "Artifact builds do not support localization. "
             "If you know what you are doing, you can use:\n"

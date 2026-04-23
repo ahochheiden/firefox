@@ -81,12 +81,13 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    return merge_locale(
+    rc = merge_locale(
         locale=args.locale,
         config=args.config,
         l10n_base=args.l10n_base,
         target=args.target,
     )
+    return rc
 
 
 if __name__ == "__main__":

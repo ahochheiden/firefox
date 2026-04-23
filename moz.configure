@@ -502,6 +502,37 @@ def build_backend(backends):
 imply_option("--build-backends", build_backend)
 
 
+option(
+    "--enable-ninja-backend",
+    env="MOZ_ENABLE_NINJA_BACKEND",
+    help="Use the Ninja build backend",
+)
+
+
+@depends("--enable-ninja-backend")
+def ninja_backend(enabled):
+    return bool(enabled)
+
+
+check_prog("NINJA", ("ninja",), bootstrap="ninja/bin", when=ninja_backend)
+
+
+option(
+    "--enable-ninja-experimental-explicit-rustc-edges",
+    default=False,
+    help="Emit explicit per-crate rustc edges (driven by cargo --unit-graph) "
+    "instead of monolithic cargo edges in the Ninja backend",
+)
+
+
+@depends("--enable-ninja-experimental-explicit-rustc-edges")
+def ninja_explicit_rustc_edges(enabled):
+    return bool(enabled)
+
+
+set_config("MOZ_NINJA_EXPERIMENTAL_EXPLICIT_RUSTC_EDGES", ninja_explicit_rustc_edges)
+
+
 @depends(
     host,
     target,
