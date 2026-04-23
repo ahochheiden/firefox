@@ -17,7 +17,7 @@ from mozpack.executables import (
     ELF,
     MACHO,
 )
-from buildconfig import substs
+from buildconfig import substs, topobjdir
 
 
 def dependentlibs_win32_objdump(lib):
@@ -161,7 +161,7 @@ def gen_list(output, lib):
         libs[-1] = "gtest/" + libs[-1]
         gtest_out.write("\n".join(libs) + "\n")
 
-    return set(deps.values())
+    return set(mozpath.relpath(p, topobjdir) for p in deps.values())
 
 
 def main():
