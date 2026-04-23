@@ -1,0 +1,1286 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+"""Ninja backend.
+
+Emits a single `build.ninja` at `$topobjdir`.
+"""
+
+import os
+from collections import defaultdict
+
+import mozpack.path as mozpath
+
+from mozbuild.backend.common import CommonBackend
+from mozbuild.backend.ninja_syntax import (
+    NinjaWriter,
+    response_arg,
+)
+from mozbuild.backend.ninja_syntax import (
+    path as n_path,
+)
+from mozbuild.backend.ninja_syntax import (
+    value as n_value,
+)
+from mozbuild.frontend.context import ObjDirPath
+from mozbuild.frontend.data import (
+    ChromeManifestEntry,
+    ComputedFlags,
+    ContextDerived,
+    FinalTargetFiles,
+    FinalTargetPreprocessedFiles,
+    GeneratedFile,
+    HostLibrary,
+    HostProgram,
+    HostSimpleProgram,
+    HostSources,
+    PerSourceFlag,
+    Program,
+    RustLibrary,
+    SharedLibrary,
+    SimpleProgram,
+    Sources,
+    StaticLibrary,
+    UnifiedSources,
+    VariablePassthru,
+)
+
+
+class NinjaBackend(CommonBackend):
+    """Emits `build.ninja`."""
+
+    def _init(self):
+        super()._init()
+
+        env = self.environment
+        self._topsrcdir = mozpath.normsep(env.topsrcdir)
+        self._topobjdir = mozpath.normsep(env.topobjdir)
+
+        # Collected objects, keyed by the directory they belong to.
+        self._sources_by_dir = defaultdict(list)  # relobjdir -> [Sources, ...]
+        self._unified_by_dir = defaultdict(list)  # relobjdir -> [UnifiedSources, ...]
+        self._host_sources_by_dir = defaultdict(list)  # relobjdir -> [HostSources, ...]
+        self._static_libs = []
+        self._shared_libs = []
+        self._rust_libs = []
+        self._programs = []
+        self._host_libraries = []
+        self._host_programs = []
+        self._generated_files = []
+        # Per-directory ComputedFlags. The emitter yields TWO ComputedFlags
+        # objects per context — one from COMPILE_FLAGS (keys like CXXFLAGS,
+        # CFLAGS, CXX_LDFLAGS, C_LDFLAGS) and one from LINK_FLAGS (key
+        # LDFLAGS only, including `-DEF:<deffile>`). Keep a list so neither
+        # overwrites the other on lookup.
+        self._computed_flags = defaultdict(list)  # relobjdir -> [ComputedFlags, ...]
+        self._per_source_flags = defaultdict(list)  # relobjdir -> [PerSourceFlag, ...]
+        self._variable_passthru = {}  # relobjdir -> VariablePassthru
+
+        # File install targets: Exports (→ dist/include), ObjdirFiles (→
+        # objdir root), ObjdirPreprocessedFiles (→ objdir root, run through
+        # preprocessor).
+        self._installs = []  # [(src, dest)] — simple copies
+        self._pp_installs = []  # [(src, dest, defines_dict)] — preprocess + copy
+
+        # ChromeManifestEntry objects: per-manifest-path collection of
+        # entry strings. `XPCOM_MANIFESTS` in moz.build emits these to
+        # add `manifest components/X.manifest` lines to the top-level
+        # chrome.manifest at install time.
+        self._chrome_manifest_entries = defaultdict(set)
+
+    def consume_object(self, obj):
+        if not isinstance(obj, ContextDerived):
+            return False
+
+        relobjdir = obj.relobjdir
+
+        # Backend bookkeeping first (CommonBackend returns True for some
+        # types like UnifiedSources and would short-circuit this).
+        if isinstance(obj, UnifiedSources):
+            self._unified_by_dir[relobjdir].append(obj)
+        elif isinstance(obj, Sources):
+            self._sources_by_dir[relobjdir].append(obj)
+        elif isinstance(obj, HostSources):
+            self._host_sources_by_dir[relobjdir].append(obj)
+        elif isinstance(obj, RustLibrary):
+            self._rust_libs.append(obj)
+        elif isinstance(obj, StaticLibrary):
+            self._static_libs.append(obj)
+        elif isinstance(obj, SharedLibrary):
+            self._shared_libs.append(obj)
+        elif isinstance(obj, HostLibrary):
+            self._host_libraries.append(obj)
+        elif isinstance(obj, (Program, SimpleProgram)):
+            self._programs.append(obj)
+        elif isinstance(obj, (HostProgram, HostSimpleProgram)):
+            self._host_programs.append(obj)
+        elif isinstance(obj, GeneratedFile):
+            self._generated_files.append(obj)
+        elif isinstance(obj, PerSourceFlag):
+            self._per_source_flags[relobjdir].append(obj)
+        elif isinstance(obj, ComputedFlags):
+            self._computed_flags[relobjdir].append(obj)
+        elif isinstance(obj, VariablePassthru):
+            self._variable_passthru[relobjdir] = obj
+        elif isinstance(obj, FinalTargetPreprocessedFiles):
+            # Preprocessed files aren't in the install manifests — they
+            # need a preprocessor step. Track them so we emit ninja rules
+            # for each.
+            install_target = obj.install_target
+            defines = {}
+            if getattr(obj, "defines", None):
+                defines = obj.defines.defines
+            for subpath, files in obj.files.walk():
+                for f in files:
+                    src = mozpath.normsep(f.full_path)
+                    basename = FinalTargetPreprocessedFiles.get_obj_basename(f)
+                    dst = mozpath.join(
+                        self._topobjdir,
+                        install_target,
+                        subpath,
+                        basename,
+                    )
+                    self._pp_installs.append((src, dst, defines))
+        elif isinstance(obj, FinalTargetFiles):
+            # For source-tree entries, the install is covered by
+            # process_install_manifest (via the manifests mozmake wrote at
+            # configure time) — those show up as LINK entries.
+            # For ObjDirPath entries (generated files), the manifest only
+            # has OPTIONAL_EXISTS markers; the actual install is handled
+            # per-directory by mozmake's make rules. We emit individual
+            # ninja install_file edges for those so the generated file
+            # gets hardlinked to its install target after it's generated.
+            install_target = obj.install_target
+            for subpath, files in obj.files.walk():
+                for f in files:
+                    if not isinstance(f, ObjDirPath):
+                        continue
+                    src = mozpath.normsep(f.full_path)
+                    dst = mozpath.join(
+                        self._topobjdir,
+                        install_target,
+                        subpath,
+                        f.target_basename,
+                    )
+                    self._installs.append((src, dst))
+        elif isinstance(obj, ChromeManifestEntry):
+            self._chrome_manifest_entries[obj.path].add(str(obj.entry))
+
+        # Side effects from CommonBackend (writes Unified_cpp_*.cpp files,
+        # tracks generated sources, etc).
+        CommonBackend.consume_object(self, obj)
+
+        return True
+
+    def consume_finished(self):
+        CommonBackend.consume_finished(self)
+
+        # Resolve install srcs that point at a linkable's default objdir
+        # location to the linkable's actual `output_path`. An ObjDirPath
+        # like `!TestArguments.exe` from FINAL_TARGET_FILES resolves to
+        # the moz.build's objdir (xpcom/tests/TestArguments.exe), but a
+        # SimpleProgram with DIST_INSTALL=True is built directly at
+        # dist/bin/TestArguments.exe — so the install_batch source must
+        # point there. Mozmake handles this at install-action time via
+        # OPTIONAL_EXISTS in the manifest; we resolve at graph-generation
+        # time so ninja's input check sees a real producer.
+        output_redirect = {}
+        linkables = (
+            self._programs
+            + self._host_programs
+            + self._shared_libs
+            + self._host_libraries
+        )
+        for lk in linkables:
+            default = mozpath.normsep(mozpath.join(lk.objdir, lk.name))
+            actual = mozpath.normsep(lk.output_path.full_path)
+            if default != actual:
+                output_redirect[default] = actual
+        if output_redirect:
+            self._installs = [
+                (output_redirect.get(src, src), dst) for src, dst in self._installs
+            ]
+
+        # Write chrome.manifest fragments collected from ChromeManifestEntry
+        # (XPCOM_MANIFESTS in moz.build). Mozmake builds these incrementally
+        # via `buildlist` actions in the misc tier; we write the full set
+        # at backend-generation time. `addEntriesToListFile` is idempotent,
+        # so jar_maker's later additions to the same file merge cleanly.
+        from mozbuild.action.buildlist import addEntriesToListFile
+
+        for path, entries in self._chrome_manifest_entries.items():
+            addEntriesToListFile(path, sorted(entries))
+
+        ninja_path = mozpath.join(self._topobjdir, "build.ninja")
+        with self._write_file(ninja_path) as fh:
+            self._write_ninja(fh)
+
+    def build(self, config, output, jobs, verbose, what=None):
+        """Invoke ninja for `mach build`. Targets default to all."""
+        import subprocess
+
+        cmd = ["ninja", "-C", config.topobjdir, "--jobserver-pool"]
+        if jobs:
+            cmd += ["-j", str(jobs)]
+        if verbose:
+            cmd.append("-v")
+        if what:
+            cmd += list(what)
+        # Mirror mozmake's `export INCLUDE` / `export LIB` (config/config.mk):
+        # cl/ml64/link rely on these env vars to find SDK headers and libs.
+        env = os.environ.copy()
+        for var in ("INCLUDE", "LIB"):
+            val = config.substs.get(var)
+            if val:
+                env[var] = val
+        return subprocess.call(cmd, env=env)
+
+    # ---------------------------------------------------------------------
+    # Data helpers
+    # ---------------------------------------------------------------------
+
+    def _computed_flag_list(self, relobjdir, var):
+        """Return the list of flags for a given flag variable in a
+        directory, merging across all ComputedFlags objects the emitter
+        produced for that context (one from COMPILE_FLAGS, one from
+        LINK_FLAGS, etc)."""
+        out = []
+        for cf in self._computed_flags.get(relobjdir, ()):
+            out.extend(dict(cf.get_flags()).get(var, []))
+        return out
+
+    def _per_source_flags_for(self, relobjdir, source_full_path):
+        """Return the per-source flags for a given source full path.
+
+        PerSourceFlag.file_name is the source's full_path (set by the
+        emitter at `all_flags[full_path] = context_flags`)."""
+        target = mozpath.normsep(source_full_path)
+        out = []
+        for psf in self._per_source_flags.get(relobjdir, []):
+            fn = getattr(psf, "file_name", None)
+            if fn and mozpath.normsep(fn) == target:
+                out.extend(getattr(psf, "flags", []))
+        return out
+
+    def _obj_path(self, source_path, linkable):
+        """Compute the object file path for a source, matching the emitter's
+        Linkable._get_objs logic."""
+        obj_prefix = "host_" if getattr(linkable, "KIND", None) == "host" else ""
+        obj_suffix = linkable.config.substs.get("OBJ_SUFFIX", "obj")
+        basename = mozpath.splitext(mozpath.basename(source_path))[0]
+        return mozpath.join(linkable.objdir, f"{obj_prefix}{basename}.{obj_suffix}")
+
+    def _resolve_src(self, source_path, linkable):
+        """Resolve a source path into an absolute path.
+
+        Linkable.sources for UnifiedSources stores just the unified-file
+        basename (e.g. `Unified_cpp_js_src_vm0.cpp`). Those files are
+        written by CommonBackend at `linkable.objdir/<basename>`. Static
+        sources are already absolute paths from the emitter."""
+        if os.path.isabs(source_path) or source_path.startswith("/"):
+            return mozpath.normsep(source_path)
+        return mozpath.join(linkable.objdir, source_path)
+
+    def _rel(self, path):
+        """Convert an absolute path to ninja-form (unescaped): bare relative
+        under topobjdir, `$topsrcdir/<rel>` under topsrcdir, otherwise
+        the input absolute path. The unescaped form is returned because
+        the `$topsrcdir` reference (if produced) must reach ninja
+        unescaped so it expands."""
+        norm = mozpath.normsep(str(path))
+        objdir = self._topobjdir
+        srcdir = self._topsrcdir
+        if norm == objdir:
+            return "."
+        if norm.startswith(objdir + "/"):
+            return mozpath.relpath(norm, objdir)
+        if norm == srcdir:
+            return "$topsrcdir"
+        if norm.startswith(srcdir + "/"):
+            return "$topsrcdir/" + mozpath.relpath(norm, srcdir)
+        return norm
+
+    def _n_rel(self, path):
+        """ninja-syntax version of _rel: relative parts go through n_path
+        for `:` / ` ` / `$` escaping; the `$topsrcdir` prefix (if
+        produced) is left intact so ninja expands it."""
+        rel = self._rel(path)
+        if rel == "$topsrcdir":
+            return "$topsrcdir"
+        if rel.startswith("$topsrcdir/"):
+            return "$topsrcdir/" + n_path(rel[len("$topsrcdir/") :])
+        return n_path(rel)
+
+    # ---------------------------------------------------------------------
+    # build.ninja emission
+    # ---------------------------------------------------------------------
+
+    def _write_ninja(self, fh):
+        env = self.environment
+        substs = env.substs
+        writer = NinjaWriter(fh)
+
+        writer.comment("Auto-generated by NinjaBackend. Do not edit.")
+        writer.variable("ninja_required_version", "1.13")
+        writer.newline()
+
+        writer.variable("topobjdir", ".")
+        writer.variable(
+            "topsrcdir",
+            n_path(mozpath.relpath(self._topsrcdir, self._topobjdir)),
+        )
+
+        # Tools. substs["CC"]/["CXX"] include base flags embedded in the
+        # string (e.g. "-fms-compatibility-version=19.50 -std:c++20"); we
+        # emit them verbatim as the command prefix.
+        def _subst_cmd(key):
+            v = substs.get(key, "")
+            if isinstance(v, list):
+                v = " ".join(v)
+            return v
+
+        cc = _subst_cmd("CC")
+        cxx = _subst_cmd("CXX")
+        host_cc = _subst_cmd("HOST_CC") or cc
+        host_cxx = _subst_cmd("HOST_CXX") or cxx
+        ar = _subst_cmd("AR")
+        linker = _subst_cmd("LINKER")
+        host_linker = _subst_cmd("HOST_LINKER") or linker
+        make = _subst_cmd("GMAKE") or "mozmake"
+        python = _subst_cmd("PYTHON3") or "python"
+        # On Windows, `mach` is a shell script that CreateProcess cannot
+        # execute directly; use the `mach.cmd` batch wrapper.
+        if os.name == "nt":
+            mach = mozpath.join(self._topsrcdir, "mach.cmd")
+        else:
+            mach = mozpath.join(self._topsrcdir, "mach")
+
+        # Host-OS defines and the NSPR include path are global per-build:
+        # `config/rules.mk` adds them to every host-compile invocation
+        # (`$(HOST_CC) $(HOST_CPPFLAGS) $(HOST_CFLAGS) $(NSPR_CFLAGS) ...`).
+        host_cppflags = " ".join(
+            response_arg(f) for f in self.environment.substs.get("HOST_CPPFLAGS", [])
+        )
+        nspr_cflags = " ".join(
+            response_arg(f) for f in self.environment.substs.get("NSPR_CFLAGS", [])
+        )
+
+        for key, val in (
+            ("CC", cc),
+            ("CXX", cxx),
+            ("HOST_CC", host_cc),
+            ("HOST_CXX", host_cxx),
+            ("AR", ar),
+            ("LINKER", linker),
+            ("HOST_LINKER", host_linker),
+            ("MAKE", make),
+            ("PYTHON", python),
+            ("HOST_CPPFLAGS", host_cppflags),
+            ("NSPR_CFLAGS", nspr_cflags),
+        ):
+            writer.variable(key, n_value(val))
+        # MACH bypasses n_value escaping so the `$topsrcdir` reference
+        # produced by _n_rel survives for ninja to expand.
+        writer.variable("MACH", self._n_rel(mach))
+        writer.newline()
+
+        # Compile rules. The compiler reads its own response file via
+        # `@$out.rsp` using MSVC argument-parsing rules (clang-cl matches
+        # cl.exe here). response_arg below produces those rules, so the
+        # quoted flags pass straight through with no shell involvement.
+        # clang-cl depfile via -Xclang -dependency-file; we feed those
+        # into ninja via deps = gcc + depfile = $out.d so ninja manages
+        # implicit deps natively.
+        clang_depfile_args = (
+            "-Xclang -MP -Xclang -dependency-file -Xclang $out.d "
+            "-Xclang -MT -Xclang $out"
+        )
+        writer.rule(
+            "cxx",
+            command="$CXX @$out.rsp",
+            description="CXX $out",
+            rspfile="$out.rsp",
+            rspfile_content=f"$cxxflags {clang_depfile_args} -o $out -c $in",
+            deps="gcc",
+            depfile="$out.d",
+        )
+        writer.newline()
+        writer.rule(
+            "cc",
+            command="$CC @$out.rsp",
+            description="CC $out",
+            rspfile="$out.rsp",
+            rspfile_content=f"$cflags {clang_depfile_args} -o $out -c $in",
+            deps="gcc",
+            depfile="$out.d",
+        )
+        writer.newline()
+        writer.rule(
+            "host_cxx",
+            command="$HOST_CXX @$out.rsp",
+            description="HOST_CXX $out",
+            rspfile="$out.rsp",
+            rspfile_content=(
+                "$HOST_CPPFLAGS $host_cxxflags $NSPR_CFLAGS -o $out -c $in"
+            ),
+        )
+        writer.newline()
+        writer.rule(
+            "host_cc",
+            command="$HOST_CC @$out.rsp",
+            description="HOST_CC $out",
+            rspfile="$out.rsp",
+            rspfile_content=("$HOST_CPPFLAGS $host_cflags $NSPR_CFLAGS -o $out -c $in"),
+        )
+        writer.newline()
+        # Assembly via clang-cl's integrated assembler (USE_INTEGRATED_CLANGCL_AS).
+        writer.rule(
+            "asm",
+            command="$CC @$out.rsp",
+            description="AS $out",
+            rspfile="$out.rsp",
+            rspfile_content="$asflags -o $out -c $in",
+        )
+        writer.newline()
+
+        # Archive / link rules: the rspfile holds the linker input list so
+        # it can be arbitrarily long (js_static.lib archives ~700 objs).
+        writer.rule(
+            "archive",
+            command="$AR -nologo -out:$out @$out.rsp",
+            description="AR $out",
+            rspfile="$out.rsp",
+            rspfile_content="$in",
+        )
+        writer.newline()
+        writer.rule(
+            "link_shared",
+            command="$LINKER -NOLOGO -DLL -OUT:$out $ldflags -IMPLIB:$implib @$out.rsp",
+            description="LINK $out",
+            rspfile="$out.rsp",
+            rspfile_content="$in $libs",
+        )
+        writer.newline()
+        writer.rule(
+            "link_exe",
+            command="$LINKER -NOLOGO -OUT:$out $ldflags @$out.rsp",
+            description="LINK $out",
+            rspfile="$out.rsp",
+            rspfile_content="$in $libs",
+        )
+        writer.newline()
+
+        writer.rule(
+            "host_link_exe",
+            command="$HOST_LINKER -NOLOGO -OUT:$out $ldflags @$out.rsp",
+            description="HOST_LINK $out",
+            rspfile="$out.rsp",
+            rspfile_content="$in $libs",
+        )
+        writer.newline()
+
+        # process_install_manifest: delegates to mozmake's install_manifest
+        # driver so ninja gets identical pattern/wildcard handling as the
+        # recursive-make backend. One invocation covers a whole install
+        # target (e.g. dist/include ~600 entries) in one Python process.
+        writer.rule(
+            "run_install_manifest",
+            command="$PYTHON -m mozbuild.action.process_install_manifest --track $track $install_dir $in",
+            description="INSTALL $install_dir",
+            restat=True,
+        )
+        writer.newline()
+        # Single-file install via hardlink (fallback to copy). Kept for
+        # any edge that doesn't batch well.
+        writer.rule(
+            "install_file",
+            command="$PYTHON -m mozbuild.action.ninja_install $in $out",
+            description="INSTALL $out",
+            restat=True,
+        )
+        writer.newline()
+        # Batch install (tab-separated src->dst manifest). Used for
+        # generated-file EXPORTS installs to amortize the Python startup
+        # cost across many files.
+        writer.rule(
+            "install_batch",
+            command="$PYTHON -m mozbuild.action.ninja_install $manifest",
+            description="INSTALL (batch)",
+            restat=True,
+        )
+        writer.newline()
+        # OBJDIR_PP_FILES preprocess-and-install (not covered by any
+        # install manifest — mozmake has a dedicated rule for it).
+        writer.rule(
+            "pp_install",
+            command="$PYTHON -m mozbuild.action.preprocessor $defines -o $out $in",
+            description="PP $out",
+            restat=True,
+        )
+        writer.newline()
+
+        # Python generator (for GeneratedFile). `pygen_runner` invokes
+        # mozbuild.action.file_generate (same semantics as mozmake's
+        # py_action(file_generate, ...)) and then post-processes the
+        # resulting depfile in-process. The post-process is required
+        # because file_generate writes Makefile-style depfiles that wrap
+        # conditional inputs in `$(wildcard X)`. Ninja's gcc-depfile
+        # parser cannot read that and would mark every pygen output
+        # dirty on every build. `filter_depfile` unwraps the wildcards
+        # and drops missing-file deps so ninja's up-to-date check works.
+        writer.rule(
+            "pygen",
+            command=(
+                "$PYTHON -m mozbuild.action.pygen_runner $depfile "
+                "$locale$script $method $primary $depfile $primary $extra"
+            ),
+            description="GEN $primary",
+            deps="gcc",
+            depfile="$depfile",
+            restat=True,
+        )
+        writer.newline()
+
+        # Cargo: delegate to mozmake which handles CARGO_TARGET_DIR etc.
+        # RecursiveMake's per-rust-library target is
+        # `<relobjdir>/target-objects`, invoked from the topobjdir
+        # Makefile so the config/makefiles/rust.mk machinery
+        # (CARGO_TARGET_DIR, RUSTFLAGS, etc) is in scope. No shell wrap;
+        # mozmake's argv is plain with no embedded quoting.
+        writer.rule(
+            "cargo_build",
+            command="$MAKE -C $topobjdir $cargo_target",
+            description="CARGO $out",
+            depfile="$depfile",
+            deps="gcc",
+            restat=True,
+        )
+        writer.newline()
+
+        # Regenerator: re-runs the backend so build.ninja reflects the
+        # current state of moz.build / config.status when any tracked
+        # input changes. `generator = 1` tells ninja to invoke this rule
+        # specially: before any other work, with no complaint about
+        # being older than its outputs, and ninja re-reads build.ninja
+        # afterward. The set of inputs comes from
+        # `BuildBackend.backend_input_files`, which already includes
+        # every moz.build the emitter visited plus every Python module
+        # under topsrcdir/topobjdir that could affect emitter output.
+        writer.rule(
+            "regenerator",
+            command="$MACH build-backend",
+            description="Regenerating build.ninja",
+            generator=True,
+        )
+        writer.newline()
+
+        # Install manifests first — compile rules read self._install_tracks
+        # to know which install targets must land before compile can start.
+        self._emit_install_statements(writer)
+
+        # GeneratedFile rules (CONFIGURE_DEFINE_FILES, opcode tables, etc).
+        self._emit_generated_file_statements(writer)
+
+        # Emit compile build statements.
+        self._emit_compile_statements(writer)
+
+        # Rust libraries are built by delegating to mozmake, which already
+        # knows how to invoke cargo with the right env.
+        self._emit_rust_statements(writer)
+
+        # Emit link build statements for static libs, shared libs, and programs.
+        self._emit_archive_statements(writer)
+        self._emit_shared_link_statements(writer)
+        self._emit_program_statements(writer)
+        self._emit_host_archive_statements(writer)
+        self._emit_host_program_statements(writer)
+
+        # build.ninja regen statement. Inputs include every moz.build
+        # the emitter consumed plus the Python modules under
+        # topsrcdir/topobjdir, both populated in
+        # `BuildBackend.backend_input_files`. config.status is added
+        # explicitly because configure changes (e.g. a different
+        # --enable-build-backend) must invalidate the existing graph.
+        regen_inputs = sorted(mozpath.normsep(f) for f in self.backend_input_files)
+        regen_inputs.append(mozpath.join(self._topobjdir, "config.status"))
+        writer.newline()
+        writer.build(
+            "build.ninja",
+            "regenerator",
+            inputs=[self._n_rel(f) for f in regen_inputs],
+        )
+
+        # Named phony targets matching mach's vocabulary, plus an `all`
+        # umbrella that becomes the default. `ninja binaries` skips the
+        # install staging; `ninja install` runs only the install tracks;
+        # `ninja` (or `ninja all`) does both.
+        #
+        # Linkables tagged with `output_category` (e.g. gtest/xul.dll
+        # with category "gtest") are non-default in recursive-make
+        # (recursivemake.py:824-832 strips them from `_compile_graph`).
+        # Mirror that here: keep them OUT of the `binaries` phony, and
+        # emit a per-category phony (`gtest`, etc.) so they remain
+        # buildable on demand via `ninja <category>`.
+        binary_outputs = []
+        category_outputs = defaultdict(list)
+        for p in self._programs + self._host_programs + self._shared_libs:
+            out_path = self._n_rel(p.output_path.full_path)
+            cat = getattr(p, "output_category", None)
+            if cat:
+                category_outputs[cat].append(out_path)
+            else:
+                binary_outputs.append(out_path)
+
+        install_outputs = [
+            self._n_rel(track)
+            for track in getattr(self, "_install_tracks", {}).values()
+        ]
+        install_outputs += [
+            self._n_rel(o) for o in getattr(self, "_install_batch_post_outputs", ())
+        ]
+        install_outputs += [
+            self._n_rel(o) for o in getattr(self, "_pp_install_outputs", ())
+        ]
+
+        all_groups = []
+        if binary_outputs:
+            writer.newline()
+            writer.build("binaries", "phony", inputs=binary_outputs)
+            all_groups.append("binaries")
+        if install_outputs:
+            writer.newline()
+            writer.build("install", "phony", inputs=install_outputs)
+            all_groups.append("install")
+        # Per-category phonies for non-default targets (gtest, etc.).
+        # Not added to `all` — only built when explicitly requested.
+        for cat, outs in sorted(category_outputs.items()):
+            writer.newline()
+            writer.build(cat, "phony", inputs=outs)
+        if all_groups:
+            writer.newline()
+            writer.build("all", "phony", inputs=all_groups)
+            writer.default(["all"])
+
+    def _emit_compile_statements(self, writer):
+        """Emit build statements for every compiled source file.
+
+        Sources come from two places:
+          * Sources objects (one .cpp -> one .obj, non-unified)
+          * UnifiedSources that already wrote Unified_cpp_*.cpp files to
+            disk at configure time. Those are compiled as regular .cpp.
+
+        We associate sources with a specific Linkable using the Linkable's
+        own `sources` dict (populated by the emitter), so the set of files
+        we emit exactly matches what the make backend would compile.
+        """
+        writer.newline()
+        writer.comment("------ compile rules ------")
+        writer.newline()
+
+        # Aggregate pre-compile generated-file outputs under a phony target
+        # so every compile statement can depend on it as an order-only
+        # prerequisite. Include only files the emitter marked as required
+        # before or during compile (e.g. js-confdefs.h, selfhosted.out.h);
+        # post-link generators (like spidermonkey_checks) would create a
+        # dep cycle through the static library if aggregated here.
+        #
+        # Two phonies are emitted:
+        #   * `.ninja-generated`     — every generated file; target
+        #     compiles depend on this.
+        #   * `.ninja-generated-host` — the subset whose producers don't
+        #     transitively need a host program. Host compiles depend on
+        #     this. Splitting avoids the host_compile → host_link →
+        #     wasm2c output → .ninja-generated → host_compile cycle while
+        #     still letting host compiles wait on plain generated headers
+        #     (e.g. `wabt/config.h`).
+        all_generated = []
+        host_safe_generated = []
+        host_program_outputs = {
+            mozpath.normsep(p.output_path.full_path) for p in self._host_programs
+        }
+
+        def _depends_on_host_program(g):
+            for inp in g.inputs:
+                if mozpath.normsep(inp.full_path) in host_program_outputs:
+                    return True
+            return False
+
+        for g in self._generated_files:
+            if not g.script:
+                continue
+            if not (g.required_before_compile or g.required_during_compile):
+                continue
+            outs = []
+            for o in g.outputs:
+                if isinstance(o, str):
+                    if o.startswith("/"):
+                        outs.append(mozpath.join(self._topobjdir, o[1:]))
+                    else:
+                        outs.append(mozpath.join(g.objdir, o))
+                else:
+                    outs.append(mozpath.normsep(o.full_path))
+            all_generated.extend(outs)
+            if not _depends_on_host_program(g):
+                host_safe_generated.extend(outs)
+
+        # dist/include must be fully populated before compiles can resolve
+        # `-I dist/include` header references. Three sources of files end
+        # up under dist/include:
+        #   1. Source-tree headers via the install manifest (track file
+        #      emitted as output of the install_manifest edge).
+        #   2. Generated files (ObjDirPath EXPORTS) — each has its own
+        #      install_file edge; dst is under dist/include.
+        #   3. Preprocessed OBJDIR_PP_FILES whose dest is under dist/include.
+        # We fold all three into .ninja-generated so compiles wait on them.
+        # The install-manifest track is also safe for host compiles (it
+        # only stages source-tree EXPORTS, no host-program outputs).
+        # ObjDirPath EXPORTS and OBJDIR_PP_FILES might transit through
+        # host programs, so they stay in `.ninja-generated` only.
+        track = getattr(self, "_install_tracks", {}).get("dist_include")
+        if track:
+            all_generated.append(track)
+            host_safe_generated.append(track)
+        dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
+        for _, dst in self._installs:
+            if dst.startswith(dist_include_prefix):
+                all_generated.append(dst)
+                host_safe_generated.append(dst)
+        for _, dst, _ in self._pp_installs:
+            if dst.startswith(dist_include_prefix):
+                all_generated.append(dst)
+                host_safe_generated.append(dst)
+        writer.build(
+            ".ninja-generated",
+            "phony",
+            inputs=[self._n_rel(o) for o in all_generated] if all_generated else None,
+        )
+        writer.build(
+            ".ninja-generated-host",
+            "phony",
+            inputs=(
+                [self._n_rel(o) for o in host_safe_generated]
+                if host_safe_generated
+                else None
+            ),
+        )
+        writer.newline()
+
+        # Flags are per-directory (ComputedFlags objects are emitted by
+        # context), but a source's declaring directory may differ from the
+        # Linkable's directory (e.g. js_static lives in js/src/build while
+        # js/src/vm contributes its own compiled sources). We therefore
+        # iterate every Sources/UnifiedSources/HostSources object — each
+        # carries its own `relobjdir` and `objdir`, so we can resolve flags
+        # and output paths from the source's own context.
+        emitted_objs = set()
+
+        def iter_all_sources():
+            for bucket in self._sources_by_dir.values():
+                for s in bucket:
+                    yield s, False, False
+            for bucket in self._unified_by_dir.values():
+                for s in bucket:
+                    yield s, True, False
+            for bucket in self._host_sources_by_dir.values():
+                for s in bucket:
+                    yield s, False, True
+
+        for sobj, is_unified, is_host in iter_all_sources():
+            relobjdir = sobj.relobjdir
+            objdir = sobj.objdir
+            cxxflags = self._computed_flag_list(
+                relobjdir,
+                "HOST_CXXFLAGS" if is_host else "CXXFLAGS",
+            )
+            cflags = self._computed_flag_list(
+                relobjdir,
+                "HOST_CFLAGS" if is_host else "CFLAGS",
+            )
+            asflags = self._computed_flag_list(
+                relobjdir, "SFLAGS"
+            ) + self._computed_flag_list(relobjdir, "ASFLAGS")
+
+            # For UnifiedSources, the compile inputs are the generated
+            # Unified_cpp_*.cpp files (keys of unified_source_mapping),
+            # living in objdir. For non-unified Sources/HostSources, inputs
+            # are the static_files + generated_files from `files`.
+            if is_unified and sobj.have_unified_mapping:
+                inputs = [
+                    mozpath.join(objdir, u) for u, _ in sobj.unified_source_mapping
+                ]
+            elif is_unified and not sobj.have_unified_mapping:
+                inputs = list(sobj.files)
+            else:
+                inputs = list(sobj.files)
+
+            for src in inputs:
+                ext = mozpath.splitext(src)[1].lower()
+                basename = mozpath.basename(src)
+                basename_noext = mozpath.splitext(basename)[0]
+                obj_prefix = "host_" if is_host else ""
+                obj = mozpath.join(objdir, f"{obj_prefix}{basename_noext}.obj")
+                if obj in emitted_objs:
+                    continue
+                emitted_objs.add(obj)
+                src_norm = mozpath.normsep(src)
+                extra = self._per_source_flags_for(relobjdir, src_norm)
+
+                if ext in (".cpp", ".cc", ".cxx"):
+                    rule_name = "host_cxx" if is_host else "cxx"
+                    flag_var = "host_cxxflags" if is_host else "cxxflags"
+                    flag_value = " ".join(response_arg(f) for f in cxxflags + extra)
+                elif ext == ".c":
+                    rule_name = "host_cc" if is_host else "cc"
+                    flag_var = "host_cflags" if is_host else "cflags"
+                    flag_value = " ".join(response_arg(f) for f in cflags + extra)
+                elif ext in (".S", ".s"):
+                    rule_name = "asm"
+                    flag_var = "asflags"
+                    flag_value = " ".join(response_arg(f) for f in asflags + extra)
+                else:
+                    writer.comment(f"unknown source extension for {src}")
+                    continue
+                # Host compiles depend on `.ninja-generated-host` (the
+                # subset of generated files whose producers don't
+                # transitively need a host program), avoiding the cycle
+                # host_obj → host_link → wasm2c output → .ninja-generated
+                # → host_obj while still letting host compiles wait on
+                # plain generated headers like `wabt/config.h`.
+                order_only = ".ninja-generated-host" if is_host else ".ninja-generated"
+                writer.build(
+                    self._n_rel(obj),
+                    rule_name,
+                    inputs=self._n_rel(src_norm),
+                    order_only=order_only,
+                    variables={flag_var: flag_value},
+                )
+
+    def _emit_archive_statements(self, writer):
+        """Emit archive rules for StaticLibrary (excluding rust libs which
+        are built via cargo). Only emit a real archive for libraries with
+        `no_expand_lib=True`; others are virtual groupings whose objs get
+        pulled into their parents via CommonBackend._expand_libs."""
+        writer.newline()
+        writer.comment("------ static libraries ------")
+        writer.newline()
+        for lib in self._static_libs:
+            if isinstance(lib, RustLibrary):
+                continue
+            if not getattr(lib, "no_expand_lib", False):
+                continue
+            out = self._lib_output_path(lib)
+            objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            all_archive_inputs = list(objs)
+            # Static libs from expand that are themselves real archives
+            # should still be inputs to this archive? For no_expand_lib
+            # libraries, _expand_libs returns them in `static_libs` — we
+            # include them so llvm-lib merges.
+            for static_lib in static_libs:
+                all_archive_inputs.append(self._lib_output_path(static_lib))
+            if not all_archive_inputs:
+                writer.comment(f"skip empty archive {lib.lib_name} ({lib.relobjdir})")
+                continue
+            writer.build(
+                self._n_rel(out),
+                "archive",
+                inputs=[self._n_rel(o) for o in all_archive_inputs],
+            )
+
+    def _emit_shared_link_statements(self, writer):
+        writer.newline()
+        writer.comment("------ shared libraries ------")
+        writer.newline()
+        for lib in self._shared_libs:
+            # For DIST_INSTALL'd shared libs, output_path puts the DLL at
+            # its final dist/bin/ location so downstream js.exe finds it
+            # without a separate install step.
+            out = mozpath.normsep(lib.output_path.full_path)
+            implib = mozpath.join(lib.objdir, getattr(lib, "import_name", lib.lib_name))
+            objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            link_inputs = list(objs)
+            for static_lib in static_libs:
+                link_inputs.append(self._lib_output_path(static_lib))
+            for shared_lib in shared_libs:
+                link_inputs.append(self._lib_output_path(shared_lib))
+
+            # DEFFILE / SYMBOLS_FILE: DEFFILE puts `-DEF:<relpath>` (for
+            # clang-cl) into LDFLAGS, while SYMBOLS_FILE drives the same
+            # `-DEF:<relpath>` via SharedLibrary.symbols_link_arg (which the
+            # recursive make backend folds into EXTRA_DSO_LDOPTS). We
+            # cover both by scanning LDFLAGS and also appending the
+            # symbols_link_arg if set. Resolve the path against `lib.objdir`
+            # when it came in relative, then rewrite the ldflag using a
+            # plain relpath: the ldflag is joined via `response_arg`,
+            # which escapes `$` to `$$` and would defeat the
+            # `$topsrcdir` reference `_rel` produces for topsrcdir-rooted
+            # def files (e.g. `mozglue/build/mozglue.def`). The
+            # implicit-dep list still uses `_n_rel` since that slot is
+            # not response_arg-encoded.
+            ldflags_raw = list(self._computed_flag_list(lib.relobjdir, "LDFLAGS"))
+            symbols_link_arg = getattr(lib, "symbols_link_arg", None)
+            if symbols_link_arg:
+                ldflags_raw.append(symbols_link_arg)
+            def_abs = None
+            for i, f in enumerate(ldflags_raw):
+                if f.startswith("-DEF:"):
+                    rel = f[len("-DEF:") :]
+                    if not os.path.isabs(rel):
+                        def_abs = mozpath.normpath(mozpath.join(lib.objdir, rel))
+                    else:
+                        def_abs = rel
+                    ldflags_raw[i] = "-DEF:" + mozpath.relpath(
+                        def_abs, self._topobjdir
+                    )
+                    break
+
+            implicit_deps = [def_abs] if def_abs else None
+
+            # Only pass linker-native flags (LDFLAGS) when invoking lld-link
+            # directly. CXX_LDFLAGS/C_LDFLAGS are compiler-driver flags the
+            # make backend passes through `$(CXX) -o` at link time; calling
+            # the linker ourselves means they're not applicable. The DEF
+            # path rewrite happened in the ldflags_raw loop above.
+            writer.build(
+                self._n_rel(out),
+                "link_shared",
+                inputs=[self._n_rel(o) for o in link_inputs],
+                implicit_outputs=(
+                    self._n_rel(implib) if implib and implib != out else None
+                ),
+                implicit=(
+                    [self._n_rel(d) for d in implicit_deps] if implicit_deps else None
+                ),
+                variables={
+                    "implib": self._n_rel(implib),
+                    "libs": " ".join(n_value(s) for s in os_libs),
+                    "ldflags": " ".join(response_arg(f) for f in ldflags_raw),
+                },
+            )
+
+    def _emit_program_statements(self, writer):
+        writer.newline()
+        writer.comment("------ programs ------")
+        writer.newline()
+        for p in self._programs:
+            out = p.output_path.full_path
+            objs, shared_libs, os_libs, static_libs = self._expand_libs(p)
+            link_inputs = list(objs)
+            for static_lib in static_libs:
+                link_inputs.append(self._lib_output_path(static_lib))
+            for shared_lib in shared_libs:
+                link_inputs.append(self._lib_output_path(shared_lib))
+            ldflags = list(
+                self.environment.substs.get("WIN32_EXE_DEFAULT_LDFLAGS") or []
+            )
+            passthru = self._variable_passthru.get(p.relobjdir)
+            if passthru:
+                ldflags.extend(passthru.variables.get("WIN32_EXE_LDFLAGS", []))
+            ldflags.extend(self._computed_flag_list(p.relobjdir, "LDFLAGS"))
+            writer.build(
+                self._n_rel(out),
+                "link_exe",
+                inputs=[self._n_rel(o) for o in link_inputs],
+                variables={
+                    "libs": " ".join(n_value(s) for s in os_libs),
+                    "ldflags": " ".join(response_arg(f) for f in ldflags),
+                },
+            )
+
+    def _emit_host_archive_statements(self, writer):
+        """Emit archive rules for HostLibrary. Mirrors the StaticLibrary
+        path: skip rust host libs (cargo handles them) and virtual host
+        libs (objects flow into consumers via `_expand_libs`, no real
+        archive on disk). Reuses the `archive` rule because the
+        archiver tool is shared between host and target on supported
+        Windows toolchains."""
+        real_libs = [
+            lib
+            for lib in self._host_libraries
+            if not hasattr(lib, "cargo_file") and getattr(lib, "no_expand_lib", False)
+        ]
+        if not real_libs:
+            return
+        writer.newline()
+        writer.comment("------ host static libraries ------")
+        writer.newline()
+        for lib in real_libs:
+            out = self._lib_output_path(lib)
+            objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            all_archive_inputs = list(objs)
+            for static_lib in static_libs:
+                all_archive_inputs.append(self._lib_output_path(static_lib))
+            if not all_archive_inputs:
+                writer.comment(
+                    f"skip empty host archive {lib.lib_name} ({lib.relobjdir})"
+                )
+                continue
+            writer.build(
+                self._n_rel(out),
+                "archive",
+                inputs=[self._n_rel(o) for o in all_archive_inputs],
+            )
+
+    def _emit_host_program_statements(self, writer):
+        if not self._host_programs:
+            return
+        writer.newline()
+        writer.comment("------ host programs ------")
+        writer.newline()
+        for p in self._host_programs:
+            out = p.output_path.full_path
+            objs, shared_libs, os_libs, static_libs = self._expand_libs(p)
+            link_inputs = list(objs)
+            for static_lib in static_libs:
+                link_inputs.append(self._lib_output_path(static_lib))
+            for shared_lib in shared_libs:
+                link_inputs.append(self._lib_output_path(shared_lib))
+            ldflags = list(self._computed_flag_list(p.relobjdir, "HOST_LDFLAGS"))
+            writer.build(
+                self._n_rel(out),
+                "host_link_exe",
+                inputs=[self._n_rel(o) for o in link_inputs],
+                variables={
+                    "libs": " ".join(n_value(s) for s in os_libs),
+                    "ldflags": " ".join(response_arg(f) for f in ldflags),
+                },
+            )
+
+    def _emit_generated_file_statements(self, writer):
+        """Emit a ninja rule for each GeneratedFile.
+
+        Mirrors the recursive-make backend's py_action(file_generate, ...)
+        invocation. Each GeneratedFile has one script, one method, one or
+        more outputs, zero or more inputs, and optional flags. The
+        file_generate driver produces a Makefile-style depfile which ninja
+        consumes via `deps = gcc`."""
+        writer.newline()
+        writer.comment("------ generated files ------")
+        writer.newline()
+        for g in self._generated_files:
+            if not g.script:
+                # No script: outputs are declared but produced some other way
+                # (e.g. preprocessed files tracked elsewhere). Skip.
+                continue
+            outputs = []
+            for o in g.outputs:
+                if isinstance(o, str):
+                    # outputs can be relative to g.objdir (by mozbuild
+                    # convention) or ObjDirPath-rooted (leading "!").
+                    if o.startswith("/"):
+                        full = mozpath.join(self._topobjdir, o[1:])
+                    else:
+                        full = mozpath.join(g.objdir, o)
+                else:
+                    full = mozpath.normsep(o.full_path)
+                outputs.append(full)
+            if not outputs:
+                continue
+            primary = outputs[0]
+            depfile = mozpath.join(
+                mozpath.dirname(primary), ".deps", mozpath.basename(primary) + ".pp"
+            )
+
+            inputs = []
+            for inp in g.inputs:
+                # inp is a Path; .full_path gives absolute.
+                inputs.append(mozpath.normsep(inp.full_path))
+
+            rel_inputs = [self._n_rel(i) for i in inputs]
+            # Input paths in `extra` stay absolute. Some pygen scripts
+            # (e.g. `toolkit/components/gecko-trace/scripts/schema_parser.py`)
+            # do `Path(input).relative_to(topsrcdir)` and that only
+            # works on absolute paths. The `inputs` build-edge slot
+            # still uses `_n_rel` form so the build graph stays
+            # relative; only the positional argv to the script is
+            # absolute.
+            extra_parts = list(inputs)
+            if g.flags:
+                extra_parts.extend(n_value(str(f)) for f in g.flags)
+
+            script_path = g.script
+            writer.build(
+                [self._n_rel(o) for o in outputs],
+                "pygen",
+                inputs=rel_inputs if rel_inputs else None,
+                # Script is an implicit dep so ninja rebuilds when the
+                # script changes.
+                implicit=self._n_rel(script_path),
+                variables={
+                    "script": self._n_rel(script_path),
+                    "method": n_value(g.method or "main"),
+                    "primary": self._n_rel(primary),
+                    "depfile": self._n_rel(depfile),
+                    "locale": "--locale=en-US " if g.localized else "",
+                    "extra": " ".join(extra_parts),
+                },
+            )
+
+    def _emit_install_statements(self, writer):
+        """Delegate to mozmake's `process_install_manifest` for each
+        install target. The manifests under _build_manifests/install/
+        are written by CommonBackend-derived backends at configure time
+        and already handle wildcards, pattern-links, preprocessed
+        content, etc. One ninja edge per install target, each one a
+        single Python invocation — matches mozmake's own install cost."""
+        writer.newline()
+        writer.comment("------ install manifests ------")
+        writer.newline()
+        manifests_dir = mozpath.join(self._topobjdir, "_build_manifests/install")
+        self._install_tracks = {}
+        if not os.path.isdir(manifests_dir):
+            return
+
+        manifest_to_target = {
+            "dist_include": "dist/include",
+            "dist_public": "dist/public",
+            "dist_private": "dist/private",
+            "dist_bin": "dist/bin",
+            "_tests": "_tests",
+            "_test_files": "_tests/modules",
+        }
+        for manifest_name, target_rel in manifest_to_target.items():
+            manifest_path = mozpath.join(manifests_dir, manifest_name)
+            if not os.path.exists(manifest_path):
+                continue
+            install_dir = mozpath.join(self._topobjdir, target_rel)
+            track_path = mozpath.join(
+                self._topobjdir,
+                f"install_{manifest_name}.track",
+            )
+            self._install_tracks[manifest_name] = track_path
+            writer.build(
+                self._n_rel(track_path),
+                "run_install_manifest",
+                inputs=self._n_rel(manifest_path),
+                variables={
+                    "install_dir": self._n_rel(install_dir),
+                    "track": self._n_rel(track_path),
+                },
+            )
+
+        # Generated-file installs (ObjDirPath EXPORTS etc.): batched into
+        # two groups. dist/include-bound go in one batch (feeds compiles
+        # via .ninja-generated); others (post-build OBJDIR_FILES that
+        # mirror built binaries) go in a separate batch so binary inputs
+        # don't create a dep cycle with compiles.
+        dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
+        batch_dist_include = []
+        batch_post = []
+        seen_inst = set()
+        for src, dst in self._installs:
+            if dst in seen_inst:
+                continue
+            seen_inst.add(dst)
+            if dst.startswith(dist_include_prefix):
+                batch_dist_include.append((src, dst))
+            else:
+                batch_post.append((src, dst))
+
+        def _emit_install_batch(tag, pairs):
+            if not pairs:
+                return
+            manifest_path = mozpath.join(
+                self._topobjdir,
+                f".ninja-gen-install-{tag}.manifest",
+            )
+            with self._write_file(manifest_path) as mh:
+                for src, dst in pairs:
+                    mh.write(f"{src}\t{dst}\n")
+            outputs = [dst for _, dst in pairs]
+            inputs = [src for src, _ in pairs]
+            writer.build(
+                [self._n_rel(o) for o in outputs],
+                "install_batch",
+                inputs=[self._n_rel(i) for i in inputs],
+                implicit=self._n_rel(manifest_path),
+                variables={"manifest": self._n_rel(manifest_path)},
+            )
+            return outputs
+
+        _emit_install_batch("distinc", batch_dist_include)
+        # Post batch outputs (dist/bin/dependentlibs.list etc.) feed the
+        # `install` phony so they're reachable from the default target.
+        # Without this, firefox.exe fails with "Couldn't load XPCOM"
+        # because dependentlibs.list isn't staged into dist/bin.
+        self._install_batch_post_outputs = _emit_install_batch("post", batch_post) or []
+
+        # OBJDIR_PP_FILES: preprocess the .in and install. One edge per
+        # output (no batching — each has unique defines). Mirror mozmake's
+        # `$(DEFINES) $(ACDEFINES)` order: per-dir defines first, then
+        # the global ACDEFINES from configure (which carries MOZ_BUILD_APP
+        # and similar that AppConstants.sys.mjs references).
+        acdefines = self.environment.substs.get("ACDEFINES", "")
+        seen_pp = set()
+        pp_install_outputs = []
+        for src, dst, defines in self._pp_installs:
+            if dst in seen_pp:
+                continue
+            seen_pp.add(dst)
+            def_args = []
+            for k, v in sorted(defines.items()):
+                if v is True:
+                    def_args.append(f"-D{k}")
+                elif v is False:
+                    pass
+                else:
+                    def_args.append(f"-D{k}={v}")
+            defines_str = " ".join(response_arg(a) for a in def_args)
+            if acdefines:
+                defines_str = f"{defines_str} {acdefines}" if defines_str else acdefines
+            writer.build(
+                self._n_rel(dst),
+                "pp_install",
+                inputs=self._n_rel(src),
+                variables={"defines": defines_str},
+            )
+            pp_install_outputs.append(dst)
+        # Feed pp_install outputs into the `install` phony so they're
+        # reachable from the default target (e.g. dist/bin/modules/
+        # AppConstants.sys.mjs from EXTRA_PP_JS_MODULES). The dist/include
+        # subset is already covered transitively by .ninja-generated, but
+        # listing them again is harmless.
+        self._pp_install_outputs = pp_install_outputs
+
+    def _emit_rust_statements(self, writer):
+        """Delegate Rust library builds to mozmake in the rust subdir.
+
+        The recursive-make backend's config/makefiles/rust.mk wraps a cargo
+        invocation that sets CARGO_TARGET_DIR, RUSTFLAGS, etc. We delegate
+        to mozmake for the rust subdir — same opaque-sub-build pattern
+        used for ICU."""
+        writer.newline()
+        writer.comment("------ rust libraries (opaque mozmake sub-build) ------")
+        writer.newline()
+        if not self._rust_libs:
+            return
+        for lib in self._rust_libs:
+            out = self._lib_output_path(lib)
+            depfile = mozpath.splitext(out)[0] + ".d"
+            # Match recursive-make's `_build_target_for_obj`: when a
+            # `RustLibrary` has `output_category` set (e.g. gkrust-gtest
+            # with `output_category="gtest"`), its make target is named
+            # by the category instead of `target-objects`.
+            output_category = getattr(lib, "output_category", None)
+            target_name = output_category if output_category else "target-objects"
+            writer.build(
+                self._n_rel(out),
+                "cargo_build",
+                order_only=[".ninja-generated"],
+                variables={
+                    "cargo_target": f"{n_path(lib.relobjdir)}/{target_name}",
+                    "depfile": self._n_rel(depfile),
+                },
+            )
+
+    def _lib_output_path(self, lib):
+        """Return the on-disk path of a library's output .lib / .dll.
+
+        RustLibrary's output lives under the cargo target directory
+        (`$objdir/$triple/release/jsrust.lib`), not in its `objdir`, so
+        we go through `import_path` for those."""
+        if isinstance(lib, RustLibrary):
+            return mozpath.normsep(lib.import_path.full_path)
+        if isinstance(lib, SharedLibrary):
+            return mozpath.join(lib.objdir, getattr(lib, "import_name", lib.lib_name))
+        return mozpath.join(lib.objdir, lib.lib_name or lib.basename)
