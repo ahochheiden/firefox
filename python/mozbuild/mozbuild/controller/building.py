@@ -1441,7 +1441,14 @@ class BuildDriver(MozbuildObject):
                     if key == "MOZ_PARALLEL_BUILD":
                         jobs = int(value)
 
-            if "Make" not in active_backend:
+            # Ninja can appear anywhere in BUILD_BACKENDS (the
+            # `--enable-build-backend=Ninja` alias appends), so dispatch
+            # to it whenever it's configured rather than relying on it
+            # being first.
+            if "Ninja" in all_backends:
+                backend_cls = get_backend_class("Ninja")(config)
+                status = backend_cls.build(self, output, jobs, verbose, what)
+            elif "Make" not in active_backend:
                 backend_cls = get_backend_class(active_backend)(config)
                 status = backend_cls.build(self, output, jobs, verbose, what)
 
