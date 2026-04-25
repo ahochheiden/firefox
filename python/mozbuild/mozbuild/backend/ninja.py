@@ -35,6 +35,7 @@ from mozbuild.frontend.data import (
     HostProgram,
     HostSimpleProgram,
     HostSources,
+    IPDLCollection,
     PerSourceFlag,
     Program,
     RustLibrary,
@@ -89,6 +90,16 @@ class NinjaBackend(CommonBackend):
         # chrome.manifest at install time.
         self._chrome_manifest_entries = defaultdict(set)
 
+        # IPDLCollection is a singleton — the emitter produces exactly one
+        # IPDLCollection for the whole tree, gathered from every
+        # IPDL_SOURCES / PREPROCESSED_IPDL_SOURCES declaration. Track the
+        # most recent one we receive and emit a single ipdl.py invocation
+        # for it at write time.
+        self._ipdl_collection = None
+        # Populated by `_emit_ipdl_statements`; consumed by
+        # `_emit_compile_statements` to fold into `.ninja-generated`.
+        self._ipdl_outputs = []
+
     def consume_object(self, obj):
         if not isinstance(obj, ContextDerived):
             return False
@@ -117,6 +128,8 @@ class NinjaBackend(CommonBackend):
             self._host_programs.append(obj)
         elif isinstance(obj, GeneratedFile):
             self._generated_files.append(obj)
+        elif isinstance(obj, IPDLCollection):
+            self._ipdl_collection = obj
         elif isinstance(obj, PerSourceFlag):
             self._per_source_flags[relobjdir].append(obj)
         elif isinstance(obj, ComputedFlags):
@@ -172,6 +185,19 @@ class NinjaBackend(CommonBackend):
         CommonBackend.consume_object(self, obj)
 
         return True
+
+    def _handle_ipdl_sources(
+        self,
+        ipdl_dir,
+        sorted_ipdl_sources,
+        sorted_nonstatic_ipdl_sources,
+        sorted_static_ipdl_sources,
+    ):
+        # Required by CommonBackend.consume_object for IPDLCollection. The
+        # NinjaBackend reads everything off the collection directly in
+        # `_emit_ipdl_statements`, so this stub exists only to satisfy the
+        # CommonBackend dispatch.
+        pass
 
     def consume_finished(self):
         CommonBackend.consume_finished(self)
@@ -542,6 +568,29 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
+        # IPDL codegen: a single ipdl.py invocation produces .cpp/.h files
+        # for every protocol in the tree. The recursive-make backend models
+        # this the same way (one ipdl.track target). Outputs are declared
+        # explicitly for the .cpp files (UnifiedSources reference them);
+        # .h files emerge as side effects whose paths depend on the
+        # protocol's namespace and are tracked downstream via depfiles
+        # from the consuming compile.
+        writer.rule(
+            "ipdl",
+            command=(
+                "$PYTHON $script "
+                "--sync-msg-list=$sync_msg_list "
+                "--msg-metadata=$msg_metadata "
+                "--outheaders-dir=$headers_dir "
+                "--outcpp-dir=$cpp_dir "
+                "$include_args "
+                "--file-list=$file_list"
+            ),
+            description="IPDL codegen",
+            restat=True,
+        )
+        writer.newline()
+
         # Cargo: delegate to mozmake which handles CARGO_TARGET_DIR etc.
         # RecursiveMake's per-rust-library target is
         # `<relobjdir>/target-objects`, invoked from the topobjdir
@@ -581,6 +630,9 @@ class NinjaBackend(CommonBackend):
 
         # GeneratedFile rules (CONFIGURE_DEFINE_FILES, opcode tables, etc).
         self._emit_generated_file_statements(writer)
+
+        # IPDL codegen (one rule, many declared outputs).
+        self._emit_ipdl_statements(writer)
 
         # Emit compile build statements.
         self._emit_compile_statements(writer)
@@ -750,6 +802,10 @@ class NinjaBackend(CommonBackend):
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
                 host_safe_generated.append(dst)
+        # IPDL codegen is pure-Python (no host-program transit); safe
+        # for host compiles to wait on too.
+        all_generated.extend(self._ipdl_outputs)
+        host_safe_generated.extend(self._ipdl_outputs)
         writer.build(
             ".ninja-generated",
             "phony",
@@ -1115,6 +1171,149 @@ class NinjaBackend(CommonBackend):
                     "extra": " ".join(extra_parts),
                 },
             )
+
+    def _emit_ipdl_statements(self, writer):
+        """Emit the IPDL codegen rule.
+
+        The emitter produces a single IPDLCollection for the whole tree.
+        Mirrors `RecursiveMakeBackend._handle_ipdl_sources` plus the
+        ipdl.track rule from `ipc/ipdl/Makefile.in`: each PREPROCESSED
+        IPDL source is preprocessed into the IPDL_ROOT directory under
+        its basename, then a single ipdl.py invocation consumes that set
+        plus the static IPDL sources via `--file-list ipdlsrcs.txt`.
+
+        Declared outputs are the .cpp files UnifiedSources references
+        (suffix_map from the emitter: `.ipdl` → `.cpp`/`Child.cpp`/
+        `Parent.cpp`; `.ipdlh` → `.cpp`) plus the global
+        `IPCMessageTypeName.cpp`. The .h files generated alongside have
+        protocol-namespace-dependent paths that ninja cannot predict
+        without parsing the .ipdl; those propagate to consumers via the
+        compile depfile chain.
+        """
+        col = self._ipdl_collection
+        if not col:
+            return
+
+        writer.newline()
+        writer.comment("------ IPDL codegen ------")
+        writer.newline()
+
+        ipdl_root = mozpath.normsep(col.objdir)
+        topsrc_ipdl = mozpath.join(self._topsrcdir, "ipc/ipdl")
+        headers_dir = mozpath.join(ipdl_root, "_ipdlheaders")
+        sync_msg_list = mozpath.join(topsrc_ipdl, "sync-messages.ini")
+        msg_metadata = mozpath.join(topsrc_ipdl, "message-metadata.ini")
+        ipdlsrcs_txt = mozpath.join(ipdl_root, "ipdlsrcs.txt")
+        ipdl_script = mozpath.join(topsrc_ipdl, "ipdl.py")
+
+        sorted_static = sorted(col.all_regular_sources())
+        sorted_preprocessed = sorted(col.all_preprocessed_sources())
+
+        # Per-preprocessed-IPDL preprocessor edges. The output basename
+        # lands in IPDL_ROOT so ipdl.py finds it via the file list. We
+        # reuse `pp_install` (same preprocessor invocation shape).
+        # Defines: ACDEFINES from substs (already shell-quoted -DKEY=VAL
+        # tokens) plus any DEFINES from the ipc/ipdl/ context.
+        acdefines = self.environment.substs.get("ACDEFINES", "")
+        per_dir_defines = self._computed_flag_list(col.relobjdir, "DEFINES")
+        defines_str = " ".join(per_dir_defines)
+        if acdefines:
+            defines_str = f"{defines_str} {acdefines}" if defines_str else acdefines
+
+        preprocessed_outputs = []
+        seen_pp = set()
+        for raw_src in sorted_preprocessed:
+            src = mozpath.normsep(raw_src)
+            basename = mozpath.basename(src)
+            out = mozpath.join(ipdl_root, basename)
+            if out in seen_pp:
+                continue
+            seen_pp.add(out)
+            preprocessed_outputs.append(out)
+            writer.build(
+                self._n_rel(out),
+                "pp_install",
+                inputs=self._n_rel(src),
+                variables={"defines": defines_str},
+            )
+
+        # ipdlsrcs.txt: absolute paths so ipdl.py's `open(f)` works
+        # regardless of cwd (ninja runs commands from $topobjdir, not
+        # ipc/ipdl/). Bug 1885948 in the recursive-make backend uses a
+        # file list to dodge Windows command-line length limits; the
+        # ninja path inherits that benefit.
+        all_sources_for_list = preprocessed_outputs + [
+            mozpath.normsep(s) for s in sorted_static
+        ]
+        with self._write_file(ipdlsrcs_txt) as fh:
+            for p in all_sources_for_list:
+                fh.write(f"{p}\n")
+
+        # Include search path: IPDL_ROOT (for preprocessed outputs) plus
+        # the source directory of every static source. Matches
+        # IPDLDIRS in the make backend.
+        include_dirs = [ipdl_root]
+        include_dirs.extend(
+            sorted(set(mozpath.dirname(mozpath.normsep(p)) for p in sorted_static))
+        )
+
+        # Declared outputs: per-source .cpp files + global IPCMessageTypeName.cpp.
+        outputs = []
+        for src in sorted_preprocessed + sorted_static:
+            root, ext = mozpath.splitext(mozpath.basename(src))
+            if ext == ".ipdl":
+                for suffix in ("", "Child", "Parent"):
+                    outputs.append(mozpath.join(ipdl_root, f"{root}{suffix}.cpp"))
+            elif ext == ".ipdlh":
+                outputs.append(mozpath.join(ipdl_root, f"{root}.cpp"))
+        outputs.append(mozpath.join(ipdl_root, "IPCMessageTypeName.cpp"))
+
+        # Stash for `_emit_compile_statements` to fold into `.ninja-generated`,
+        # so consumer compiles get an order_only edge on IPDL codegen.
+        self._ipdl_outputs = list(outputs)
+
+        # Inputs: preprocessed outputs + static sources + ipdlsrcs.txt +
+        # the two ini files. ipdl python modules go in `implicit` since
+        # they're rule-side deps (any .py change should re-run codegen).
+        inputs = list(preprocessed_outputs)
+        inputs.extend(mozpath.normsep(s) for s in sorted_static)
+        inputs.append(ipdlsrcs_txt)
+        inputs.append(sync_msg_list)
+        inputs.append(msg_metadata)
+
+        # ipdl_py_deps from ipc/ipdl/Makefile.in: every .py module the
+        # codegen driver imports. Replace the parse-time $(wildcard ...)
+        # with an explicit glob at backend-write time so deps are
+        # represented in the static graph.
+        ipdl_py_deps = []
+        for sub in (
+            mozpath.join(topsrc_ipdl),
+            mozpath.join(topsrc_ipdl, "ipdl"),
+            mozpath.join(topsrc_ipdl, "ipdl/cxx"),
+            mozpath.join(self._topsrcdir, "other-licenses/ply/ply"),
+        ):
+            if os.path.isdir(sub):
+                for fn in sorted(os.listdir(sub)):
+                    if fn.endswith(".py"):
+                        ipdl_py_deps.append(mozpath.join(sub, fn))
+
+        include_args = " ".join(f"-I{self._n_rel(d)}" for d in include_dirs)
+
+        writer.build(
+            [self._n_rel(o) for o in outputs],
+            "ipdl",
+            inputs=[self._n_rel(i) for i in inputs],
+            implicit=[self._n_rel(p) for p in ipdl_py_deps],
+            variables={
+                "script": self._n_rel(ipdl_script),
+                "sync_msg_list": self._n_rel(sync_msg_list),
+                "msg_metadata": self._n_rel(msg_metadata),
+                "headers_dir": self._n_rel(headers_dir),
+                "cpp_dir": self._n_rel(ipdl_root),
+                "file_list": self._n_rel(ipdlsrcs_txt),
+                "include_args": include_args,
+            },
+        )
 
     def _emit_install_statements(self, writer):
         """Delegate to mozmake's `process_install_manifest` for each
