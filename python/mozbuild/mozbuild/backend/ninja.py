@@ -29,6 +29,7 @@ from mozbuild.frontend.data import (
     ChromeManifestEntry,
     ComputedFlags,
     ContextDerived,
+    Defines,
     FinalTargetFiles,
     FinalTargetPreprocessedFiles,
     GeneratedFile,
@@ -38,6 +39,7 @@ from mozbuild.frontend.data import (
     HostSources,
     IPDLCollection,
     JARManifest,
+    LocalInclude,
     PerSourceFlag,
     Program,
     RustLibrary,
@@ -93,6 +95,14 @@ class NinjaBackend(CommonBackend):
         # add `manifest components/X.manifest` lines to the top-level
         # chrome.manifest at install time.
         self._chrome_manifest_entries = defaultdict(set)
+
+        # Per-context Defines / LocalInclude, used to expand make-style
+        # `$(DEFINES)` / `$(LOCAL_INCLUDES)` references in GeneratedFile
+        # flags (e.g. config/external/ffi/preprocess_libffi_asm.py).
+        self._defines_by_dir = defaultdict(list)  # relobjdir -> [Defines, ...]
+        self._local_includes_by_dir = defaultdict(
+            list
+        )  # relobjdir -> [LocalInclude, ...]
 
         # IPDLCollection is a singleton — the emitter produces exactly one
         # IPDLCollection for the whole tree, gathered from every
@@ -171,6 +181,10 @@ class NinjaBackend(CommonBackend):
             self._per_source_flags[relobjdir].append(obj)
         elif isinstance(obj, ComputedFlags):
             self._computed_flags[relobjdir].append(obj)
+        elif isinstance(obj, Defines):
+            self._defines_by_dir[relobjdir].append(obj)
+        elif isinstance(obj, LocalInclude):
+            self._local_includes_by_dir[relobjdir].append(obj)
         elif isinstance(obj, VariablePassthru):
             self._variable_passthru[relobjdir] = obj
         elif isinstance(obj, FinalTargetPreprocessedFiles):
@@ -390,6 +404,30 @@ class NinjaBackend(CommonBackend):
                 return split + tail
         return declared_outputs
 
+    def _expand_make_flag_refs(self, relobjdir, flag):
+        """Expand make-style `$(DEFINES)` and `$(LOCAL_INCLUDES)`
+        references in a GeneratedFile flag string.
+
+        Returns a single-element list with the joined value, matching
+        the make recipe's `'$(DEFINES)' '$(LOCAL_INCLUDES)'` shell
+        quoting. The recipe passes each as one argv entry; consumer
+        scripts (e.g. preprocess_libffi_asm.py) then `shlex.split` the
+        string into individual flags. A flag with no `$(...)` ref
+        passes through as a single-element list.
+        """
+        if flag == "$(DEFINES)":
+            parts = []
+            for d in self._defines_by_dir.get(relobjdir, ()):
+                parts.extend(d.get_defines())
+            return [" ".join(parts)]
+        if flag == "$(LOCAL_INCLUDES)":
+            parts = [
+                f"-I{self._rel_plain(li.path.full_path)}"
+                for li in self._local_includes_by_dir.get(relobjdir, ())
+            ]
+            return [" ".join(parts)]
+        return [flag]
+
     def _resolve_src(self, source_path, linkable):
         """Resolve a source path into an absolute path.
 
@@ -430,6 +468,14 @@ class NinjaBackend(CommonBackend):
         if rel.startswith("$topsrcdir/"):
             return "$topsrcdir/" + n_path(rel[len("$topsrcdir/") :])
         return n_path(rel)
+
+    def _rel_plain(self, path):
+        """Plain relative-from-topobjdir form of `path` (no
+        `$topsrcdir` reference). Use when the result is destined for a
+        `response_arg`-encoded slot — `response_arg` escapes `$` to
+        `$$`, which would convert ninja's `$topsrcdir` reference into
+        a literal `$topsrcdir` in the recipe argv."""
+        return mozpath.relpath(mozpath.normsep(str(path)), self._topobjdir)
 
     # ---------------------------------------------------------------------
     # build.ninja emission
@@ -1574,7 +1620,14 @@ class NinjaBackend(CommonBackend):
             # absolute.
             extra_parts = list(inputs)
             if g.flags:
-                extra_parts.extend(n_value(str(f)) for f in g.flags)
+                # Expand make-style `$(DEFINES)` / `$(LOCAL_INCLUDES)`
+                # references that some scripts (e.g.
+                # config/external/ffi/preprocess_libffi_asm.py) embed in
+                # their flag list. Make would expand them at recipe
+                # time; ninja invokes commands directly, so substitute
+                # here using the GeneratedFile's context.
+                for f in g.flags:
+                    extra_parts.extend(self._expand_make_flag_refs(g.relobjdir, str(f)))
 
             script_path = g.script
             writer.build(
@@ -1590,7 +1643,12 @@ class NinjaBackend(CommonBackend):
                     "primary": self._n_rel(primary),
                     "depfile": self._n_rel(depfile),
                     "locale": "--locale=en-US " if g.localized else "",
-                    "extra": " ".join(extra_parts),
+                    # `response_arg` (not `n_value`) so joined-string
+                    # entries from `_expand_make_flag_refs` (e.g. the
+                    # `-D... -D...` collapsed `$(DEFINES)`) survive
+                    # `CreateProcess` argv parsing as one argv entry,
+                    # matching make's `'$(DEFINES)'` shell quoting.
+                    "extra": " ".join(response_arg(p) for p in extra_parts),
                 },
             )
 
