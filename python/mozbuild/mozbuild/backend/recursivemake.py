@@ -1926,9 +1926,6 @@ class RecursiveMakeBackend(MakeBackend):
             % " ".join(sorted(webidls.all_non_static_basenames()))
         )
         mk.add_statement(
-            "globalgen_sources := %s" % " ".join(sorted(global_define_files))
-        )
-        mk.add_statement(
             "test_sources := %s"
             % " ".join(sorted("%sBinding.cpp" % s for s in webidls.all_test_stems()))
         )
@@ -1956,12 +1953,6 @@ class RecursiveMakeBackend(MakeBackend):
                 "$(RM) $@",
                 "$(call py_action,preprocessor $@,$(DEFINES) $(ACDEFINES) $< -o $@)",
             ])
-
-        self._add_unified_build_rules(
-            mk,
-            unified_source_mapping,
-            unified_files_makefile_variable="unified_binding_cpp_files",
-        )
 
         webidls_mk = mozpath.join(bindings_dir, "webidlsrcs.mk")
         with self._write_file(webidls_mk) as fh:
