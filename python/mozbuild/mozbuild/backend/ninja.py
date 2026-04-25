@@ -118,6 +118,15 @@ class NinjaBackend(CommonBackend):
         # `.ninja-generated` by `_emit_compile_statements`.
         self._webidl_outputs = []
 
+        # XPIDL: captured by the `_handle_idl_manager` override (called from
+        # `CommonBackend.consume_finished` if any XPIDL_MODULE was seen).
+        # We stash the manager and emit per-module + aggregate-link edges
+        # at write time.
+        self._xpidl_manager = None
+        # Populated by `_emit_xpidl_statements`; folded into
+        # `.ninja-generated` by `_emit_compile_statements`.
+        self._xpidl_outputs = []
+
     def consume_object(self, obj):
         if not isinstance(obj, ContextDerived):
             return False
@@ -238,6 +247,11 @@ class NinjaBackend(CommonBackend):
             sorted(mozpath.normsep(f) for f in expected_build_output_files),
             sorted(global_define_files),
         )
+
+    def _handle_idl_manager(self, manager):
+        # Required by CommonBackend.consume_finished. Stash the XPIDLManager
+        # so `_emit_xpidl_statements` can iterate `manager.modules`.
+        self._xpidl_manager = manager
 
     def consume_finished(self):
         CommonBackend.consume_finished(self)
@@ -704,6 +718,39 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
+        # XPIDL per-module: `xpidl-process.py` reads the module's .idl files
+        # and writes one .h + two .rs files per stem, plus `<module>.xpt`
+        # and `<module>.d.json` for the module. The action also writes a
+        # gcc-style depfile (`<deps_dir>/<module>.pp`) tracking included
+        # IDLs and the Python modules of the parser.
+        writer.rule(
+            "xpidl_module",
+            command=(
+                "$PYTHON $script "
+                "--depsdir $deps_dir "
+                "--bindings-conf $bindings_conf "
+                "$include_args "
+                "$header_dir $xpcrs_dir $xpt_dir "
+                "$module $idl_files"
+            ),
+            description="XPIDL $module",
+            deps="gcc",
+            depfile="$depfile",
+            restat=True,
+        )
+        writer.newline()
+
+        # XPIDL aggregate link: `xptcodegen.py` consumes every per-module
+        # `<module>.xpt` and produces the singleton `xptdata.cpp` + the
+        # `xptdata.h` that lands in dist/include.
+        writer.rule(
+            "xpidl_link",
+            command="$PYTHON $script $outfile $outheader $xpts",
+            description="XPIDL link",
+            restat=True,
+        )
+        writer.newline()
+
         # Cargo: delegate to mozmake which handles CARGO_TARGET_DIR etc.
         # RecursiveMake's per-rust-library target is
         # `<relobjdir>/target-objects`, invoked from the topobjdir
@@ -749,6 +796,9 @@ class NinjaBackend(CommonBackend):
 
         # WebIDL codegen (one rule, many declared outputs).
         self._emit_webidl_statements(writer)
+
+        # XPIDL codegen (one rule per module, one aggregate link rule).
+        self._emit_xpidl_statements(writer)
 
         # Emit compile build statements.
         self._emit_compile_statements(writer)
@@ -945,12 +995,14 @@ class NinjaBackend(CommonBackend):
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
                 host_safe_generated.append(dst)
-        # IPDL and WebIDL codegen are pure-Python (no host-program
-        # transit); safe for host compiles to wait on too.
+        # IPDL, WebIDL, and XPIDL codegen are pure-Python (no
+        # host-program transit); safe for host compiles to wait on too.
         all_generated.extend(self._ipdl_outputs)
         host_safe_generated.extend(self._ipdl_outputs)
         all_generated.extend(self._webidl_outputs)
         host_safe_generated.extend(self._webidl_outputs)
+        all_generated.extend(self._xpidl_outputs)
+        host_safe_generated.extend(self._xpidl_outputs)
         writer.build(
             ".ninja-generated",
             "phony",
@@ -1804,6 +1856,134 @@ class NinjaBackend(CommonBackend):
                 "depfile": self._rel_n_path(depfile),
             },
         )
+
+    def _emit_xpidl_statements(self, writer):
+        """Emit XPIDL per-module rules and the aggregate link rule.
+
+        Mirrors `RecursiveMakeBackend._handle_idl_manager` plus the
+        `%.xpt:` and `xptdata.cpp` rules from
+        `config/makefiles/xpidl/Makefile.in`. One ninja edge per
+        `XPIDLModule` invokes `xpidl-process.py` over the module's
+        `.idl` files; outputs are the per-stem `.h` / `.rs` files
+        landing in `dist/include` / `dist/xpcrs`, plus `<module>.xpt`
+        and `<module>.d.json`. A single `xpidl_link` edge then merges
+        every `<module>.xpt` into `xptdata.cpp` + `dist/include/xptdata.h`.
+        """
+        manager = self._xpidl_manager
+        if not manager or not manager.modules:
+            return
+
+        writer.newline()
+        writer.comment("------ XPIDL codegen ------")
+        writer.newline()
+
+        topobjdir = self._topobjdir
+        topsrcdir = self._topsrcdir
+        dist_include = mozpath.join(topobjdir, "dist/include")
+        dist_xpcrs = mozpath.join(topobjdir, "dist/xpcrs")
+        # Per recursive-make: the .xpt files and per-module deps live
+        # alongside the make-driven xpidl Makefile, under
+        # `config/makefiles/xpidl/`. Match that exactly so xptdata.cpp
+        # consumers and any external tooling find them in the same place.
+        xpt_dir = mozpath.join(topobjdir, "config/makefiles/xpidl")
+        deps_dir = mozpath.join(xpt_dir, ".deps")
+
+        process_py = mozpath.join(
+            topsrcdir, "python/mozbuild/mozbuild/action/xpidl-process.py"
+        )
+        xptcodegen_py = mozpath.join(topsrcdir, "xpcom/reflect/xptinfo/xptcodegen.py")
+        bindings_conf = mozpath.join(topsrcdir, "dom/bindings/Bindings.conf")
+        perfecthash_py = mozpath.join(topsrcdir, "xpcom/ds/tools/perfecthash.py")
+
+        # `all_idl_dirs` is the union of every directory containing an .idl
+        # in any module — every per-module invocation gets the same -I list
+        # so cross-module includes resolve.
+        all_idl_dirs = sorted({
+            mozpath.dirname(idl)
+            for m in manager.modules.values()
+            for idl in m.idl_files
+        })
+        # `xpidl-process.py` joins each `-I` arg with topsrcdir before
+        # use, so emit topsrcdir-relative paths (not topobjdir-relative)
+        # to match what the script expects.
+        include_args = " ".join(
+            f"-I{mozpath.relpath(d, self._topsrcdir)}" for d in all_idl_dirs
+        )
+
+        # Track every header output for `.ninja-generated` (consumer
+        # compiles need them before they can resolve `#include`s).
+        header_outputs = []
+        xpt_files = []
+
+        for module_name in sorted(manager.modules.keys()):
+            module = manager.modules[module_name]
+            idl_files = sorted(module.idl_files)
+            stems = sorted(
+                set(mozpath.splitext(mozpath.basename(p))[0] for p in idl_files)
+            )
+
+            outputs = []
+            for stem in stems:
+                outputs.append(mozpath.join(dist_include, f"{stem}.h"))
+                outputs.append(mozpath.join(dist_xpcrs, "rt", f"{stem}.rs"))
+                outputs.append(mozpath.join(dist_xpcrs, "bt", f"{stem}.rs"))
+                header_outputs.append(mozpath.join(dist_include, f"{stem}.h"))
+
+            xpt_path = mozpath.join(xpt_dir, f"{module_name}.xpt")
+            ts_path = mozpath.join(xpt_dir, f"{module_name}.d.json")
+            outputs.append(xpt_path)
+            outputs.append(ts_path)
+            xpt_files.append(xpt_path)
+
+            depfile = mozpath.join(deps_dir, f"{module_name}.pp")
+
+            writer.build(
+                [self._rel_n_path(o) for o in outputs],
+                "xpidl_module",
+                inputs=[self._rel_n_path(p) for p in idl_files],
+                implicit=[
+                    self._rel_n_path(process_py),
+                    self._rel_n_path(bindings_conf),
+                ],
+                variables={
+                    "script": self._rel_n_path(process_py),
+                    "deps_dir": self._rel_n_path(deps_dir),
+                    "bindings_conf": self._rel_n_path(bindings_conf),
+                    "include_args": include_args,
+                    "header_dir": self._rel_n_path(dist_include),
+                    "xpcrs_dir": self._rel_n_path(dist_xpcrs),
+                    "xpt_dir": self._rel_n_path(xpt_dir),
+                    "module": module_name,
+                    "idl_files": " ".join(self._rel_n_path(p) for p in idl_files),
+                    "depfile": self._rel_n_path(depfile),
+                },
+            )
+
+        # Aggregate link: one xptdata.cpp + dist/include/xptdata.h from
+        # every module's .xpt. The C++ output's location matches what
+        # the make backend writes (xpcom/reflect/xptinfo/xptdata.cpp).
+        xptdata_cpp = mozpath.join(topobjdir, "xpcom/reflect/xptinfo/xptdata.cpp")
+        xptdata_h = mozpath.join(dist_include, "xptdata.h")
+        writer.build(
+            [self._rel_n_path(xptdata_cpp), self._rel_n_path(xptdata_h)],
+            "xpidl_link",
+            inputs=[self._rel_n_path(p) for p in sorted(xpt_files)],
+            implicit=[
+                self._rel_n_path(xptcodegen_py),
+                self._rel_n_path(perfecthash_py),
+            ],
+            variables={
+                "script": self._rel_n_path(xptcodegen_py),
+                "outfile": self._rel_n_path(xptdata_cpp),
+                "outheader": self._rel_n_path(xptdata_h),
+                "xpts": " ".join(self._rel_n_path(p) for p in sorted(xpt_files)),
+            },
+        )
+        header_outputs.append(xptdata_h)
+
+        # Stash for `_emit_compile_statements` to fold into `.ninja-generated`,
+        # so consumer compiles get an order_only edge on XPIDL codegen.
+        self._xpidl_outputs = list(header_outputs)
 
     def _emit_install_statements(self, writer):
         """Emit one `run_install_manifest` edge per install target.
