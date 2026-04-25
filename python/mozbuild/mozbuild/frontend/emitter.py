@@ -215,6 +215,21 @@ class TreeMetadataEmitter(LoggingMixin):
 
                 yield collection
 
+                # WebIDL-generated binding .cpp files (global-define files
+                # plus the unified binding shards) are compiled through
+                # the standard SOURCES path.
+                if isinstance(collection, WebIDLCollection):
+                    bindings_context = contexts[os.path.normcase(root)]
+                    yield Sources(
+                        bindings_context,
+                        static_files=(),
+                        generated_files=tuple(
+                            ObjDirPath(bindings_context, "!" + f).full_path
+                            for f in collection.all_source_files()
+                        ),
+                        canonical_suffix=".cpp",
+                    )
+
         # Next do FINAL_LIBRARY linkage.
         for lib in (l for libs in self._libs.values() for l in libs):
             if not isinstance(lib, (StaticLibrary, RustLibrary)) or not lib.link_into:

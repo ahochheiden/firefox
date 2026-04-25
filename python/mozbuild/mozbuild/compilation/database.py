@@ -191,8 +191,8 @@ class CompileDBBackend(CommonBackend):
         expected_build_output_files,
         global_define_files,
     ):
-        for f in unified_source_mapping:
-            self._build_db_line(bindings_dir, None, self.environment, f[0], ".cpp")
+        # WebIDL codegen .cpp files are emitted as Sources.
+        pass
 
     COMPILERS = {
         ".c": "CC",
