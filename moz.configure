@@ -540,6 +540,7 @@ set_config("MOZ_NINJA_EXPERIMENTAL_EXPLICIT_RUSTC_EDGES", ninja_explicit_rustc_e
     "--disable-compile-environment",
     "--enable-project",
     "--enable-application",
+    ninja_backend,
     "--help",
 )
 @imports("sys")
@@ -550,6 +551,7 @@ def build_backend_defaults(
     compile_environment,
     project,
     application,
+    ninja_backend,
     _,
 ):
     if application:
@@ -570,6 +572,8 @@ def build_backend_defaults(
         all_backends.append("VisualStudio")
     if compile_environment and project not in ("memory", "tools/update-programs"):
         all_backends.append("Clangd")
+    if ninja_backend:
+        all_backends.insert(0, "Ninja")
     return tuple(all_backends) or None
 
 
