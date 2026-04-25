@@ -34,6 +34,7 @@ from mozbuild.frontend.data import (
     HostSimpleProgram,
     HostSources,
     IPDLCollection,
+    JARManifest,
     PerSourceFlag,
     Program,
     RustLibrary,
@@ -132,6 +133,9 @@ class NinjaBackend(CommonBackend):
         self._wasm_sources_by_dir = defaultdict(list)  # relobjdir -> [WasmSources, ...]
         self._wasm_libraries = []
 
+        # jar.mn manifests packaged via mozbuild.action.jar_maker.
+        self._jar_manifests = []
+
     def consume_object(self, obj):
         if not isinstance(obj, ContextDerived):
             return False
@@ -168,6 +172,8 @@ class NinjaBackend(CommonBackend):
             self._generated_files.append(obj)
         elif isinstance(obj, IPDLCollection):
             self._ipdl_collection = obj
+        elif isinstance(obj, JARManifest):
+            self._jar_manifests.append(obj)
         elif isinstance(obj, PerSourceFlag):
             self._per_source_flags[relobjdir].append(obj)
         elif isinstance(obj, ComputedFlags):
@@ -848,6 +854,26 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
+        # jar.mn packaging: `jar_runner` runs jar_maker and touches the
+        # stamp file in one Python process (ninja's `CreateProcess`
+        # invocation has no shell, so `&& touch` would not work).
+        # jar_maker preprocesses jar.mn entries and writes them to
+        # `$final_target` in the configured format (typically `flat`,
+        # files copied to dist/bin). The stamp is the declared output;
+        # actual chrome files are tracked indirectly. restat=1 so
+        # re-runs that produce identical output don't dirty downstream.
+        writer.rule(
+            "jar_maker",
+            command=(
+                "$PYTHON -m mozbuild.action.jar_runner $stamp "
+                "-d $final_target -t $topsrcdir -f $jar_format "
+                "$jar_args $defines $jar_manifest"
+            ),
+            description="JAR $jar_manifest",
+            restat=True,
+        )
+        writer.newline()
+
         # Cargo: delegate to mozmake which handles CARGO_TARGET_DIR etc.
         # RecursiveMake's per-rust-library target is
         # `<relobjdir>/target-objects`, invoked from the topobjdir
@@ -896,6 +922,9 @@ class NinjaBackend(CommonBackend):
 
         # XPIDL codegen (one rule per module, one aggregate link rule).
         self._emit_xpidl_statements(writer)
+
+        # jar.mn packaging (one rule per JARManifest).
+        self._emit_jar_statements(writer)
 
         # Emit compile build statements.
         self._emit_compile_statements(writer)
@@ -979,6 +1008,9 @@ class NinjaBackend(CommonBackend):
         ]
         install_outputs += [
             self._rel_n_path(o) for o in getattr(self, "_pp_install_outputs", ())
+        ]
+        install_outputs += [
+            self._rel_n_path(s) for s in getattr(self, "_jar_maker_stamps", ())
         ]
 
         all_groups = []
@@ -2264,6 +2296,113 @@ class NinjaBackend(CommonBackend):
         # Stash for `_emit_compile_statements` to fold into `.ninja-generated`,
         # so consumer compiles get an order_only edge on XPIDL codegen.
         self._xpidl_outputs = list(header_outputs)
+
+    def _emit_jar_statements(self, writer):
+        """Emit `jar_maker` edges per `JARManifest`.
+
+        Mirrors `config/rules.mk`'s `JAR_MANIFEST` recipe: invokes
+        `mozbuild.action.jar_maker` with `-d $(FINAL_TARGET) -t $(topsrcdir)
+        -f $(MOZ_JAR_MAKER_FILE_FORMAT) --relativesrcdir=<relsrcdir>`. Only
+        en-US is emitted in the build graph; non-en-US locales are staged
+        at command time via `mach langpack` / `mach repackage-zip`
+        consuming `staging-spec.json`.
+        """
+        self._jar_maker_stamps = []
+        if not self._jar_manifests:
+            return
+
+        writer.newline()
+        writer.comment("------ jar.mn packaging ------")
+        writer.newline()
+
+        jar_format = self.environment.substs.get("MOZ_JAR_MAKER_FILE_FORMAT", "jar")
+        acdefines = self.environment.substs.get("ACDEFINES", "")
+
+        # Conservative implicit deps: jar.mn entries can reference any
+        # `!path` GeneratedFile output (e.g. `aiwindow/manifest.json`
+        # from a process_tokens.py pygen rule). Only the
+        # `required_before_compile`/`required_during_compile` subset
+        # gets folded into `.ninja-generated`, so make every jar_maker
+        # edge wait on all generated outputs. Mozmake gets this via
+        # tier ordering (jar_maker runs in `misc` after `pre-compile`).
+        all_gen_outputs = []
+        for g in self._generated_files:
+            if not g.script:
+                continue
+            declared = []
+            for o in g.outputs:
+                if isinstance(o, str):
+                    if o.startswith("/"):
+                        declared.append(mozpath.join(self._topobjdir, o[1:]))
+                    else:
+                        declared.append(mozpath.join(g.objdir, o))
+                else:
+                    declared.append(mozpath.normsep(o.full_path))
+            if not declared:
+                continue
+            # Apply `--num-outputs N` expansion (wasm2c) so we depend on
+            # the actually-produced `<base>_0.c` ... `<base>_{N-1}.c`,
+            # not the unwritten primary.
+            all_gen_outputs.extend(
+                self._expand_num_outputs_outputs(declared[0], declared, g.flags or ())
+            )
+
+        for jar in self._jar_manifests:
+            jar_path = mozpath.normsep(jar.path.full_path)
+            final_target = mozpath.join(self._topobjdir, jar.install_target)
+            # Per-dir DEFINES come from moz.build's `DEFINES["KEY"] = ...`
+            # (e.g. toolkit/content/moz.build sets TOPOBJDIR which
+            # buildconfig.html references). The emitter delivers those as
+            # `Defines` objects, not via ComputedFlags.
+            per_dir_defines = []
+            for d in self._defines_by_dir.get(jar.relobjdir, ()):
+                per_dir_defines.extend(d.get_defines())
+
+            locale_srcdir = mozpath.join(jar.srcdir, "en-US")
+
+            # Per-dir DEFINES + ACDEFINES + AB_CD=en-US. Per-dir defines
+            # can contain spaces in their values (e.g.
+            # `-DCC=clang-cl.exe -fms-compatibility-version=19.50`);
+            # quote each so CreateProcess preserves them as single
+            # args. ACDEFINES is already shell-quoted by configure;
+            # pass through as-is.
+            defines_parts = [response_arg(d) for d in per_dir_defines]
+            if acdefines:
+                defines_parts.append(acdefines)
+            defines_parts.append("-DAB_CD=en-US")
+            defines_str = " ".join(defines_parts)
+
+            stamp = mozpath.join(jar.objdir, ".jar-maker.stamp")
+            # `-s <jar.objdir>` lets jar_maker find generated source
+            # files (e.g. `!aiwindow/manifest.json`) — mozmake gets
+            # this for free because each Makefile runs in its own
+            # objdir (jar.py auto-adds os.getcwd() to its search path),
+            # but our ninja invocation runs from $topobjdir.
+            jar_args = [
+                f"--relativesrcdir={mozpath.normsep(jar.relsrcdir)}",
+                f"-s {self._rel_n_path(jar.objdir)}",
+                f"-c {self._rel_n_path(locale_srcdir)}",
+            ]
+            writer.build(
+                self._rel_n_path(stamp),
+                "jar_maker",
+                inputs=self._rel_n_path(jar_path),
+                implicit=(
+                    [self._rel_n_path(o) for o in all_gen_outputs]
+                    if all_gen_outputs
+                    else None
+                ),
+                variables={
+                    "final_target": self._rel_n_path(final_target),
+                    "topsrcdir": self._rel_n_path(self._topsrcdir),
+                    "jar_format": n_value(jar_format),
+                    "jar_args": " ".join(jar_args),
+                    "defines": defines_str,
+                    "jar_manifest": self._rel_n_path(jar_path),
+                    "stamp": self._rel_n_path(stamp),
+                },
+            )
+            self._jar_maker_stamps.append(stamp)
 
     def _emit_install_statements(self, writer):
         """Emit one `run_install_manifest` edge per install target.
