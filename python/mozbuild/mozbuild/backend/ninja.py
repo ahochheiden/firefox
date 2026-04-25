@@ -106,6 +106,15 @@ class NinjaBackend(CommonBackend):
         # `_emit_compile_statements` to fold into `.ninja-generated`.
         self._ipdl_outputs = []
 
+        # WebIDL: captured by the `_handle_webidl_build` override (called by
+        # `CommonBackend._handle_webidl_collection` after writing
+        # file-lists.json and the unified source files). We stash the
+        # parameters and emit the rule + outputs at write time.
+        self._webidl = None
+        # Populated by `_emit_webidl_statements`; folded into
+        # `.ninja-generated` by `_emit_compile_statements`.
+        self._webidl_outputs = []
+
     def consume_object(self, obj):
         if not isinstance(obj, ContextDerived):
             return False
@@ -206,6 +215,26 @@ class NinjaBackend(CommonBackend):
         # `_emit_ipdl_statements`, so this stub exists only to satisfy the
         # CommonBackend dispatch.
         pass
+
+    def _handle_webidl_build(
+        self,
+        bindings_dir,
+        unified_source_mapping,
+        webidls,
+        expected_build_output_files,
+        global_define_files,
+    ):
+        # Required by CommonBackend._handle_webidl_collection (which itself
+        # has already written file-lists.json and the unified .cpp shards
+        # before reaching us). Stash the parameters; emit the ninja rule
+        # at write time.
+        self._webidl = (
+            mozpath.normsep(bindings_dir),
+            sorted(unified_source_mapping),
+            webidls,
+            sorted(mozpath.normsep(f) for f in expected_build_output_files),
+            sorted(global_define_files),
+        )
 
     def consume_finished(self):
         CommonBackend.consume_finished(self)
@@ -656,6 +685,22 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
+        # WebIDL codegen: `mozbuild.action.webidl` reads file-lists.json
+        # (written at backend-write time by CommonBackend._handle_webidl_collection)
+        # and runs WebIDLCodegenManager.generate_build_files(), which writes
+        # all bindings and a Make-format depfile (codegen.pp). Ninja consumes
+        # the depfile via deps=gcc; restat=1 catches writeifmodified-style
+        # no-ops on rerun.
+        writer.rule(
+            "webidl",
+            command="$PYTHON -m mozbuild.action.webidl",
+            description="WebIDL codegen",
+            deps="gcc",
+            depfile="$depfile",
+            restat=True,
+        )
+        writer.newline()
+
         # Cargo: delegate to mozmake which handles CARGO_TARGET_DIR etc.
         # RecursiveMake's per-rust-library target is
         # `<relobjdir>/target-objects`, invoked from the topobjdir
@@ -698,6 +743,9 @@ class NinjaBackend(CommonBackend):
 
         # IPDL codegen (one rule, many declared outputs).
         self._emit_ipdl_statements(writer)
+
+        # WebIDL codegen (one rule, many declared outputs).
+        self._emit_webidl_statements(writer)
 
         # Emit compile build statements.
         self._emit_compile_statements(writer)
@@ -894,10 +942,12 @@ class NinjaBackend(CommonBackend):
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
                 host_safe_generated.append(dst)
-        # IPDL codegen is pure-Python (no host-program transit); safe
-        # for host compiles to wait on too.
+        # IPDL and WebIDL codegen are pure-Python (no host-program
+        # transit); safe for host compiles to wait on too.
         all_generated.extend(self._ipdl_outputs)
         host_safe_generated.extend(self._ipdl_outputs)
+        all_generated.extend(self._webidl_outputs)
+        host_safe_generated.extend(self._webidl_outputs)
         writer.build(
             ".ninja-generated",
             "phony",
@@ -1631,6 +1681,124 @@ class NinjaBackend(CommonBackend):
                 "cpp_dir": self._rel_n_path(ipdl_root),
                 "file_list": self._rel_n_path(ipdlsrcs_txt),
                 "include_args": include_args,
+            },
+        )
+
+    def _emit_webidl_statements(self, writer):
+        """Emit the WebIDL codegen rule.
+
+        Mirrors `RecursiveMakeBackend._handle_webidl_build` plus the
+        `webidl.stub` rule from `dom/bindings/Makefile.in`: each
+        preprocessed `.webidl` is preprocessed into the bindings
+        directory under its basename, then a single
+        `mozbuild.action.webidl` invocation reads `file-lists.json`
+        (already written by `CommonBackend._handle_webidl_collection`)
+        and produces every binding `.h`/`.cpp` plus the global-define
+        files.
+
+        `expected_build_output_files` is the authoritative output set
+        returned by `WebIDLCodegenManager.expected_build_output_files`,
+        passed in by the CommonBackend hook.
+
+        Cross-rule dependencies (Bindings.conf, the bindings parser, the
+        codegen modules) are tracked dynamically through the depfile
+        (`codegen.pp`) the manager writes; ninja consumes it via
+        `deps = gcc`.
+        """
+        if not self._webidl:
+            return
+        (
+            bindings_dir,
+            unified_source_mapping,
+            webidls,
+            expected_build_output_files,
+            global_define_files,
+        ) = self._webidl
+
+        writer.newline()
+        writer.comment("------ WebIDL codegen ------")
+        writer.newline()
+
+        file_lists_json = mozpath.join(bindings_dir, "file-lists.json")
+        depfile = mozpath.join(bindings_dir, "codegen.pp")
+
+        # Per-preprocessed-WebIDL preprocessor edges. The preprocessed
+        # output basename lands in bindings_dir; the codegen reads from
+        # there (and from static .webidl source paths) per file-lists.json.
+        # ACDEFINES + per-dir DEFINES match make's
+        # `$(DEFINES) $(ACDEFINES)` substitution.
+        acdefines = self.environment.substs.get("ACDEFINES", "")
+        webidl_relobjdir = mozpath.relpath(bindings_dir, self._topobjdir)
+        per_dir_defines = self._computed_flag_list(webidl_relobjdir, "DEFINES")
+        defines_str = " ".join(per_dir_defines)
+        if acdefines:
+            defines_str = f"{defines_str} {acdefines}" if defines_str else acdefines
+
+        sorted_pp = sorted(webidls.all_preprocessed_sources())
+        preprocessed_outputs = []
+        seen_pp = set()
+        for raw_src in sorted_pp:
+            src = mozpath.normsep(raw_src)
+            basename = mozpath.basename(src)
+            out = mozpath.join(bindings_dir, basename)
+            if out in seen_pp:
+                continue
+            seen_pp.add(out)
+            preprocessed_outputs.append(out)
+            writer.build(
+                self._rel_n_path(out),
+                "pp_install",
+                inputs=self._rel_n_path(src),
+                variables={"defines": defines_str},
+            )
+
+        # Stash outputs for `_emit_compile_statements`.
+        self._webidl_outputs = list(expected_build_output_files)
+
+        # Inputs: file-lists.json (the canonical first-run trigger),
+        # preprocessed outputs (now landed in bindings_dir), every
+        # static webidl path, and the objdir paths for generated webidl
+        # sources (GENERATED_WEBIDL_FILES like CSSCounterStyleRule.webidl,
+        # which are GeneratedFile outputs landing in bindings_dir). The
+        # static-source list comes from all_static_sources() — sources,
+        # generated_events_sources, test_sources — but excludes
+        # generated_sources, which we wire explicitly here so the webidl
+        # edge waits for the GeneratedFile producers. file-lists.json
+        # references all of these by their bindings_dir path.
+        inputs = [file_lists_json]
+        inputs.extend(preprocessed_outputs)
+        inputs.extend(mozpath.normsep(s) for s in sorted(webidls.all_static_sources()))
+        for src in sorted(webidls.generated_sources):
+            inputs.append(mozpath.join(bindings_dir, mozpath.basename(src)))
+
+        # Implicit Python deps: `mozwebidlcodegen` machinery + the
+        # `dom/bindings/` Python modules (Codegen.py, Configuration.py,
+        # parser/WebIDL.py, etc.) plus the action wrapper. Glob at
+        # backend-write time. Subsequent reruns also pick up dep changes
+        # via codegen.pp's gcc-format depfile.
+        topsrc_bindings = mozpath.join(self._topsrcdir, "dom/bindings")
+        webidl_py_deps = []
+        for sub in (
+            topsrc_bindings,
+            mozpath.join(topsrc_bindings, "mozwebidlcodegen"),
+            mozpath.join(topsrc_bindings, "parser"),
+            mozpath.join(self._topsrcdir, "python/mozbuild/mozbuild/action"),
+        ):
+            if os.path.isdir(sub):
+                for fn in sorted(os.listdir(sub)):
+                    if fn.endswith(".py"):
+                        webidl_py_deps.append(mozpath.join(sub, fn))
+        # Bindings.conf is a config file, not a .py — pull it in explicitly.
+        bindings_conf = mozpath.join(topsrc_bindings, "Bindings.conf")
+        webidl_py_deps.append(bindings_conf)
+
+        writer.build(
+            [self._rel_n_path(o) for o in expected_build_output_files],
+            "webidl",
+            inputs=[self._rel_n_path(i) for i in inputs],
+            implicit=[self._rel_n_path(p) for p in webidl_py_deps],
+            variables={
+                "depfile": self._rel_n_path(depfile),
             },
         )
 
