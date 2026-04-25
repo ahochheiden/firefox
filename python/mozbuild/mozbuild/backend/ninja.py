@@ -40,12 +40,14 @@ from mozbuild.frontend.data import (
     PerSourceFlag,
     Program,
     RustLibrary,
+    SandboxedWasmLibrary,
     SharedLibrary,
     SimpleProgram,
     Sources,
     StaticLibrary,
     UnifiedSources,
     VariablePassthru,
+    WasmSources,
 )
 
 
@@ -127,6 +129,12 @@ class NinjaBackend(CommonBackend):
         # `.ninja-generated` by `_emit_compile_statements`.
         self._xpidl_outputs = []
 
+        # Wasm: WASM_SOURCES compile to wasm objects via WASM_CC/WASM_CXX,
+        # and SANDBOXED_WASM_LIBRARY_NAME links them into a single .wasm
+        # binary that downstream `GeneratedFile` rules (e.g. wasm2c) consume.
+        self._wasm_sources_by_dir = defaultdict(list)  # relobjdir -> [WasmSources, ...]
+        self._wasm_libraries = []
+
     def consume_object(self, obj):
         if not isinstance(obj, ContextDerived):
             return False
@@ -141,8 +149,12 @@ class NinjaBackend(CommonBackend):
             self._sources_by_dir[relobjdir].append(obj)
         elif isinstance(obj, HostSources):
             self._host_sources_by_dir[relobjdir].append(obj)
+        elif isinstance(obj, WasmSources):
+            self._wasm_sources_by_dir[relobjdir].append(obj)
         elif isinstance(obj, RustLibrary):
             self._rust_libs.append(obj)
+        elif isinstance(obj, SandboxedWasmLibrary):
+            self._wasm_libraries.append(obj)
         elif isinstance(obj, StaticLibrary):
             self._static_libs.append(obj)
         elif isinstance(obj, SharedLibrary):
@@ -344,6 +356,37 @@ class NinjaBackend(CommonBackend):
         basename = mozpath.splitext(mozpath.basename(source_path))[0]
         return mozpath.join(linkable.objdir, f"{obj_prefix}{basename}.{obj_suffix}")
 
+    def _expand_num_outputs_outputs(self, primary, declared_outputs, flags):
+        """If `flags` contains `--num-outputs N`, replace the primary
+        output's `<base>.<ext>` form with the N split forms
+        `<base>_0.<ext>` ... `<base>_{N-1}.<ext>` that wasm2c produces.
+
+        Used by `_emit_generated_file_statements`: GeneratedFile only
+        declares the primary, but wasm2c with `--num-outputs N` actually
+        writes split files instead of the primary. Ninja needs the
+        actual output set declared on the edge for downstream SOURCES
+        references to resolve. Recursive-make doesn't need this fixup
+        because make trusts the recipe to produce what consumers ask
+        for.
+        """
+        flags_list = list(flags)
+        for i, f in enumerate(flags_list):
+            if str(f) == "--num-outputs" and i + 1 < len(flags_list):
+                try:
+                    n = int(flags_list[i + 1])
+                except (ValueError, TypeError):
+                    return declared_outputs
+                if n <= 1:
+                    return declared_outputs
+                base, ext = mozpath.splitext(primary)
+                split = [f"{base}_{i}{ext}" for i in range(n)]
+                # Drop the primary from declared_outputs and prepend the
+                # split set; preserve any other declared outputs (e.g. a
+                # paired .h that wasm2c also writes).
+                tail = [o for o in declared_outputs if o != primary]
+                return split + tail
+        return declared_outputs
+
     def _resolve_src(self, source_path, linkable):
         """Resolve a source path into an absolute path.
 
@@ -384,6 +427,8 @@ class NinjaBackend(CommonBackend):
         cxx = _subst_cmd("CXX")
         host_cc = _subst_cmd("HOST_CC") or cc
         host_cxx = _subst_cmd("HOST_CXX") or cxx
+        wasm_cc = _subst_cmd("WASM_CC") or cc
+        wasm_cxx = _subst_cmd("WASM_CXX") or cxx
         ar = _subst_cmd("AR")
         linker = _subst_cmd("LINKER")
         host_linker = _subst_cmd("HOST_LINKER") or linker
@@ -411,6 +456,8 @@ class NinjaBackend(CommonBackend):
             ("CXX", cxx),
             ("HOST_CC", host_cc),
             ("HOST_CXX", host_cxx),
+            ("WASM_CC", wasm_cc),
+            ("WASM_CXX", wasm_cxx),
             ("AR", ar),
             ("LINKER", linker),
             ("HOST_LINKER", host_linker),
@@ -479,6 +526,24 @@ class NinjaBackend(CommonBackend):
             description="AS $out",
             rspfile="$out.rsp",
             rspfile_content="$asflags -o $out -c $in",
+        )
+        writer.newline()
+        # Native assembler rule for `.asm` files (Intel-syntax). Per
+        # `config/rules.mk`, the recipe is:
+        #   $(AS) $(ASOUTOPTION)$@ $(ASFLAGS) $(per_source) $(AS_DASH_C_FLAG) $<
+        # Each per-edge build supplies $as / $as_dash_c_flag /
+        # $asoutoption from the directory's `VariablePassthru` (the
+        # emitter sets these from `USE_NASM` or
+        # `USE_INTEGRATED_CLANGCL_AS`), or from substs when neither is
+        # set (e.g. libffi on clang-cl uses ml64 from substs.AS), plus
+        # $asflags from `ComputedFlags["ASFLAGS"]`. No rspfile: nasm's
+        # `-@` parser is buggy in 3.x and assembler invocations are
+        # short enough to fit on a command line directly (matching
+        # mozmake's recipe).
+        writer.rule(
+            "asm_native",
+            command="$as $asoutoption$out $asflags $as_dash_c_flag $in",
+            description="AS $out",
         )
         writer.newline()
 
@@ -612,6 +677,41 @@ class NinjaBackend(CommonBackend):
             "host_link_shared",
             command=host_link_shared_cmd,
             description="HOST_LINK $out",
+            rspfile="$out.rsp",
+            rspfile_content="$in $libs",
+        )
+        writer.newline()
+
+        # Wasm compile / link. WASM_CC and WASM_CXX are clang targeting
+        # wasm32-wasi; flag handling matches the regular cxx/cc rules
+        # (rspfile + clang depfile via -Xclang -dependency-file). The
+        # link rule invokes WASM_CXX with the wasm-specific linker flags
+        # (--export-all, --stack-first, etc.) the recursive-make rules.mk
+        # bakes into the link command.
+        writer.rule(
+            "wasm_cxx",
+            command="$WASM_CXX @$out.rsp",
+            description="WASM_CXX $out",
+            rspfile="$out.rsp",
+            rspfile_content=f"$wasm_cxxflags {clang_depfile_args} -o $out -c $in",
+            deps="gcc",
+            depfile="$out.d",
+        )
+        writer.newline()
+        writer.rule(
+            "wasm_cc",
+            command="$WASM_CC @$out.rsp",
+            description="WASM_CC $out",
+            rspfile="$out.rsp",
+            rspfile_content=f"$wasm_cflags {clang_depfile_args} -o $out -c $in",
+            deps="gcc",
+            depfile="$out.d",
+        )
+        writer.newline()
+        writer.rule(
+            "wasm_link",
+            command="$WASM_CXX -o $out $wasm_ldflags @$out.rsp",
+            description="WASM_LINK $out",
             rspfile="$out.rsp",
             rspfile_content="$in $libs",
         )
@@ -826,6 +926,12 @@ class NinjaBackend(CommonBackend):
         self._emit_host_program_statements(writer)
         self._emit_host_shared_link_statements(writer)
 
+        # Wasm: compile WASM_SOURCES, then link them into the
+        # SANDBOXED_WASM_LIBRARY .wasm output that downstream wasm2c
+        # GeneratedFile rules consume.
+        self._emit_wasm_compile_statements(writer)
+        self._emit_wasm_link_statements(writer)
+
         # build.ninja regen statement. Inputs include every moz.build
         # the emitter consumed plus the Python modules under
         # topsrcdir/topobjdir, both populated in
@@ -956,15 +1062,24 @@ class NinjaBackend(CommonBackend):
                 continue
             if not (g.required_before_compile or g.required_during_compile):
                 continue
-            outs = []
+            declared = []
             for o in g.outputs:
                 if isinstance(o, str):
                     if o.startswith("/"):
-                        outs.append(mozpath.join(self._topobjdir, o[1:]))
+                        declared.append(mozpath.join(self._topobjdir, o[1:]))
                     else:
-                        outs.append(mozpath.join(g.objdir, o))
+                        declared.append(mozpath.join(g.objdir, o))
                 else:
-                    outs.append(mozpath.normsep(o.full_path))
+                    declared.append(mozpath.normsep(o.full_path))
+            if not declared:
+                continue
+            # Apply the same `--num-outputs` expansion that
+            # `_emit_generated_file_statements` does, so the actual
+            # produced files (e.g. wasm2c's `<base>_0.c` ... `<base>_{N-1}.c`)
+            # are what consumers wait on, not the unwritten primary.
+            outs = self._expand_num_outputs_outputs(
+                declared[0], declared, g.flags or ()
+            )
             all_generated.extend(outs)
             if not _depends_on_host_program(g):
                 host_safe_generated.extend(outs)
@@ -1112,6 +1227,42 @@ class NinjaBackend(CommonBackend):
                     rule_name = "asm"
                     flag_var = "asflags"
                     flag_value = " ".join(response_arg(f) for f in asflags + extra)
+                elif ext == ".asm":
+                    # Native assembler path: `.asm` files use $(AS) +
+                    # $(ASFLAGS), with the assembler binary set per-context
+                    # by the emitter via VariablePassthru (USE_NASM picks
+                    # nasm; USE_INTEGRATED_CLANGCL_AS picks $CC). Without
+                    # either, fall back to the global $(AS) from substs
+                    # (e.g. ml64 on Windows for libffi). Use ASFLAGS only
+                    # (not SFLAGS — those are for `.S/.s`).
+                    asflags_only = self._computed_flag_list(relobjdir, "ASFLAGS")
+                    passthru = self._variable_passthru.get(relobjdir)
+                    pv = passthru.variables if passthru else {}
+                    substs = self.environment.substs
+                    asm_program = pv.get("AS") or substs.get("AS", "")
+                    as_dash_c_flag = pv.get(
+                        "AS_DASH_C_FLAG", substs.get("AS_DASH_C_FLAG", "-c")
+                    )
+                    asoutoption = pv.get(
+                        "ASOUTOPTION", substs.get("ASOUTOPTION", "-o ")
+                    )
+                    flag_value = " ".join(response_arg(f) for f in asflags_only + extra)
+                    # Host compiles excluded by the conditional below; the
+                    # `.asm` dispatch is target-side, never host.
+                    order_only = ".ninja-generated"
+                    writer.build(
+                        self._rel_n_path(obj),
+                        "asm_native",
+                        inputs=self._rel_n_path(src_norm),
+                        order_only=order_only,
+                        variables={
+                            "as": n_value(asm_program),
+                            "asflags": flag_value,
+                            "as_dash_c_flag": n_value(as_dash_c_flag),
+                            "asoutoption": n_value(asoutoption),
+                        },
+                    )
+                    continue
                 else:
                     writer.comment(f"unknown source extension for {src}")
                     continue
@@ -1534,6 +1685,128 @@ class NinjaBackend(CommonBackend):
                 },
             )
 
+    def _emit_wasm_compile_statements(self, writer):
+        """Emit per-source compile rules for `WASM_SOURCES`.
+
+        Each `WasmSources` object has `.c` or `.cpp` files (plus
+        generated equivalents) that compile through `WASM_CC`/`WASM_CXX`
+        — clang targeting `wasm32-wasi`. Output objects use
+        `WASM_OBJ_SUFFIX` (typically `.wasm`) and live alongside the
+        source's relobjdir.
+        """
+        if not self._wasm_sources_by_dir:
+            return
+        writer.newline()
+        writer.comment("------ wasm compile rules ------")
+        writer.newline()
+
+        wasm_obj_suffix = self.environment.substs.get("WASM_OBJ_SUFFIX", "wasm")
+        emitted_objs = set()
+        for relobjdir, bucket in self._wasm_sources_by_dir.items():
+            for sobj in bucket:
+                wasm_cflags = self._computed_flag_list(relobjdir, "WASM_CFLAGS")
+                wasm_cxxflags = self._computed_flag_list(relobjdir, "WASM_CXXFLAGS")
+                for src in list(sobj.files):
+                    src_norm = mozpath.normsep(src)
+                    ext = mozpath.splitext(src_norm)[1].lower()
+                    basename_noext = mozpath.splitext(mozpath.basename(src_norm))[0]
+                    obj = mozpath.join(
+                        sobj.objdir, f"{basename_noext}.{wasm_obj_suffix}"
+                    )
+                    if obj in emitted_objs:
+                        continue
+                    emitted_objs.add(obj)
+                    extra = self._per_source_flags_for(relobjdir, src_norm)
+                    if ext == ".c":
+                        rule_name = "wasm_cc"
+                        flag_var = "wasm_cflags"
+                        flag_value = " ".join(
+                            response_arg(f) for f in wasm_cflags + extra
+                        )
+                    elif ext in (".cpp", ".cc", ".cxx"):
+                        rule_name = "wasm_cxx"
+                        flag_var = "wasm_cxxflags"
+                        flag_value = " ".join(
+                            response_arg(f) for f in wasm_cxxflags + extra
+                        )
+                    else:
+                        writer.comment(f"unknown wasm source extension for {src_norm}")
+                        continue
+                    # Wasm compiles must not depend on `.ninja-generated`:
+                    # wasm objects link into `<name>.wasm`, which feeds the
+                    # `<name>.wasm.c` GeneratedFile that's itself in
+                    # `.ninja-generated`. An order_only edge here would
+                    # close the cycle wasm_obj → wasm_link → wasm.c →
+                    # .ninja-generated → wasm_obj. Wasm code is sandboxed
+                    # and produces inputs to codegen, not consumers of it
+                    # — same shape as the host-compile exclusion.
+                    writer.build(
+                        self._rel_n_path(obj),
+                        rule_name,
+                        inputs=self._rel_n_path(src_norm),
+                        variables={flag_var: flag_value},
+                    )
+
+    def _emit_wasm_link_statements(self, writer):
+        """Emit `wasm_link` rules for each `SandboxedWasmLibrary`.
+
+        The output filename is the library's basename verbatim (e.g.
+        `rlboxsoundtouch.wasm`) — the `SANDBOXED_WASM_LIBRARY_NAME`
+        declaration includes the `.wasm` extension. Linker flags match
+        `config/rules.mk`'s wasm-archive recipe: `--export-all`,
+        `--stack-first`, the optimize-conditional stack size,
+        `--no-entry`, `--import-memory`, `--import-table`.
+        """
+        if not self._wasm_libraries:
+            return
+        writer.newline()
+        writer.comment("------ wasm libraries ------")
+        writer.newline()
+
+        # Stack size matches `config/rules.mk` line 497: 256 KB optimized,
+        # 1 MB otherwise. Read MOZ_OPTIMIZE from substs to match the make
+        # backend's choice for this build configuration.
+        moz_optimize = bool(self.environment.substs.get("MOZ_OPTIMIZE"))
+        stack_size = 262144 if moz_optimize else 1048576
+        wasm_ldflags = [
+            "-Wl,--export-all",
+            "-Wl,--stack-first",
+            f"-Wl,-z,stack-size={stack_size}",
+            "-Wl,--no-entry",
+            "-Wl,--import-memory",
+            "-Wl,--import-table",
+        ]
+        for lib in self._wasm_libraries:
+            # Output filename: the basename declared by
+            # `SANDBOXED_WASM_LIBRARY_NAME` already includes `.wasm`; the
+            # make rule uses `libdef.basename` directly. Match that.
+            out = mozpath.join(lib.objdir, lib.basename)
+
+            # Inputs: the wasm objects from the library's own context's
+            # WasmSources, plus any SOURCES from this same library that
+            # are wasm-compiled. SandboxedWasmLibrary's `objs` contain
+            # full paths.
+            objs = list(lib.objs)
+            link_inputs = [mozpath.normsep(o) for o in objs]
+            # WASM_LIBS is a per-context VariablePassthru entry (e.g.
+            # `wasi-emulated-process-clocks` for sandboxes that need
+            # wasi clock emulation). Mirror make's
+            # `$(addprefix -l,$(WASM_LIBS))`.
+            passthru = self._variable_passthru.get(lib.relobjdir)
+            wasm_libs = []
+            if passthru:
+                wasm_libs = list(passthru.variables.get("WASM_LIBS", []))
+            libs_flag = " ".join(f"-l{n_value(s)}" for s in wasm_libs)
+            writer.build(
+                self._rel_n_path(out),
+                "wasm_link",
+                inputs=[self._rel_n_path(o) for o in link_inputs],
+                variables={
+                    "libs": libs_flag,
+                    "wasm_ldflags": " ".join(response_arg(f) for f in wasm_ldflags),
+                },
+            )
+
     def _emit_generated_file_statements(self, writer):
         """Emit a ninja rule for each GeneratedFile.
 
@@ -1565,6 +1838,16 @@ class NinjaBackend(CommonBackend):
             if not outputs:
                 continue
             primary = outputs[0]
+            # The wasm2c codegen step (driven through `config/wasm2c.py`)
+            # supports a `--num-outputs N` flag that splits its output
+            # into N files named `<base>_0.<ext>` ... `<base>_{N-1}.<ext>`.
+            # The GeneratedFile declaration only lists the primary output
+            # name (recursive-make tolerates this; ninja must declare
+            # every produced file). Synthesize the split outputs so
+            # downstream SOURCES references them resolve to a real edge.
+            outputs = list(
+                self._expand_num_outputs_outputs(primary, outputs, g.flags or ())
+            )
             depfile = mozpath.join(
                 mozpath.dirname(primary), ".deps", mozpath.basename(primary) + ".pp"
             )
