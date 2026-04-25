@@ -314,6 +314,31 @@ class NinjaBackend(CommonBackend):
         with self._write_file(ninja_path) as fh:
             self._write_ninja(fh)
 
+    def build(self, config, output, jobs, verbose, what=None):
+        """Invoke ninja for `mach build`. Targets default to all."""
+        import subprocess
+
+        cmd = [
+            config.substs.get("NINJA", "ninja"),
+            "-C",
+            config.topobjdir,
+            "--jobserver-pool",
+        ]
+        if jobs:
+            cmd += ["-j", str(jobs)]
+        if verbose:
+            cmd.append("-v")
+        if what:
+            cmd += list(what)
+        # Mirror mozmake's `export INCLUDE` / `export LIB` (config/config.mk):
+        # cl/ml64/link rely on these env vars to find SDK headers and libs.
+        env = os.environ.copy()
+        for var in ("INCLUDE", "LIB"):
+            val = config.substs.get(var)
+            if val:
+                env[var] = val
+        return subprocess.call(cmd, env=env)
+
     # ---------------------------------------------------------------------
     # Data helpers
     # ---------------------------------------------------------------------
