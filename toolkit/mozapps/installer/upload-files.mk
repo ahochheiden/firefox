@@ -2,22 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-ifndef MOZ_PKG_FORMAT
-    ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-        MOZ_PKG_FORMAT = DMG
-    else ifeq ($(OS_ARCH),WINNT)
-        MOZ_PKG_FORMAT = ZIP
-    else ifeq ($(OS_ARCH),SunOS)
-        MOZ_PKG_FORMAT = XZ
-    else ifeq ($(MOZ_WIDGET_TOOLKIT),gtk)
-        MOZ_PKG_FORMAT = XZ
-    else ifeq ($(MOZ_WIDGET_TOOLKIT),android)
-        MOZ_PKG_FORMAT = APK
-    else
-        MOZ_PKG_FORMAT = TGZ
-    endif
-endif # MOZ_PKG_FORMAT
-
 ifeq ($(OS_ARCH),WINNT)
 INSTALLER_DIR   = windows
 endif
