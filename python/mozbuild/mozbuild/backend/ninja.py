@@ -38,6 +38,8 @@ from mozbuild.frontend.data import (
     IPDLCollection,
     JARManifest,
     LocalInclude,
+    LocalizedFiles,
+    LocalizedPreprocessedFiles,
     PerSourceFlag,
     Program,
     RustLibrary,
@@ -229,6 +231,39 @@ class NinjaBackend(CommonBackend):
             self._local_includes_by_dir[relobjdir].append(obj)
         elif isinstance(obj, VariablePassthru):
             self._variable_passthru[relobjdir] = obj
+        elif isinstance(obj, LocalizedPreprocessedFiles):
+            # LOCALIZED_PP_FILES: en-US preprocessed install. en-US source
+            # is `<srcdir>/en-US/<rest>` (already what `f.full_path`
+            # resolves to). Mozmake adds `-DAB_CD=en-US` at preprocess
+            # time (config/config.mk:317); mirror that in the per-edge
+            # defines so AB_CD-conditional `#filter` blocks resolve.
+            # Non-en-US locales are staged at command time via
+            # `mach langpack` / `mach repackage-zip`.
+            install_target = obj.install_target
+            defines = {"AB_CD": "en-US"}
+            for subpath, files in obj.files.walk():
+                for f in files:
+                    if isinstance(f, ObjDirPath) or "*" in f:
+                        continue
+                    src = mozpath.normsep(f.full_path)
+                    basename = FinalTargetPreprocessedFiles.get_obj_basename(f)
+                    dst = mozpath.join(
+                        self._topobjdir, install_target, subpath, basename
+                    )
+                    self._pp_installs.append((src, dst, defines))
+        elif isinstance(obj, LocalizedFiles):
+            # LOCALIZED_FILES: en-US install. Non-en-US locales are
+            # staged at command time via `mach langpack`.
+            install_target = obj.install_target
+            for subpath, files in obj.files.walk():
+                for f in files:
+                    if isinstance(f, ObjDirPath) or "*" in f:
+                        continue
+                    src = mozpath.normsep(f.full_path)
+                    dst = mozpath.join(
+                        self._topobjdir, install_target, subpath, f.target_basename
+                    )
+                    self._installs.append((src, dst))
         elif isinstance(obj, FinalTargetPreprocessedFiles):
             # Preprocessed files aren't in the install manifests — they
             # need a preprocessor step. Track them so we emit ninja rules
@@ -2116,7 +2151,7 @@ class NinjaBackend(CommonBackend):
                 # No script: outputs are declared but produced some other way
                 # (e.g. preprocessed files tracked elsewhere). Skip.
                 continue
-            outputs = []
+            base_outputs = []
             for o in g.outputs:
                 if isinstance(o, str):
                     # outputs can be relative to g.objdir (by mozbuild
@@ -2127,10 +2162,33 @@ class NinjaBackend(CommonBackend):
                         full = mozpath.join(g.objdir, o)
                 else:
                     full = mozpath.normsep(o.full_path)
-                outputs.append(full)
-            if not outputs:
+                base_outputs.append(full)
+            if not base_outputs:
                 continue
-            primary = outputs[0]
+
+            base_inputs = [mozpath.normsep(inp.full_path) for inp in g.inputs]
+
+            # Localized GeneratedFile: en-US only in the build graph.
+            # Outputs may contain `{AB_CD}`/`{AB_rCD}` placeholders (per
+            # context.py:1723), both of which expand to "" for en-US.
+            # Non-en-US locales are staged at command time via
+            # `mach langpack` / `mach repackage-zip`.
+            if g.localized:
+                outs = [
+                    o.replace("{AB_CD}", "").replace("{AB_rCD}", "")
+                    for o in base_outputs
+                ]
+                ins = [
+                    p.replace("{AB_CD}", "").replace("{AB_rCD}", "")
+                    for p in base_inputs
+                ]
+                locale_arg = "--locale=en-US "
+            else:
+                outs = list(base_outputs)
+                ins = list(base_inputs)
+                locale_arg = ""
+
+            primary = outs[0]
             # The wasm2c codegen step (driven through `config/wasm2c.py`)
             # supports a `--num-outputs N` flag that splits its output
             # into N files named `<base>_0.<ext>` ... `<base>_{N-1}.<ext>`.
@@ -2138,19 +2196,12 @@ class NinjaBackend(CommonBackend):
             # name (recursive-make tolerates this; ninja must declare
             # every produced file). Synthesize the split outputs so
             # downstream SOURCES references them resolve to a real edge.
-            outputs = list(
-                self._expand_num_outputs_outputs(primary, outputs, g.flags or ())
-            )
+            outs = list(self._expand_num_outputs_outputs(primary, outs, g.flags or ()))
             depfile = mozpath.join(
                 mozpath.dirname(primary), ".deps", mozpath.basename(primary) + ".pp"
             )
 
-            inputs = []
-            for inp in g.inputs:
-                # inp is a Path; .full_path gives absolute.
-                inputs.append(mozpath.normsep(inp.full_path))
-
-            extra_parts = list(inputs)
+            extra_parts = list(ins)
             if g.flags:
                 # Expand make-style `$(DEFINES)` / `$(LOCAL_INCLUDES)`
                 # references that some scripts (e.g.
@@ -2163,9 +2214,9 @@ class NinjaBackend(CommonBackend):
 
             script_path = g.script
             writer.build(
-                [self._rel_n_path(o) for o in outputs],
+                [self._rel_n_path(o) for o in outs],
                 "pygen",
-                inputs=[self._rel_n_path(i) for i in inputs] if inputs else None,
+                inputs=[self._rel_n_path(i) for i in ins] if ins else None,
                 # Script is an implicit dep so ninja rebuilds when the
                 # script changes.
                 implicit=self._rel_n_path(script_path),
@@ -2174,7 +2225,7 @@ class NinjaBackend(CommonBackend):
                     "method": n_value(g.method or "main"),
                     "primary": self._rel_n_path(primary),
                     "depfile": self._rel_n_path(depfile),
-                    "locale": "--locale=en-US " if g.localized else "",
+                    "locale": locale_arg,
                     # `response_arg` (not `n_value`) so joined-string
                     # entries from `_expand_make_flag_refs` (e.g. the
                     # `-D... -D...` collapsed `$(DEFINES)`) survive
