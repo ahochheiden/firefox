@@ -113,6 +113,8 @@ subsuite = "mozbuild"
 
 ["test_preprocessor.py"]
 
+["test_package_naming.py"]
+
 ["test_pythonutil.py"]
 
 ["test_rewrite_mozbuild.py"]
