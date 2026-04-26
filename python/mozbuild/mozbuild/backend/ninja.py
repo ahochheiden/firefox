@@ -20,7 +20,8 @@ from mozbuild.backend.ninja_syntax import (
 from mozbuild.backend.ninja_syntax import (
     value as n_value,
 )
-from mozbuild.frontend.context import ObjDirPath
+from mozbuild.dirutils import ensureParentDir
+from mozbuild.frontend.context import AbsolutePath, ObjDirPath
 from mozbuild.frontend.data import (
     ChromeManifestEntry,
     ComputedFlags,
@@ -45,10 +46,26 @@ from mozbuild.frontend.data import (
     SimpleProgram,
     Sources,
     StaticLibrary,
+    TestManifest,
     UnifiedSources,
     VariablePassthru,
     WasmSources,
 )
+
+
+def _strip_tests(path):
+    """Strip a leading `_tests/` from a manifest destination path.
+
+    `TestHarnessFiles.install_target == "_tests"`, so destinations look
+    like `_tests/<sub>/<file>`. The `_ninja_test_files` install manifest
+    is installed with `_tests/` as its `install_dir`, so its entries
+    must be relative to `_tests/`.
+    """
+    if path == "_tests":
+        return ""
+    if path.startswith("_tests/"):
+        return path[len("_tests/") :]
+    return path
 
 
 class NinjaBackend(CommonBackend):
@@ -100,6 +117,24 @@ class NinjaBackend(CommonBackend):
         # add `manifest components/X.manifest` lines to the top-level
         # chrome.manifest at install time.
         self._chrome_manifest_entries = defaultdict(set)
+
+        # TEST_HARNESS_FILES entries: per-entry tuples deferred to
+        # `consume_finished`, where they're folded into the same
+        # `_ninja_test_files` `InstallManifest` we build for TestManifest.
+        # Tuple shape: ("link", src, dest) | ("pattern", base, pattern,
+        # dest_dir) | ("optional", dest).
+        self._test_harness_entries = []
+
+        # TestManifest objects of every flavor (mochitest, xpcshell,
+        # python, browser-chrome, marionette, reftest, crashtest, etc.).
+        # Mozmake's recursivemake backend folds these into the
+        # `_test_files` install manifest plus a per-flavor master
+        # `<install_prefix>/<flavor>.toml`. We mirror that natively so
+        # the ninja path stages tests without depending on RecursiveMake
+        # co-run. Per-binary `OPTIONAL_EXISTS` markers for test support
+        # programs/libraries (`_process_test_support_file` in
+        # recursivemake) are folded in alongside.
+        self._test_manifests = []
 
         # Per-context Defines / LocalInclude, used to expand make-style
         # `$(DEFINES)` / `$(LOCAL_INCLUDES)` references in GeneratedFile
@@ -214,29 +249,70 @@ class NinjaBackend(CommonBackend):
                     )
                     self._pp_installs.append((src, dst, defines))
         elif isinstance(obj, FinalTargetFiles):
-            # For source-tree entries, the install is covered by
-            # process_install_manifest (via the manifests mozmake wrote at
-            # configure time) — those show up as LINK entries.
-            # For ObjDirPath entries (generated files), the manifest only
-            # has OPTIONAL_EXISTS markers; the actual install is handled
-            # per-directory by mozmake's make rules. We emit individual
-            # ninja install_file edges for those so the generated file
-            # gets hardlinked to its install target after it's generated.
+            # Mozmake's `_process_final_target_files` (recursivemake.py:
+            # 1576) routes entries by install_target. Two distinct paths
+            # matter to us:
+            #
+            # 1. install_target starts with `_tests` (TestHarnessFiles,
+            #    or any moz.build that sets `FINAL_TARGET = "_tests/..."`):
+            #    SourcePath → LINK, wildcard → PATTERN_LINK, ObjDirPath
+            #    → OPTIONAL_EXISTS (real install via the `_installs`
+            #    post-batch), AbsolutePath → OPTIONAL_EXISTS. Fold into
+            #    `_test_harness_entries`; consume_finished merges them
+            #    into the `_ninja_test_files` `InstallManifest`.
+            #
+            # 2. Any other install_target: only ObjDirPath entries get a
+            #    real install edge here; SourcePath entries are covered
+            #    by the appropriate install manifest mozmake wrote at
+            #    configure time.
             install_target = obj.install_target
+            is_test = install_target.startswith("_tests")
             for subpath, files in obj.files.walk():
+                dest_dir = mozpath.join(install_target, subpath)
                 for f in files:
-                    if not isinstance(f, ObjDirPath):
+                    dest_file = mozpath.join(dest_dir, f.target_basename)
+                    if isinstance(f, ObjDirPath):
+                        src = mozpath.normsep(f.full_path)
+                        dst = mozpath.join(self._topobjdir, dest_file)
+                        self._installs.append((src, dst))
+                        if is_test:
+                            self._test_harness_entries.append(("optional", dest_file))
+                    elif not is_test:
+                        # Source-tree entries for non-test install_targets
+                        # are covered by mozmake's install manifests.
                         continue
-                    src = mozpath.normsep(f.full_path)
-                    dst = mozpath.join(
-                        self._topobjdir,
-                        install_target,
-                        subpath,
-                        f.target_basename,
-                    )
-                    self._installs.append((src, dst))
+                    elif isinstance(f, AbsolutePath):
+                        self._test_harness_entries.append(("optional", dest_file))
+                    elif "*" in f:
+                        # Wildcard SourcePath. Mozmake distinguishes
+                        # topsrcdir-absolute (leading `/`) from srcdir-
+                        # relative for the pattern base; mirror that.
+                        if f.startswith("/"):
+                            basepath, pattern = os.path.split(f.full_path)
+                            self._test_harness_entries.append((
+                                "pattern",
+                                basepath,
+                                pattern,
+                                dest_dir,
+                            ))
+                        else:
+                            self._test_harness_entries.append((
+                                "pattern",
+                                f.srcdir,
+                                str(f),
+                                dest_dir,
+                            ))
+                    else:
+                        # Plain SourcePath → LINK from full path to dest.
+                        self._test_harness_entries.append((
+                            "link",
+                            mozpath.normsep(f.full_path),
+                            dest_file,
+                        ))
         elif isinstance(obj, ChromeManifestEntry):
             self._chrome_manifest_entries[obj.path].add(str(obj.entry))
+        elif isinstance(obj, TestManifest):
+            self._test_manifests.append(obj)
 
         # Side effects from CommonBackend (writes Unified_cpp_*.cpp files,
         # tracks generated sources, etc).
@@ -320,6 +396,124 @@ class NinjaBackend(CommonBackend):
 
         for path, entries in self._chrome_manifest_entries.items():
             addEntriesToListFile(path, sorted(entries))
+
+        # TestManifest staging: build a single `mozpack.manifests.InstallManifest`
+        # covering every TestManifest flavor + test-support-file
+        # `OPTIONAL_EXISTS` markers, mirroring recursivemake's
+        # `_process_test_manifest` + `_process_test_support_file` (which
+        # populate `_test_files` and `_tests` respectively). We write to a
+        # ninja-private path so we don't race with RecursiveMake co-run;
+        # `process_install_manifest` is invoked via the existing
+        # `run_install_manifest` rule. Per-flavor master
+        # `<install_prefix>/<flavor>.toml` files are written here too.
+        from mozpack.manifests import InstallManifest
+
+        ninja_test_manifest = InstallManifest()
+        master_manifests = {}
+        for tm in self._test_manifests:
+            install_prefix = mozpath.normsep(tm.install_prefix)
+            for source, (dest, is_test) in tm.installs.items():
+                try:
+                    ninja_test_manifest.add_link(source, dest)
+                except ValueError:
+                    if not tm.dupe_manifest and is_test:
+                        raise
+            for base, pattern, dest in tm.pattern_installs:
+                try:
+                    ninja_test_manifest.add_pattern_link(base, pattern, dest)
+                except ValueError:
+                    if not tm.dupe_manifest:
+                        raise
+            for dest in tm.external_installs:
+                try:
+                    ninja_test_manifest.add_optional_exists(dest)
+                except ValueError:
+                    if not tm.dupe_manifest:
+                        raise
+            for src in tm.source_relpaths:
+                self.backend_input_files.add(
+                    mozpath.normsep(mozpath.join(self._topsrcdir, src))
+                )
+            # Reftest flavors emit empty `installs` but still contribute
+            # to the master manifest list.
+            master_manifests.setdefault((tm.flavor, install_prefix), set()).add(
+                tm.manifest_relpath
+            )
+
+        # `_process_test_support_file` analogue: any linkable whose
+        # `install_target` lives under `_tests/` gets an OPTIONAL_EXISTS
+        # marker so the test packager can find it.
+        for lk in (
+            self._programs
+            + self._host_programs
+            + self._shared_libs
+            + self._static_libs
+            + self._host_libraries
+        ):
+            install_target = getattr(lk, "install_target", "")
+            if not install_target.startswith("_tests"):
+                continue
+            basename = getattr(lk, "lib_name", None) or getattr(lk, "program", None)
+            if not basename:
+                continue
+            try:
+                ninja_test_manifest.add_optional_exists(
+                    mozpath.join(install_target[len("_tests") + 1 :], basename)
+                )
+            except ValueError:
+                pass
+
+        # TEST_HARNESS_FILES: the destinations are all rooted at `_tests/`;
+        # strip that prefix to get a manifest-relative path (the manifest
+        # is installed with `_tests/` as its install_dir).
+        for entry in self._test_harness_entries:
+            kind = entry[0]
+            try:
+                if kind == "link":
+                    _, src, dest = entry
+                    ninja_test_manifest.add_link(src, _strip_tests(dest))
+                elif kind == "pattern":
+                    _, base, pattern, dest_dir = entry
+                    ninja_test_manifest.add_pattern_link(
+                        base, pattern, _strip_tests(dest_dir)
+                    )
+                elif kind == "optional":
+                    _, dest = entry
+                    ninja_test_manifest.add_optional_exists(_strip_tests(dest))
+            except ValueError:
+                pass
+
+        # Persist the manifest. `_emit_install_statements` reuses
+        # `run_install_manifest` to install from it into `_tests/`.
+        # Master `<install_prefix>/<flavor>.toml`: one `["include:<rel>"]`
+        # line per per-directory manifest. Mirrors recursivemake's
+        # `_write_master_test_manifest`. Mozmake also drops an
+        # OPTIONAL_EXISTS marker into its install manifest for each
+        # master so the test packager finds them; do the same.
+        for (flavor, install_prefix), manifests in master_manifests.items():
+            master_rel = mozpath.join(install_prefix, f"{flavor}.toml")
+            master_path = mozpath.join(self._topobjdir, "_tests", master_rel)
+            with self._write_file(master_path) as master:
+                master.write(
+                    "# THIS FILE WAS AUTOMATICALLY GENERATED. "
+                    "DO NOT MODIFY BY HAND.\n\n"
+                )
+                for m in sorted(manifests):
+                    master.write(f'["include:{m}"]\n')
+            try:
+                ninja_test_manifest.add_optional_exists(master_rel)
+            except ValueError:
+                pass
+
+        ninja_test_manifest_path = mozpath.join(
+            self._topobjdir, "_build_manifests/install/_ninja_test_files"
+        )
+        if len(ninja_test_manifest):
+            ensureParentDir(ninja_test_manifest_path)
+            ninja_test_manifest.write(path=ninja_test_manifest_path)
+            self._ninja_test_manifest_path = ninja_test_manifest_path
+        else:
+            self._ninja_test_manifest_path = None
 
         ninja_path = mozpath.join(self._topobjdir, "build.ninja")
         with self._write_file(ninja_path) as fh:
