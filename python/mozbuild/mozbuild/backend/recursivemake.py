@@ -885,6 +885,73 @@ class RecursiveMakeBackend(MakeBackend):
             category_dirs = [mozpath.dirname(target) for target in graphs.keys()]
             root_mk.add_statement("%s_dirs := %s" % (category, " ".join(category_dirs)))
 
+        # Install-manifest dispatchers: one ``install-<dest>`` target per
+        # entry in ``install_manifests``, each running
+        # ``process_install_manifest`` against the matching
+        # ``_build_manifests/install/<dest_underscored>`` file. Lives here
+        # (rather than hand-written in ``Makefile.in``) so a ninja backend
+        # can emit the equivalent edge from the same configure data.
+        is_hybrid = "FasterMake+RecursiveMake" in (
+            self.environment.substs.get("BUILD_BACKENDS") or []
+        )
+        install_manifests = [
+            "dist/branding",
+            "dist/include",
+            "dist/public",
+            "dist/private",
+            "dist/xpi-stage",
+            "_tests",
+        ]
+        if not is_hybrid:
+            install_manifests.append("dist/bin")
+
+        install_targets = [f"install-{m}" for m in install_manifests]
+        root_deps_mk.add_statement(
+            f".PHONY: install-manifests {' '.join(install_targets)}"
+        )
+        agg = root_deps_mk.create_rule(["install-manifests"])
+        agg_deps = list(install_targets)
+        if is_hybrid:
+            agg_deps.append("faster")
+        agg.add_dependencies(agg_deps)
+
+        if is_hybrid:
+            root_deps_mk.add_statement(".PHONY: faster")
+            faster = root_deps_mk.create_rule(["faster"])
+            faster.add_commands(["$(MAKE) -C faster FASTER_RECURSIVE_MAKE=1"])
+
+        for manifest in install_manifests:
+            target = f"install-{manifest}"
+            underscored = manifest.replace("/", "_")
+            rule = root_deps_mk.create_rule([target])
+            rule.add_dependencies(["$(install_manifest_depends)"])
+            commands = []
+            if is_hybrid:
+                commands.append(
+                    f"$(if $(wildcard _build_manifests/install/{underscored}),"
+                    f"$(if $(wildcard faster/install_{underscored}*),"
+                    f"$(error FasterMake and RecursiveMake ends of the "
+                    f"hybrid build system want to handle {manifest})))"
+                )
+            commands.append(
+                f"$(foreach manifest,"
+                f"$(wildcard _build_manifests/install/{underscored}),"
+                f"$(call py_action,process_install_manifest {manifest},"
+                f"$(if $(filter copy,$(NSDISTMODE)),--no-symlinks )"
+                f"--track install_{underscored}.track "
+                f"{manifest} $(manifest)))"
+            )
+            rule.add_commands(commands)
+
+        # Dummy wrapper rules so the faster backend can piggy-back on the
+        # underscored install-dist_X targets.
+        for manifest in install_manifests:
+            if not manifest.startswith("dist/"):
+                continue
+            underscored = manifest.replace("/", "_")
+            rule = root_deps_mk.create_rule([f"install-{underscored}"])
+            rule.add_dependencies([f"install-{manifest}"])
+
         root_mk.add_statement("include root-deps.mk")
 
         with self._write_file(
