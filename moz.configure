@@ -595,6 +595,23 @@ def moz_ui_locale(value):
 set_config("MOZ_UI_LOCALE", moz_ui_locale)
 
 
+option(
+    "--enable-locale-staging",
+    default=False,
+    help="{Enable|Disable} the in-process locale_staging build path for "
+    "``./mach repackage-single-locales`` and "
+    "``./mach package-multi-locale``, plus the emitter-driven jar.mn "
+    "parsing that backs them; when disabled (the default), the legacy "
+    "``installers-<ab_cd>`` / ``chrome-<ab_cd>`` make recipes and the "
+    "``CommonBackend._consume_jar_manifest`` parsing run unchanged "
+    "(``./mach langpack`` and ``./mach repackage-zip`` always use "
+    "locale_staging regardless of this flag)",
+)
+
+
+set_config("MOZ_LOCALE_STAGING", True, when="--enable-locale-staging")
+
+
 # clang-plugin location
 # ==============================================================
 include(

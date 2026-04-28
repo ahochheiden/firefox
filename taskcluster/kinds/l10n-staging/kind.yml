@@ -1,0 +1,109 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+---
+loader: taskgraph.loader.transform:loader
+
+transforms:
+    - taskgraph.transforms.from_deps
+    - gecko_taskgraph.transforms.l10n
+    - gecko_taskgraph.transforms.job
+    - gecko_taskgraph.transforms.task
+
+kind-dependencies:
+    - build
+    - build-signing
+    - fetch
+    - repackage
+    - toolchain
+
+only-for-build-platforms:
+    - linux64/opt
+    - macosx64/opt
+    - win64/opt
+
+task-defaults:
+    run-on-repo-type: [hg]
+
+# Try-only sibling kind of ``l10n`` that exercises the ``MOZ_LOCALE_STAGING``
+# opt-in mach-command path. Shares the same locales-file as the ``l10n`` kind
+# so a try push runs the same locale set against both code paths. Limited to
+# linux64 / macosx64 / win64. Drop this kind once the new path is
+# default-on.
+tasks:
+    l10n-staging:
+        description: Localization (locale_staging path)
+        from-deps:
+            group-by: platform
+        locales-file: browser/locales/l10n-onchange-changesets.json
+        ignore-locales:
+            by-build-platform:
+                macosx64.*: [ja]
+                default: [ja-JP-mac]
+        run-time: 1800
+        secrets: false
+        fetches:
+            toolchain:
+                by-build-platform:
+                    default: []
+                    macosx64.*:
+                        - linux64-libdmg
+                        - linux64-hfsplus
+                    win.*:
+                        - linux64-7zz
+                        - linux64-upx
+                        - linux64-wine
+                        - nsis
+        tooltool:
+            by-build-platform:
+                default: internal
+                linux.*: public
+        run-on-projects: []
+        worker-type: b-linux
+        treeherder:
+            symbol: L10n-staging
+            tier: 2
+            platform:
+                by-build-platform:
+                    linux64: linux64/opt
+                    macosx64: osx-cross/opt
+                    win64: windows2012-64/opt
+        env:
+            by-build-platform:
+                linux.*:
+                    MOZ_ARTIFACT_TASK: {task-reference: '<build-signing>'}
+                    MOZ_LOCALE_STAGING: '1'
+                macosx64.*:
+                    MOZ_ARTIFACT_TASK: {task-reference: '<repackage>'}
+                    MOZ_LOCALE_STAGING: '1'
+                win.*:
+                    MOZ_ARTIFACT_TASK: {task-reference: '<build-signing>'}
+                    MOZ_LOCALE_STAGING: '1'
+        mozharness:
+            config:
+                by-build-platform:
+                    linux64.*:
+                        - single_locale/firefox.py
+                        - single_locale/linux64.py
+                        - single_locale/tc_common.py
+                        - single_locale/tc_linux_common.py
+                    macosx64.*:
+                        - single_locale/firefox.py
+                        - single_locale/macosx64.py
+                        - single_locale/tc_common.py
+                        - single_locale/tc_macosx64.py
+                    win64.*:
+                        - single_locale/firefox.py
+                        - single_locale/win64.py
+                        - single_locale/tc_common.py
+                        - single_locale/tc_win64.py
+            actions: ['clone-locales', 'list-locales', 'setup', 'repack', 'summary']
+            script: mozharness/scripts/desktop_l10n.py
+        when:
+            files-changed:
+                - browser/locales/l10n-onchange-changesets.json
+                - moz.configure
+                - python/mozbuild/mozbuild/mach_commands.py
+                - python/mozbuild/mozbuild/locale_staging.py
+                - python/mozbuild/mozbuild/frontend/staging_spec.py
+                - taskcluster/kinds/l10n-staging/**
