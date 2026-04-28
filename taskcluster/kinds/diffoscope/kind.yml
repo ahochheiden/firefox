@@ -7,6 +7,8 @@ loader: taskgraph.loader.transform:loader
 kind-dependencies:
     - artifact-build
     - build
+    - l10n
+    - l10n-staging
     - toolchain
 
 transforms:
@@ -41,22 +43,36 @@ tasks-from:
 # from other sets through an index-search. Other kinds than `build` can be
 # compared (for example, static-analysis), provided you adjust the
 # kind-dependencies above.
-# tasks:
-#     android-build-vs-previous-try:
-#         symbol: A
-#         new: build-android-arm/opt
-#         original: {index-search: gecko.v2.try.revision.aabd5deb0156f9b55ab60ad6a01ebfc4580bf2e1.mobile.android-arm-opt}
-#     linux64-build-vs-previous-try:
-#         symbol: L
-#         new: build-linux64/opt
-#         original: {index-search: gecko.v2.try.revision.aabd5deb0156f9b55ab60ad6a01ebfc4580bf2e1.firefox.linux64-opt}
-#         extra-args: >-
-#             --exclude-command .--hex-dump=.gnu_debuglink
-#     macosx-build-vs-previous-try:
-#         symbol: M
-#         new: build-macosx64/opt
-#         original: {index-search: gecko.v2.try.revision.aabd5deb0156f9b55ab60ad6a01ebfc4580bf2e1.firefox.macosx64-opt}
-#     win32-build-vs-previous-try:
-#         symbol: W
-#         new: build-win32/opt
-#         original: {index-search: gecko.v2.try.revision.aabd5deb0156f9b55ab60ad6a01ebfc4580bf2e1.firefox.win32-opt}
+#
+# The l10n-staging-vs-l10n-* entries below compare the legacy l10n path
+# (gate-off, ``installers-<ab_cd>`` make recipe chain) against the
+# locale-staging path (gate-on, in-process ``mach repackage-single-locales``)
+# for the same try push. Each locale's ``target.tar.xz`` gets its own
+# diffoscope task because one l10n task chunks multiple locales and
+# diffoscope only handles a single artifact pair.
+tasks:
+    l10n-staging-vs-l10n-linux64-ar:
+        symbol: Lar
+        new: l10n-staging-linux64/opt
+        original: l10n-linux64/opt
+        artifact: ar/target.tar.xz
+    l10n-staging-vs-l10n-linux64-en-CA:
+        symbol: LenCA
+        new: l10n-staging-linux64/opt
+        original: l10n-linux64/opt
+        artifact: en-CA/target.tar.xz
+    l10n-staging-vs-l10n-linux64-he:
+        symbol: Lhe
+        new: l10n-staging-linux64/opt
+        original: l10n-linux64/opt
+        artifact: he/target.tar.xz
+    l10n-staging-vs-l10n-linux64-it:
+        symbol: Lit
+        new: l10n-staging-linux64/opt
+        original: l10n-linux64/opt
+        artifact: it/target.tar.xz
+    l10n-staging-vs-l10n-linux64-ja:
+        symbol: Lja
+        new: l10n-staging-linux64/opt
+        original: l10n-linux64/opt
+        artifact: ja/target.tar.xz

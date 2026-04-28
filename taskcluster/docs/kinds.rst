@@ -83,6 +83,14 @@ l10n
 The l10n kind repacks a build (from the same source) for a subset of locales,
 to exercise the localized repack logic in CI.
 
+l10n-staging
+------------
+
+A try-only sibling of the ``l10n`` kind that exercises the
+``MOZ_LOCALE_STAGING`` opt-in mach-command path. Limited to a small locale
+set (de + fr) on linux64 / macosx64 / win64. Drop this kind once the new
+path is default-on.
+
 shippable-l10n
 --------------
 
