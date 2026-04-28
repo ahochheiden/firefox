@@ -178,6 +178,7 @@ MACH_COMMANDS = {
     "npx": MachCommandReference("tools/mach_commands.py"),
     "nss-uplift": MachCommandReference("security/mach_commands.py"),
     "package": MachCommandReference("python/mozbuild/mozbuild/mach_commands.py"),
+    "langpack": MachCommandReference("python/mozbuild/mozbuild/mach_commands.py"),
     "package-multi-locale": MachCommandReference(
         "python/mozbuild/mozbuild/mach_commands.py"
     ),
@@ -207,6 +208,7 @@ MACH_COMMANDS = {
     "repackage-single-locales": MachCommandReference(
         "python/mozbuild/mozbuild/mach_commands.py"
     ),
+    "repackage-zip": MachCommandReference("python/mozbuild/mozbuild/mach_commands.py"),
     "resource-usage": MachCommandReference(
         "python/mozbuild/mozbuild/build_commands.py",
     ),
