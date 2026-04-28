@@ -49,6 +49,7 @@ from mozbuild.util import (
     ForwardingArgumentParser,
     ensure_l10n_central,
     get_latest_file,
+    verify_l10n_preconditions,
 )
 
 here = os.path.abspath(os.path.dirname(__file__))
@@ -4421,11 +4422,244 @@ def repackage_zip(command_context, locale, simple_package_name=None, pkg_format=
     return 0
 
 
+# Top-level files in dist/xpi-stage/locale-<ab_cd>/ that are produced for
+# langpack packaging only and shouldn't land in a multi-locale dist/bin:
+#   * manifest.json: WebExtension langpack metadata.
+# default.locale and updater.ini *are* needed in dist/bin for the multi-locale
+# package step (which references them via package-manifest.in), so they're
+# not filtered here even though _make_langpack's action_zip call doesn't
+# include them in the langpack ``.xpi``.
+_LANGPACK_ONLY_TOP_LEVEL_FILES = frozenset(("manifest.json",))
+# Top-level directories in the same staging tree that aren't part of the
+# multi-locale dist/bin merge:
+#   * res/: nothing in xpi-stage/locale-<ab>/res/ is locale-aware in the
+#     gate-on path (legacy ``multilocale.txt-%`` populated it for the
+#     ``chrome-%`` flow but neither path needs that copy). The
+#     dist/bin/res/multilocale.txt is rewritten with the full
+#     MOZ_CHROME_MULTILOCALE list by ``_write_multilocale_txt`` separately
+#     from this chrome merge.
+_LANGPACK_ONLY_TOP_LEVEL_DIRS = frozenset(("res",))
+
+
+def _merge_chrome_manifest(src, dst, filter_langpack_root_ref=False):
+    """Append entries from ``src`` into ``dst`` with deduplication, preserving
+    the order of any existing dst entries and appending newly seen src entries
+    after them.
+
+    When ``filter_langpack_root_ref`` is True, drops the langpack root
+    manifest reference produced by ``--root-manifest-entry-appid`` (form:
+    ``manifest <path> application=<MOZ_APP_ID>``), which scopes the nested
+    chrome.manifest to a specific application id for langpack consumption.
+    A multi-locale dist/bin already loads the nested chrome.manifest files
+    via the running app's regular discovery path. The flag is intended for
+    the stage-root chrome.manifest only; nested manifests don't carry that
+    entry, so passing False there preserves any legitimate app-scoped
+    chrome entries.
+    """
+
+    def is_langpack_root_ref(line):
+        return line.startswith("manifest ") and " application=" in line
+
+    seen = set()
+    ordered = []
+    if os.path.exists(dst):
+        with open(dst, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line in seen:
+                    continue
+                seen.add(line)
+                ordered.append(line)
+    with open(src, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line in seen:
+                continue
+            if filter_langpack_root_ref and is_langpack_root_ref(line):
+                continue
+            seen.add(line)
+            ordered.append(line)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(ordered) + "\n")
+
+
+def _write_multilocale_txt(command_context, locales):
+    """Write ``dist/bin/res/multilocale.txt`` (or the mobile equivalent) with
+    the full multi-locale list (the requested locales, plus en-US).
+
+    en-US ``mach build`` writes ``dist/bin/res/multilocale.txt`` via the
+    regular ``GeneratedFile`` rule in ``toolkit/locales/moz.build``, but
+    only with the configured ``MOZ_CHROME_MULTILOCALE`` list (typically
+    just en-US for non-multi-locale builds). Multi-locale packaging needs
+    to rewrite that file with the locales actually being packaged, which
+    are only known at command-invocation time. This helper does that
+    rewrite, replacing the legacy ``multilocale.txt:`` make recipe in
+    ``packager.mk``. Single-locale repacks (``mach repackage-zip``) don't
+    update ``res/multilocale.txt``: they carry the unpacked en-US copy
+    forward unchanged, matching legacy ``repackage-zip-%`` behavior.
+    """
+    if command_context.substs.get("MOZ_BUILD_APP") == "mobile/android":
+        relpath = mozpath.join(
+            command_context.substs.get("BINPATH", "bin"), "res", "multilocale.txt"
+        )
+    else:
+        relpath = mozpath.join(
+            command_context.substs.get("RESPATH", "bin"), "res", "multilocale.txt"
+        )
+    target = mozpath.join(command_context.topobjdir, "dist", relpath)
+
+    # Match gen_multilocale.py: ensure en-US is present, then write a single
+    # comma-separated line.
+    content_locales = list(locales)
+    if "en-US" not in content_locales:
+        content_locales.append("en-US")
+
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8", newline="\n") as f:
+        f.write(",".join(content_locales) + "\n")
+
+
+def _stage_multilocale_chrome_into_dist_bin(command_context, locales):
+    """For each locale, walk ``dist/xpi-stage/locale-<ab_cd>/`` and copy
+    chrome resources / merge ``.manifest`` files into ``dist/bin/``.
+
+    Replaces the legacy ``chrome-<locale>`` make recipes for browser
+    multi-locale packaging. Each locale's per-locale tree was previously
+    staged by ``locale_staging.stage_locale``; this step re-projects the
+    tree into ``dist/bin/`` so a subsequent ``mach package`` produces a
+    multi-locale package with each locale's chrome alongside en-US.
+
+    TODO VERIFY THIS: pre-bug-1407374 (Nov 2017),
+    ``extensions/spellcheck/locales`` and similar dirs used
+    ``INSTALL_TARGETS += DICTIONARY`` with ``LOCALE_SRCDIR``, so
+    chrome-<locale> recursion staged per-locale dictionaries /
+    updater.ini / devtools-shared-and-server localization. The 1407374
+    migration to ``LOCALIZED_FILES`` rewires those installs to the
+    ``misc`` make tier (recursivemake.py ``_process_localized_files``
+    writes ``_TARGET := misc``). chrome-<locale> only fires the
+    ``chrome::`` tier, not ``misc::``, so since 2017 the legacy
+    multi-locale path silently dropped that content. The staging-spec
+    emitter consumes ``LOCALIZED_FILES`` directly, so this walker
+    re-projects it into ``dist/bin`` and ships it through the wildcards
+    in ``package-manifest.in`` (e.g. ``@RESPATH@/dictionaries/*``).
+    Gate-off (legacy) builds are unchanged; gate-on multi-locale ships
+    strictly more per-locale content than legacy, matching the
+    pre-2017 intent. (Hypothesis from code-reading + diff observation;
+    confirm against bug 1407374 history and a release-engineering
+    multi-locale build before claiming as a bug fix in the commit.)
+
+    TODO: ``browser/locales/moz.build`` declares
+    ``LOCALIZED_FILES[".."] += ["!updater.ini"]``, which lands at
+    ``dist/xpi-stage/locale-<ab>/browser/updater.ini``. But
+    ``package-manifest.in`` references ``@RESPATH@/updater.ini`` (top
+    level), not ``@RESPATH@/browser/updater.ini``, so the per-locale
+    staged copy is unused. Confirm whether the moz.build subpath is
+    wrong, whether ``package-manifest.in`` should also reference the
+    per-locale path, or whether this walk should filter the file out.
+    """
+    dist_bin = mozpath.join(command_context.topobjdir, "dist", "bin")
+
+    for locale in locales:
+        stage_root = mozpath.join(
+            command_context.topobjdir, "dist", "xpi-stage", "locale-" + locale
+        )
+        if not os.path.isdir(stage_root):
+            command_context.log(
+                logging.WARNING,
+                "package-multi-locale",
+                {"locale": locale, "stage": stage_root},
+                "{locale}: no langpack staging at {stage}; skipping",
+            )
+            continue
+
+        for root, dirs, files in os.walk(stage_root):
+            rel_root = mozpath.relpath(
+                root.replace(os.sep, "/"), stage_root.replace(os.sep, "/")
+            )
+            at_top = rel_root in (".", "")
+
+            if at_top:
+                # Don't recurse into langpack-only top-level dirs.
+                dirs[:] = [d for d in dirs if d not in _LANGPACK_ONLY_TOP_LEVEL_DIRS]
+
+            for filename in files:
+                if at_top and filename in _LANGPACK_ONLY_TOP_LEVEL_FILES:
+                    continue
+                src = mozpath.join(root, filename)
+                if at_top:
+                    dst = mozpath.join(dist_bin, filename)
+                else:
+                    dst = mozpath.join(dist_bin, rel_root, filename)
+
+                if filename.endswith(".manifest"):
+                    _merge_chrome_manifest(
+                        src,
+                        dst,
+                        filter_langpack_root_ref=(
+                            at_top and filename == "chrome.manifest"
+                        ),
+                    )
+                else:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+
+
+def _repackage_windows_installer(
+    command_context, locale, *, simple_package_name=None, pkg_format=None
+):
+    """Build the Windows installer .exe for a single non-en-US locale.
+
+    Replaces ``browser/locales/Makefile.in``'s ``package-win32-installer``
+    recipe. Threads the just-built per-locale ``.zip`` into
+    ``browser/installer/windows`` as ``ZIP_IN`` and runs that subdir's
+    ``installer`` make target with ``CONFIG_DIR=l10ngen``. Also sets
+    ``AB_CD`` and ``REAL_LOCALE_MERGEDIR`` (formerly exported by
+    ``toolkit/locales/l10n.mk``) so the inner Makefile's
+    ``EXPAND_LOCALE_SRCDIR`` and ``--l10n-dir`` expansions resolve.
+
+    ``simple_package_name`` and ``pkg_format`` override the corresponding
+    configure substs to compute the per-locale ``ZIP_IN`` filename, so
+    this matches whatever filename ``_repackage_zip_locale`` produced.
+    """
+    from mozbuild import package_naming
+
+    naming_substs = _naming_substs(
+        command_context,
+        simple_package_name=simple_package_name,
+        pkg_format=pkg_format,
+    )
+    topobjdir = command_context.topobjdir
+    pkg_filename = package_naming.pkg_basename(
+        naming_substs, locale
+    ) + package_naming.pkg_suffix(naming_substs)
+    zip_in = mozpath.join(topobjdir, "dist", pkg_filename)
+    installer_dir = mozpath.join(topobjdir, "browser", "installer", "windows")
+
+    command_context._run_make(
+        directory=installer_dir,
+        target=[
+            "CONFIG_DIR=l10ngen",
+            f"ZIP_IN={zip_in}",
+            "installer",
+        ],
+        append_env={
+            "AB_CD": locale,
+            "REAL_LOCALE_MERGEDIR": mozpath.join(topobjdir, "l10n_merge", locale),
+            "IS_LANGUAGE_REPACK": "1",
+        },
+        pass_thru=False,
+        print_directory=False,
+        ensure_exit_code=True,
+    )
+
+
 @Command(
     "package-multi-locale",
     category="post-build",
     description="Package a multi-locale version of the built product "
     "for distribution as an APK, DMG, etc.",
+    virtualenv_name="build",
 )
 @CommandArgument(
     "--locales",
@@ -4438,16 +4672,15 @@ def repackage_zip(command_context, locale, simple_package_name=None, pkg_format=
     "--verbose", action="store_true", help="Log informative status messages."
 )
 def package_l10n(command_context, verbose=False, locales=[]):
-    if "RecursiveMake" not in command_context.substs["BUILD_BACKENDS"]:
-        print(
-            "Artifact builds do not support localization. "
-            "If you know what you are doing, you can use:\n"
-            "ac_add_options --disable-compile-environment\n"
-            "export BUILD_BACKENDS=FasterMake,RecursiveMake\n"
-            "in your mozconfig."
-        )
-        return 1
+    """Build a multi-locale package containing en-US plus the given locales.
 
+    Replaces the legacy ``chrome-<locale>`` make recipe orchestration:
+    for each locale, runs the merge build and stages the locale via
+    ``locale_staging.stage_locale``, then merges all staged trees into
+    ``dist/bin/``, writes the multi-locale ``multilocale.txt``, and
+    invokes ``mach package`` (and on mobile, ``mach android
+    archive-geckoview``).
+    """
     locales = sorted(locale for locale in locales if locale != "en-US")
 
     append_env = {
@@ -4459,20 +4692,50 @@ def package_l10n(command_context, verbose=False, locales=[]):
 
     ensure_l10n_central(command_context)
 
-    command_context.log(
-        logging.INFO,
-        "package-multi-locale",
-        {"locales": locales},
-        "Processing chrome Gecko resources for locales {locales}",
-    )
-    command_context._run_make(
-        directory=command_context.topobjdir,
-        target=[f"chrome-{locale}" for locale in locales],
-        append_env=append_env,
-        pass_thru=False,
-        print_directory=False,
-        ensure_exit_code=True,
-    )
+    if command_context.substs.get("MOZ_LOCALE_STAGING"):
+        command_context.log(
+            logging.INFO,
+            "package-multi-locale",
+            {"locales": locales},
+            "Staging per-locale chrome for {locales} via locale_staging "
+            "and merging into dist/bin",
+        )
+        for locale in locales:
+            _clobber_xpi_stage(command_context, locale)
+            _run_merge(command_context, locale)
+            _stage_locale_via_spec(command_context, locale)
+        _stage_multilocale_chrome_into_dist_bin(command_context, locales)
+
+        # Write the package-wide dist/bin/res/multilocale.txt before the
+        # browser/app tools step and the package step (replaces packager.mk's
+        # ``multilocale.txt:`` recipe). Order matters on macOS: the tools step
+        # stages dist/bin into the .app bundle, so multilocale.txt must exist
+        # beforehand to be picked up.
+        _write_multilocale_txt(command_context, locales)
+    else:
+        if "RecursiveMake" not in command_context.substs["BUILD_BACKENDS"]:
+            print(
+                "Artifact builds do not support localization. "
+                "If you know what you are doing, you can use:\n"
+                "ac_add_options --disable-compile-environment\n"
+                "export BUILD_BACKENDS=FasterMake,RecursiveMake\n"
+                "in your mozconfig."
+            )
+            return 1
+        command_context.log(
+            logging.INFO,
+            "package-multi-locale",
+            {"locales": locales},
+            "Processing chrome Gecko resources for locales {locales}",
+        )
+        command_context._run_make(
+            directory=command_context.topobjdir,
+            target=[f"chrome-{locale}" for locale in locales],
+            append_env=append_env,
+            pass_thru=False,
+            print_directory=False,
+            ensure_exit_code=True,
+        )
 
     if command_context.substs["MOZ_BUILD_APP"] == "browser":
         command_context.log(
@@ -4548,15 +4811,18 @@ def run_mach(command_context, cmd, **kwargs):
 @Command(
     "repackage-single-locales",
     category="post-build",
-    description="Repackage single-locale versions of the built product "
-    "for distribution as APKs, DMGs, etc.",
+    description="Repackage one or more single-locale versions of the built "
+    "product (langpack .xpi, locale-specific archive, and on Windows the "
+    "installer .exe).",
+    virtualenv_name="build",
+    conditions=[conditions.is_firefox],
 )
 @CommandArgument(
     "--locales",
     metavar="LOCALES",
     nargs="+",
     required=True,
-    help="List of locales to repackage",
+    help="List of non-en-US locales to repackage.",
 )
 @CommandArgument(
     "--verbose", action="store_true", help="Log informative status messages."
@@ -4564,10 +4830,133 @@ def run_mach(command_context, cmd, **kwargs):
 @CommandArgument(
     "--dest",
     default=None,
-    help="Destination directory to populate with localized artifacts; "
-    + "default: UPLOAD_PATH environment variable if set; '$topobjdir/dist/repackage-single-locales' if not set",
+    help="Destination directory to upload the produced artifacts to via "
+    "``make upload``. Defaults to the UPLOAD_PATH env var if set; "
+    "without either, the upload step is skipped (artifacts land in "
+    "$topobjdir/dist/).",
 )
 def repackage_single_locales(command_context, verbose=False, locales=[], dest=None):
+    """Build per-locale repack artifacts and optionally upload them.
+
+    Dispatches to one of two implementations based on the
+    ``--enable-locale-staging`` configure flag. With the flag enabled,
+    runs the in-process locale_staging path (shared with ``mach langpack``
+    / ``mach repackage-zip``). Otherwise falls back to the legacy
+    ``installers-<ab_cd>`` make recipe orchestration.
+    """
+    locales = sorted(locale for locale in locales if locale != "en-US")
+    if not locales:
+        print(
+            "repackage-single-locales requires at least one non-en-US locale",
+            file=sys.stderr,
+        )
+        return 1
+
+    if command_context.substs.get("MOZ_LOCALE_STAGING"):
+        return _repackage_single_locales_via_staging(
+            command_context, verbose=verbose, locales=locales, dest=dest
+        )
+    return _repackage_single_locales_via_make(
+        command_context, verbose=verbose, locales=locales, dest=dest
+    )
+
+
+def _repackage_single_locales_via_staging(command_context, *, verbose, locales, dest):
+    """Locale-staging implementation of ``mach repackage-single-locales``.
+
+    For each locale, builds the langpack ``.xpi``, repackages the en-US
+    distribution as a locale-specific archive, and on Windows builds the
+    per-locale installer ``.exe``. If ``dest`` (or ``UPLOAD_PATH``) is
+    set, also runs ``make upload AB_CD=<locale>`` per locale.
+    """
+    if not dest:
+        dest = os.environ.get("UPLOAD_PATH")
+    if dest:
+        dest = os.path.abspath(dest)
+
+    # Target a uniform ``target.<ext>`` filename across locales (mozharness /
+    # signing tooling expects this). On local macOS, prefer TAR over DMG
+    # because DMG packaging is slow to iterate on. The make-driven ``upload``
+    # step below still reads these as make variables via ``package-name.mk``,
+    # so they go in append_env too.
+    simple_package_name = "target"
+    pkg_format_override = None
+    if not command_context.substs.get("MOZ_AUTOMATION") and sys.platform == "darwin":
+        pkg_format_override = "TAR"
+
+    append_env = {"MOZ_SIMPLE_PACKAGE_NAME": simple_package_name}
+    if pkg_format_override:
+        append_env["MOZ_PKG_FORMAT"] = pkg_format_override
+
+    if not verify_l10n_preconditions(command_context):
+        return 1
+
+    ensure_l10n_central(command_context)
+
+    is_winnt = command_context.substs.get("OS_ARCH") == "WINNT"
+
+    for locale in locales:
+        command_context.log(
+            logging.INFO,
+            "repackage-single-locales",
+            {"locale": locale},
+            "Repackaging locale {locale}",
+        )
+
+        # Per-locale pipeline: langpack -> repackage-zip -> (Windows) the
+        # locale-specific installer .exe. Inlined rather than dispatched
+        # through a separate mach command so the repack pipeline shares the
+        # same process / configuration as the surrounding upload loop.
+        _prep_locale_stage(command_context, locale)
+        _make_langpack(command_context, locale, simple_package_name=simple_package_name)
+        _repackage_zip_locale(
+            command_context,
+            locale,
+            simple_package_name=simple_package_name,
+            pkg_format=pkg_format_override,
+        )
+        if is_winnt:
+            _repackage_windows_installer(
+                command_context,
+                locale,
+                simple_package_name=simple_package_name,
+                pkg_format=pkg_format_override,
+            )
+
+        if dest:
+
+            def upload_line_handler(line, locale=locale):
+                command_context.log(
+                    logging.INFO,
+                    "repackage-single-locales",
+                    {"locale": locale, "line": line},
+                    "{locale}> {line}",
+                )
+
+            upload_env = dict(append_env)
+            upload_env["UPLOAD_PATH"] = mozpath.join(dest, locale)
+            command_context._run_make(
+                directory=os.path.join(command_context.topobjdir),
+                target=["upload", f"AB_CD={locale}"],
+                append_env=upload_env,
+                pass_thru=False,
+                print_directory=False,
+                ensure_exit_code=True,
+                silent=not verbose,
+                log=False,
+                line_handler=upload_line_handler,
+            )
+
+    return 0
+
+
+def _repackage_single_locales_via_make(command_context, *, verbose, locales, dest):
+    """Legacy make-driven implementation of ``mach repackage-single-locales``.
+
+    Per-locale: ``./mach configure --enable-ui-locale=<locale>``,
+    ``./mach build installers-<locale>``, then ``make upload AB_CD=<locale>``.
+    Used when ``--enable-locale-staging`` is not set.
+    """
     if "RecursiveMake" not in command_context.substs["BUILD_BACKENDS"]:
         print(
             "Artifact builds do not support localization. "
@@ -4584,8 +4973,6 @@ def repackage_single_locales(command_context, verbose=False, locales=[], dest=No
             mozpath.join(command_context.topobjdir, "dist", "repackage-single-locales"),
         )
     dest = os.path.abspath(dest)
-
-    locales = sorted(locale for locale in locales if locale != "en-US")
 
     append_env = {
         # Simple as possible, please!
@@ -4604,7 +4991,7 @@ def repackage_single_locales(command_context, verbose=False, locales=[], dest=No
         "Processing chrome Gecko resources for locales {locales}",
     )
 
-    def line_handler(line):
+    def export_line_handler(line):
         command_context.log(
             logging.INFO,
             "repackage-single-locales",
@@ -4624,18 +5011,12 @@ def repackage_single_locales(command_context, verbose=False, locales=[], dest=No
         append_env=append_env,
         pass_thru=False,
         ensure_exit_code=True,
-        line_handler=line_handler,
+        line_handler=export_line_handler,
     )
 
     for locale in locales:
-        command_context.log(
-            logging.INFO,
-            "repackage-single-locales",
-            {"locale": locale},
-            "Repackaging locale {locale}",
-        )
 
-        def line_handler(line):
+        def line_handler(line, locale=locale):
             command_context.log(
                 logging.INFO,
                 "repackage-single-locales",
