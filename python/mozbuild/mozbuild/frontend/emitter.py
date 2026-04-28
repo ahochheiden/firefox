@@ -1953,27 +1953,34 @@ class TreeMetadataEmitter(LoggingMixin):
                 context,
             )
 
-        # When ``MOZ_LOCALE_STAGING`` is set, dist/bin contexts parse jar.mn
-        # at emit time and yield FinalTargetFiles / ChromeManifestEntry
-        # directly. Otherwise (the default), every JAR_MANIFEST goes through
-        # the legacy ``JARManifest`` path consumed by
+        # When ``MOZ_LOCALE_STAGING`` is set, dist/bin contexts and
+        # USE_EXTENSION_MANIFEST addon contexts both parse jar.mn at emit
+        # time and yield FinalTargetFiles / ChromeManifestEntry directly.
+        # The extension-manifest case mirrors JarMaker's -e mode: a single
+        # inline chrome.manifest at install_target root with
+        # chromebase-prefixed entries, instead of one <jarname>.manifest
+        # per jar. Otherwise (the default), every JAR_MANIFEST goes
+        # through the legacy ``JARManifest`` path consumed by
         # ``CommonBackend._consume_jar_manifest`` and the recursivemake
-        # backend's ``JAR_MANIFEST :=`` emission. USE_EXTENSION_MANIFEST
-        # addon contexts always take the legacy path here; N2 extends the
-        # gated branch to cover them.
+        # backend's ``JAR_MANIFEST :=`` emission.
         locale_staging = bool(self.config.substs.get("MOZ_LOCALE_STAGING"))
         final_target = context.get("FINAL_TARGET") or "dist/bin"
         use_extension_manifest = bool(context.get("USE_EXTENSION_MANIFEST"))
 
         for path in jar_manifests:
-            if (
-                locale_staging
-                and final_target.startswith("dist/bin")
-                and not use_extension_manifest
-            ):
-                yield from self._process_en_us_jar_sections(context, path)
-            else:
+            if not locale_staging:
                 yield JARManifest(context, path)
+                continue
+            if not (final_target.startswith("dist/bin") or use_extension_manifest):
+                raise SandboxValidationError(
+                    "JAR_MANIFESTS in a non-dist/bin context requires "
+                    "USE_EXTENSION_MANIFEST = True. (No other configuration "
+                    "is currently supported.)",
+                    context,
+                )
+            yield from self._process_en_us_jar_sections(
+                context, path, use_extension_manifest=use_extension_manifest
+            )
 
         # Temporary test to look for jar.mn files that creep in without using
         # the new declaration. Before, we didn't require jar.mn files to
@@ -1988,14 +1995,21 @@ class TreeMetadataEmitter(LoggingMixin):
                     context,
                 )
 
-    def _process_en_us_jar_sections(self, context, path):
+    def _process_en_us_jar_sections(self, context, path, use_extension_manifest=False):
         """Parse a jar.mn at emit time and yield the en-US install entries
         (FinalTargetFiles, FinalTargetPreprocessedFiles, ChromeManifestEntry).
 
-        Replaces ``CommonBackend._consume_jar_manifest`` for ``dist/bin``
-        contexts. Yielding from the emitter makes jar.mn another regular
-        source of FinalTargetFiles, so non-make backends can consume them
-        without replicating the parser.
+        Replaces the legacy ``CommonBackend._consume_jar_manifest`` and the
+        ``chrome`` make target's ``make_jars.py`` invocation. Yielding from
+        the emitter makes jar.mn another regular source of FinalTargetFiles,
+        so non-make backends can consume them without replicating the parser.
+
+        ``use_extension_manifest=True`` mirrors JarMaker's ``-e`` mode used
+        for ``USE_EXTENSION_MANIFEST`` addons (reftest, mochitest,
+        specialpowers, mozscreenshots): chrome registration entries land in
+        a single inline ``chrome.manifest`` at the install_target root with
+        chromebase-prefixed paths, instead of one ``<jarname>.manifest`` per
+        jar referenced by a top-level ``manifest`` line.
         """
         defines_dict = context.get("DEFINES") or None
 
@@ -2137,9 +2151,31 @@ class TreeMetadataEmitter(LoggingMixin):
             if any(localized_files_pp.walk()):
                 yield FinalTargetPreprocessedFiles(jar_context, localized_files_pp)
 
-            manifest_relpath = f"{jarinfo.name}.manifest"
-            chromebase = mozpath.basename(jarinfo.name) + "/"
-            base = mozpath.dirname(jarinfo.name)
+            # Chromebase substitution mirrors JarMaker:
+            #   default mode: chromebase = basename(jarname) + "/"
+            #     entries land in <install_target>/<jarname>.manifest, and
+            #     <install_target>/chrome.manifest gets a `manifest
+            #     <jarname>.manifest` reference (added by the recursivemake
+            #     ChromeManifestEntry handler when entry path != top_level).
+            #   -e mode (USE_EXTENSION_MANIFEST):
+            #     chromebase = dirname(jarname) + "/" + basename(jarname) + "/"
+            #     entries land directly in <install_target>/chrome.manifest
+            #     with no per-jar manifest file. The recursivemake handler
+            #     skips the `manifest ...` reference because entry path ==
+            #     top_level.
+            if use_extension_manifest:
+                manifest_relpath = "chrome.manifest"
+                chromebase = (
+                    mozpath.dirname(jarinfo.name)
+                    + "/"
+                    + mozpath.basename(jarinfo.name)
+                    + "/"
+                )
+                base = ""
+            else:
+                manifest_relpath = f"{jarinfo.name}.manifest"
+                chromebase = mozpath.basename(jarinfo.name) + "/"
+                base = mozpath.dirname(jarinfo.name)
 
             for m in jarinfo.chrome_manifests:
                 entry = parse_manifest_line(base, m.replace("%", chromebase))
