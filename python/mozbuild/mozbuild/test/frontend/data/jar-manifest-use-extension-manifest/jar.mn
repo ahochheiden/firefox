@@ -1,0 +1,3 @@
+test.jar:
+% content test %content/
+% locale test en-US %locale/en-US/test/
