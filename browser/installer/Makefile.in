@@ -139,9 +139,15 @@ endif
 
 # Builds using the hybrid FasterMake/RecursiveMake backend will
 # fail to produce a langpack. See bug 1255096.
+# Under MOZ_LOCALE_STAGING the legacy ``make langpack`` target relies on
+# per-directory ``JAR_MANIFEST :=`` lines that the new emitter path no
+# longer writes; ``./mach langpack --locale en-US`` is the gate-on
+# replacement.
 libs::
 ifeq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
+ifndef MOZ_LOCALE_STAGING
 	$(MAKE) -C $(DEPTH)/browser/locales langpack
+endif
 endif
 
 ifeq (WINNT,$(OS_ARCH))
