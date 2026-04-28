@@ -3839,6 +3839,588 @@ def repackage_desktop_file(
         desktop_file.write(desktop)
 
 
+def _run_merge(command_context, locale):
+    """Build the per-locale merge tree at ``$(topobjdir)/l10n_merge/<ab_cd>``.
+
+    Replaces the legacy ``merge-<ab_cd>`` make recipe. Wipes any existing
+    merge dir, runs ``moz.l10n.bin.build`` against
+    ``<topsrcdir>/<MOZ_BUILD_APP>/locales/l10n.toml`` with ``L10NBASEDIR``
+    as the source of locale files, and carries any hunspell dictionaries
+    across from the locale repo (those aren't part of the moz.l10n config).
+    """
+    substs = command_context.substs
+    topobjdir = command_context.topobjdir
+    topsrcdir = command_context.topsrcdir
+    moz_app = substs["MOZ_BUILD_APP"]
+    l10n_base = substs["L10NBASEDIR"]
+
+    config = mozpath.join(topsrcdir, moz_app, "locales", "l10n.toml")
+    merge_root = mozpath.join(topobjdir, "l10n_merge")
+    merge_dir = mozpath.join(merge_root, locale)
+
+    if os.path.exists(merge_dir):
+        shutil.rmtree(merge_dir)
+
+    command_context.run_process(
+        [
+            sys.executable,
+            "-m",
+            "moz.l10n.bin.build",
+            "--config",
+            config,
+            "--base",
+            l10n_base,
+            "--target",
+            merge_root,
+            "--locales",
+            locale,
+        ],
+        cwd=topobjdir,
+        ensure_exit_code=True,
+        pass_thru=False,
+    )
+
+    spellcheck_src = mozpath.join(
+        l10n_base, locale, "extensions", "spellcheck", "hunspell"
+    )
+    if os.path.isdir(spellcheck_src):
+        spellcheck_dst = mozpath.join(merge_dir, "extensions", "spellcheck", "hunspell")
+        os.makedirs(spellcheck_dst, exist_ok=True)
+        for entry in os.listdir(spellcheck_src):
+            src = mozpath.join(spellcheck_src, entry)
+            if os.path.isfile(src):
+                shutil.copy2(src, mozpath.join(spellcheck_dst, entry))
+
+
+def _naming_substs(command_context, *, simple_package_name=None, pkg_format=None):
+    """Return ``command_context.substs`` overlaid with explicit
+    package-naming overrides for the ``package_naming`` helpers and the
+    package action.
+
+    ``mach repackage-single-locales`` (and friends) pass
+    ``simple_package_name`` (and on local macOS ``pkg_format``) so the
+    per-locale output lands at ``target.zip`` / ``target.tar`` instead
+    of the configured appname-versioned filename. The override is at
+    the call boundary; we don't read process environment here.
+    """
+    substs = dict(command_context.substs)
+    if simple_package_name is not None:
+        substs["MOZ_SIMPLE_PACKAGE_NAME"] = simple_package_name
+    if pkg_format is not None:
+        substs["MOZ_PKG_FORMAT"] = pkg_format
+    return substs
+
+
+def _clobber_xpi_stage(command_context, locale):
+    """Remove ``$(topobjdir)/dist/xpi-stage/locale-<locale>``.
+
+    Replaces the ``clobber-<locale>`` make recipe in
+    ``toolkit/locales/l10n.mk``. ``mozbuild.locale_staging.stage_locale``
+    also wipes the destination, but doing it here makes the contract
+    explicit at the orchestration layer.
+    """
+    stage = mozpath.join(
+        command_context.topobjdir, "dist", "xpi-stage", "locale-" + locale
+    )
+    if os.path.exists(stage):
+        shutil.rmtree(stage)
+
+
+def _stage_locale_via_spec(command_context, locale):
+    """Run ``locale_staging.stage_locale`` against the build's
+    ``staging-spec.json`` (written by ``CommonBackend.consume_finished``)
+    to materialize ``dist/xpi-stage/locale-<locale>/``.
+    """
+    from mozbuild.locale_staging import stage_locale
+
+    topobjdir = command_context.topobjdir
+    spec_path = mozpath.join(topobjdir, "staging-spec.json")
+    merge_tree = mozpath.join(topobjdir, "l10n_merge", locale)
+    dest = mozpath.join(topobjdir, "dist", "xpi-stage", "locale-" + locale)
+    stage_locale(
+        locale=locale,
+        spec_path=spec_path,
+        merge_tree=merge_tree,
+        dest_xpi_stage=dest,
+        topsrcdir=command_context.topsrcdir,
+        topobjdir=topobjdir,
+    )
+
+
+def _prep_locale_stage(command_context, locale):
+    """Prep the per-locale staging tree at ``dist/xpi-stage/locale-<ab_cd>/``.
+
+    Wipes the prior staging dir, builds the merge tree, and runs
+    ``locale_staging.stage_locale`` to materialize the staged tree.
+    Callers that need both ``_make_langpack`` and ``_repackage_zip_locale``
+    for the same locale should call this once and hand the prepped tree to
+    both helpers, rather than letting each helper repeat the work.
+    """
+    _clobber_xpi_stage(command_context, locale)
+    _run_merge(command_context, locale)
+    _stage_locale_via_spec(command_context, locale)
+
+
+def _make_langpack(command_context, locale, *, simple_package_name=None):
+    """Build the langpack ``.xpi`` for a single non-en-US locale.
+
+    Replaces the langpack half of the legacy ``langpack-<ab_cd>`` /
+    ``package-langpack-<ab_cd>`` make recipes in
+    ``toolkit/locales/l10n.mk``: writes the WebExtension ``manifest.json``
+    via the ``langpack_manifest`` action and packs the staged tree into
+    the ``.xpi`` via the ``zip`` action. Returns the absolute path of the
+    produced ``.xpi``.
+
+    Expects ``dist/xpi-stage/locale-<ab_cd>/`` and the merge tree to
+    already be populated; callers are responsible for invoking
+    ``_prep_locale_stage`` first.
+
+    ``simple_package_name``, when set, overrides ``MOZ_SIMPLE_PACKAGE_NAME``
+    so the produced ``.xpi`` uses a caller-provided basename (e.g.
+    ``mach repackage-single-locales`` passes ``"target"``).
+    """
+    from mozbuild import package_naming
+    from mozbuild.action import langpack_manifest
+    from mozbuild.action import zip as action_zip
+
+    substs = command_context.substs
+    naming_substs = _naming_substs(
+        command_context, simple_package_name=simple_package_name
+    )
+    topobjdir = command_context.topobjdir
+    moz_app = substs["MOZ_BUILD_APP"]
+
+    stage_dir = mozpath.join(topobjdir, "dist", "xpi-stage", "locale-" + locale)
+    # langpack-metadata.ftl lives in the merge tree under <app>/, mirroring
+    # EXPAND_LOCALE_SRCDIR(<app>/locales) -> l10n_merge/<ab_cd>/<app>/.
+    metadata = mozpath.join(
+        topobjdir, "l10n_merge", locale, moz_app, "langpack-metadata.ftl"
+    )
+
+    pkg_path = package_naming.pkg_langpack_path(naming_substs)
+    pkg_basename = package_naming.pkg_langpack_basename(naming_substs, locale)
+    output_dir = (
+        mozpath.join(topobjdir, "dist", pkg_path)
+        if pkg_path
+        else mozpath.join(topobjdir, "dist")
+    )
+    os.makedirs(output_dir, exist_ok=True)
+    output = mozpath.join(output_dir, pkg_basename + ".xpi")
+
+    eid = package_naming.langpack_eid(substs, locale)
+
+    command_context.log(
+        logging.INFO,
+        "langpack",
+        {"locale": locale},
+        "Writing langpack manifest for {locale}",
+    )
+    langpack_manifest.main([
+        "--locales",
+        locale,
+        "--app-version",
+        substs["MOZ_APP_VERSION"],
+        "--max-app-ver",
+        substs["MOZ_APP_MAXVERSION"],
+        "--app-name",
+        substs["MOZ_APP_DISPLAYNAME"],
+        "--l10n-basedir",
+        substs["L10NBASEDIR"],
+        "--metadata",
+        metadata,
+        "--langpack-eid",
+        eid,
+        "--input",
+        stage_dir,
+    ])
+
+    pkg_zip_dirs = ["chrome", "localization"]
+    dist_subdir = substs.get("DIST_SUBDIR")
+    if dist_subdir:
+        pkg_zip_dirs.append(dist_subdir)
+
+    command_context.log(
+        logging.INFO,
+        "langpack",
+        {"output": output},
+        "Packaging langpack {output}",
+    )
+    action_zip.main(
+        [
+            "-C",
+            stage_dir,
+            "-x",
+            "**/*.manifest",
+            "-x",
+            "**/*.js",
+            "-x",
+            "**/*.ini",
+            output,
+        ]
+        + pkg_zip_dirs
+        + ["manifest.json"]
+    )
+    return output
+
+
+def _stagedist_for(command_context):
+    """Return the directory inside ``dist/l10n-stage/`` that holds the
+    en-US package contents (the legacy ``STAGEDIST`` make variable).
+
+    On macOS the .app bundle is nested inside MOZ_PKG_DIR; elsewhere the
+    package contents live directly at MOZ_PKG_DIR.
+    """
+    substs = command_context.substs
+    l10n_stage = mozpath.join(command_context.topobjdir, "dist", "l10n-stage")
+    moz_pkg_dir = substs.get("MOZ_PKG_DIR") or substs["MOZ_APP_NAME"]
+    if substs.get("MOZ_WIDGET_TOOLKIT") == "cocoa":
+        appname = substs.get("MOZ_MACBUNDLE_NAME") or substs.get("MOZ_APP_DISPLAYNAME")
+        return mozpath.join(l10n_stage, moz_pkg_dir, appname, "Contents", "Resources")
+    return mozpath.join(l10n_stage, moz_pkg_dir)
+
+
+def _unpack_for_repackage(command_context):
+    """Restore the en-US package into ``dist/l10n-stage/<MOZ_PKG_DIR>/``.
+
+    Replaces the legacy ``unpack`` recipe in ``toolkit/locales/l10n.mk``:
+    removes any prior staging tree and runs
+    ``mach artifact install --unfiltered-project-package`` to expand the
+    en-US package into the l10n-stage directory.
+    """
+    substs = command_context.substs
+    l10n_stage = mozpath.join(command_context.topobjdir, "dist", "l10n-stage")
+    moz_pkg_dir = substs.get("MOZ_PKG_DIR") or substs["MOZ_APP_NAME"]
+
+    if os.path.exists(l10n_stage):
+        shutil.rmtree(l10n_stage)
+
+    distdir = mozpath.join(l10n_stage, moz_pkg_dir)
+    os.makedirs(distdir, exist_ok=True)
+
+    def line_handler(line):
+        command_context.log(
+            logging.INFO,
+            "unpack-for-repackage",
+            {"line": line},
+            "artifact-install> {line}",
+        )
+
+    command_context.run_process(
+        [
+            sys.executable,
+            mozpath.join(command_context.topsrcdir, "mach"),
+            "--log-no-times",
+            "artifact",
+            "install",
+            "--unfiltered-project-package",
+            "--distdir",
+            distdir,
+            "--verbose",
+        ],
+        cwd=command_context.topobjdir,
+        ensure_exit_code=True,
+        pass_thru=False,
+        line_handler=line_handler,
+    )
+
+
+def _package_extra_args(command_context, *, pkg_format=None):
+    """Mirror ``upload-files.mk``'s ``PACKAGE_EXTRA_ARGS`` for the current
+    ``MOZ_PKG_FORMAT`` / ``MOZ_WIDGET_TOOLKIT``, returning the list of
+    extra argv tokens to pass to ``mozbuild.action.package``.
+
+    ``pkg_format``, when set, overrides the configured ``MOZ_PKG_FORMAT``
+    (e.g. ``mach repackage-single-locales`` passes ``"TAR"`` on local
+    macOS to avoid DMG packaging during repacks).
+    """
+    substs = _naming_substs(command_context, pkg_format=pkg_format)
+    fmt = substs["MOZ_PKG_FORMAT"]
+    is_cocoa = substs.get("MOZ_WIDGET_TOOLKIT") == "cocoa"
+    args = []
+
+    if fmt == "XZ" and substs.get("MOZ_PROFILE_USE"):
+        args.append("--strong-compression")
+    if fmt == "BZ2" and is_cocoa:
+        appname = substs.get("MOZ_MACBUNDLE_NAME") or substs.get("MOZ_APP_DISPLAYNAME")
+        args.extend(["--app-name", appname])
+    if fmt == "DMG":
+        topsrcdir = command_context.topsrcdir
+        branding = substs.get("MOZ_BRANDING_DIRECTORY") or ""
+        dsstore = mozpath.join(topsrcdir, branding, "dsstore")
+        background = mozpath.join(topsrcdir, branding, "background.png")
+        icon = mozpath.join(topsrcdir, branding, "disk.icns")
+        args.extend([
+            "--dsstore",
+            dsstore,
+            "--background",
+            background,
+            "--icon",
+            icon,
+            "--volume-name",
+            substs["MOZ_APP_DISPLAYNAME"],
+        ])
+    return args
+
+
+def _repackage_zip_locale(
+    command_context, locale, *, simple_package_name=None, pkg_format=None
+):
+    """Re-pack the en-US dist into a single-locale package.
+
+    Replaces the legacy ``repackage-zip-<ab_cd>`` recipe in
+    ``toolkit/locales/l10n.mk``: runs the en-US ``unpack`` step, calls
+    ``mozpack.packager.l10n.repack`` to swap localized parts in-place,
+    handles the macOS ``en.lproj`` rename and the Windows ``helper.exe``
+    carry-over, invokes ``mozbuild.action.package`` to produce the final
+    archive, and moves the result from ``dist/l10n-stage/`` to ``dist/``.
+    Returns the absolute path of the produced package.
+
+    Expects ``dist/xpi-stage/locale-<ab_cd>/`` and the merge tree to
+    already be populated; callers are responsible for invoking
+    ``_prep_locale_stage`` first.
+
+    ``simple_package_name`` and ``pkg_format`` override the corresponding
+    configure substs for the produced filename / archive format. They're
+    set by ``mach repackage-single-locales`` to land output at
+    ``target.<ext>`` and (on local macOS) to use ``TAR`` instead of
+    ``DMG``.
+    """
+    from mozpack.packager import l10n as packager_l10n
+
+    from mozbuild import package_naming
+    from mozbuild.action import package as action_package
+
+    substs = command_context.substs
+    naming_substs = _naming_substs(
+        command_context,
+        simple_package_name=simple_package_name,
+        pkg_format=pkg_format,
+    )
+    topobjdir = command_context.topobjdir
+    is_cocoa = substs.get("MOZ_WIDGET_TOOLKIT") == "cocoa"
+    is_winnt = substs.get("OS_ARCH") == "WINNT"
+
+    _unpack_for_repackage(command_context)
+
+    stagedist = _stagedist_for(command_context)
+    xpi_stage = mozpath.join(topobjdir, "dist", "xpi-stage", "locale-" + locale)
+
+    # 1. l10n-repack: swap localized parts in-place.
+    non_resources = []
+    if substs.get("MOZ_PACKAGER_FORMAT") == "omni" and substs.get("NON_OMNIJAR_FILES"):
+        non_resources = substs["NON_OMNIJAR_FILES"].split()
+    # NON_CHROME mirrors toolkit/mozapps/installer/l10n-repack.py's set.
+    non_chrome = {
+        "dictionaries",
+        "defaultagent_localized.ini",
+        "defaults/profile",
+        "defaults/pref*/*-l10n.js",
+        "default.locale",
+        "updater.ini",
+        "extensions/langpack-*@*",
+        "distribution/extensions/langpack-*@*",
+        "**/multilocale.txt",
+    }
+    # Mirror toolkit/mozapps/installer/l10n-repack.py's side effects:
+    # disable USE_ELF_HACK/PKG_STRIP for the repack, and pick up any
+    # ``BASE=PATH`` entries from MOZ_PKG_EXTRAL10N.
+    import buildconfig
+
+    buildconfig.substs["USE_ELF_HACK"] = False
+    buildconfig.substs["PKG_STRIP"] = False
+    extra_l10n = {}
+    for arg in (substs.get("MOZ_PKG_EXTRAL10N") or "").split():
+        if "=" in arg:
+            base, path = arg.split("=", 1)
+            extra_l10n[base] = path
+    command_context.log(
+        logging.INFO,
+        "repackage-zip",
+        {"locale": locale},
+        "Repacking en-US dist with {locale} langpack",
+    )
+    packager_l10n.repack(
+        stagedist,
+        xpi_stage,
+        extra_l10n=extra_l10n,
+        non_resources=non_resources,
+        non_chrome=non_chrome,
+        minify=bool(substs.get("MOZ_PACKAGER_MINIFY")),
+    )
+
+    # 2. macOS: en.lproj -> <lproj>.lproj for non-en locales.
+    lproj_root = locale.split("-", 1)[0]
+    if is_cocoa and locale == "zh-TW":
+        lproj_root = locale.replace("-", "_")
+    if is_cocoa and lproj_root != "en":
+        en_lproj = mozpath.join(stagedist, "en.lproj")
+        renamed = mozpath.join(stagedist, lproj_root + ".lproj")
+        if os.path.exists(en_lproj):
+            os.rename(en_lproj, renamed)
+
+    # 3. Windows: build helper.exe via the inner make and copy it into
+    # the staged tree's uninstall dir. CONFIG_DIR is a make-command-line
+    # override (not just an env var) so the inner Makefile.in's pattern
+    # rules pick it up; pass it as part of the target list. AB_CD /
+    # REAL_LOCALE_MERGEDIR / IS_LANGUAGE_REPACK formerly came from
+    # ``toolkit/locales/l10n.mk``'s ``export`` lines; thread them
+    # explicitly so ``EXPAND_LOCALE_SRCDIR`` and the ``--l10n-dir``
+    # references in ``browser/installer/windows/Makefile.in`` resolve.
+    if is_winnt:
+        installer_dir = mozpath.join(topobjdir, "browser", "installer", "windows")
+        command_context._run_make(
+            directory=installer_dir,
+            target=["CONFIG_DIR=l10ngen", "l10ngen/helper.exe"],
+            append_env={
+                "AB_CD": locale,
+                "REAL_LOCALE_MERGEDIR": mozpath.join(topobjdir, "l10n_merge", locale),
+                "IS_LANGUAGE_REPACK": "1",
+            },
+            pass_thru=False,
+            print_directory=False,
+            ensure_exit_code=True,
+        )
+        helper_src = mozpath.join(installer_dir, "l10ngen", "helper.exe")
+        helper_dst = mozpath.join(stagedist, "uninstall", "helper.exe")
+        os.makedirs(os.path.dirname(helper_dst), exist_ok=True)
+        shutil.copy2(helper_src, helper_dst)
+
+    # 4. Pack the staged tree into the per-locale package via the
+    # mozbuild.action.package action (mirrors MAKE_PACKAGE).
+    moz_pkg_dir = substs.get("MOZ_PKG_DIR") or substs["MOZ_APP_NAME"]
+    pkg_filename = package_naming.pkg_basename(
+        naming_substs, locale
+    ) + package_naming.pkg_suffix(naming_substs)
+    l10n_stage = mozpath.join(topobjdir, "dist", "l10n-stage")
+    package_argv = [
+        "--format",
+        naming_substs["MOZ_PKG_FORMAT"],
+        "--cwd",
+        l10n_stage,
+        "--pkg-dir",
+        moz_pkg_dir,
+        "--output",
+        pkg_filename,
+        "--tar",
+        substs.get("TAR", "tar"),
+    ] + _package_extra_args(command_context, pkg_format=pkg_format)
+    command_context.log(
+        logging.INFO,
+        "repackage-zip",
+        {"output": pkg_filename},
+        "Packaging {output}",
+    )
+    rc = action_package.main(package_argv)
+    if rc:
+        raise Exception(
+            f"mozbuild.action.package failed for {pkg_filename} "
+            f"(exit code {rc}); refusing to move partial output to dist/"
+        )
+
+    # 5. macOS: undo the lproj rename so subsequent repacks see en.lproj.
+    if is_cocoa and lproj_root != "en":
+        renamed = mozpath.join(stagedist, lproj_root + ".lproj")
+        en_lproj = mozpath.join(stagedist, "en.lproj")
+        if os.path.exists(renamed):
+            os.rename(renamed, en_lproj)
+
+    # 6. Move the produced package to dist/<pkg_filename>.
+    src = mozpath.join(l10n_stage, pkg_filename)
+    dst = mozpath.join(topobjdir, "dist", pkg_filename)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.move(src, dst)
+    asc = src + ".asc"
+    if os.path.exists(asc):
+        shutil.move(asc, dst + ".asc")
+    return dst
+
+
+@Command(
+    "langpack",
+    category="post-build",
+    description="Build a langpack .xpi for a single non-en-US locale.",
+    virtualenv_name="build",
+    conditions=[conditions.is_firefox],
+)
+@CommandArgument(
+    "--locale",
+    metavar="LOCALE",
+    required=True,
+    help="The locale code (e.g., fr) to build a langpack for.",
+)
+@CommandArgument(
+    "--simple-package-name",
+    default=None,
+    help="Override MOZ_SIMPLE_PACKAGE_NAME to control the produced "
+    "langpack .xpi basename.",
+)
+def langpack(command_context, locale, simple_package_name=None):
+    """Build a langpack ``.xpi`` for a single non-en-US locale.
+
+    Replaces the legacy ``langpack-<ab_cd>`` and ``package-langpack-<ab_cd>``
+    make recipes in ``toolkit/locales/l10n.mk``. Assumes the standard
+    Firefox / Android Components langpack layout: a ``langpack-metadata.ftl``
+    file under ``<MOZ_BUILD_APP>/locales/en-US/`` (and therefore in the merge
+    tree at ``$(topobjdir)/l10n_merge/<locale>/<MOZ_BUILD_APP>/``) plus a
+    ``chrome.manifest`` produced by ``locale_staging.stage_locale``.
+    """
+    if locale == "en-US":
+        print("langpack is only meaningful for non-en-US locales", file=sys.stderr)
+        return 1
+
+    ensure_l10n_central(command_context)
+    _prep_locale_stage(command_context, locale)
+    _make_langpack(command_context, locale, simple_package_name=simple_package_name)
+    return 0
+
+
+@Command(
+    "repackage-zip",
+    category="post-build",
+    description="Re-pack the en-US package as a single-locale package.",
+    virtualenv_name="build",
+    conditions=[conditions.is_firefox],
+)
+@CommandArgument(
+    "--locale",
+    metavar="LOCALE",
+    required=True,
+    help="The locale code (e.g., fr) to repackage.",
+)
+@CommandArgument(
+    "--simple-package-name",
+    default=None,
+    help="Override MOZ_SIMPLE_PACKAGE_NAME for the produced archive's basename.",
+)
+@CommandArgument(
+    "--pkg-format",
+    default=None,
+    help="Override MOZ_PKG_FORMAT (e.g., TAR for local macOS, where DMG "
+    "packaging is slow).",
+)
+def repackage_zip(command_context, locale, simple_package_name=None, pkg_format=None):
+    """Repackage the en-US package into a per-locale archive.
+
+    Replaces the legacy ``repackage-zip-<ab_cd>`` and ``unpack`` make
+    recipes in ``toolkit/locales/l10n.mk``. Expects a langpack staging
+    tree at ``dist/xpi-stage/locale-<ab_cd>/`` (typically produced
+    on-the-fly by ``_stage_locale_via_spec``).
+    """
+    if locale == "en-US":
+        print("repackage-zip is only meaningful for non-en-US locales", file=sys.stderr)
+        return 1
+
+    ensure_l10n_central(command_context)
+    _prep_locale_stage(command_context, locale)
+    _repackage_zip_locale(
+        command_context,
+        locale,
+        simple_package_name=simple_package_name,
+        pkg_format=pkg_format,
+    )
+    return 0
+
+
 @Command(
     "package-multi-locale",
     category="post-build",
