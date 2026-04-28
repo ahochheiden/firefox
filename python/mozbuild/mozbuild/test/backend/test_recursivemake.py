@@ -1298,6 +1298,8 @@ class TestRecursiveMakeBackend(BackendTester):
         self.assertIn("qux.so_OBJS := qux1.o", lines)
 
     def test_jar_manifests(self):
+        # Default (``MOZ_LOCALE_STAGING`` unset): JAR_MANIFEST lands in
+        # backend.mk via the legacy ``JARManifest`` path.
         env = self._consume("jar-manifests", RecursiveMakeBackend)
 
         with open(os.path.join(env.topobjdir, "backend.mk")) as fh:
@@ -1306,6 +1308,22 @@ class TestRecursiveMakeBackend(BackendTester):
         lines = [line.rstrip() for line in lines]
 
         self.assertIn("JAR_MANIFEST := %s/jar.mn" % env.topsrcdir, lines)
+
+    def test_jar_manifests_locale_staging(self):
+        # ``MOZ_LOCALE_STAGING`` enabled: jar.mn entries for dist/bin contexts
+        # go through the emitter to FinalTargetFiles / ChromeManifestEntry, so
+        # no JAR_MANIFEST line lands in backend.mk. ``"1"`` mirrors what
+        # configure writes for ``set_config(..., True)`` at runtime.
+        env = self._consume(
+            "jar-manifests",
+            RecursiveMakeBackend,
+            extra_substs={"MOZ_LOCALE_STAGING": "1"},
+        )
+
+        with open(os.path.join(env.topobjdir, "backend.mk")) as fh:
+            contents = fh.read()
+
+        self.assertNotIn("JAR_MANIFEST", contents)
 
     def test_test_manifests_duplicate_support_files(self):
         """Ensure duplicate support-files in test manifests work."""

@@ -231,7 +231,7 @@ class BackendTester(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self._old_env)
 
-    def _get_environment(self, name):
+    def _get_environment(self, name, extra_substs=None):
         """Obtain a new instance of a ConfigEnvironment for a known profile.
 
         A new temporary object directory is created for the environment. The
@@ -243,6 +243,9 @@ class BackendTester(unittest.TestCase):
         srcdir = mozpath.join(test_data_path, name)
         config["substs"]["top_srcdir"] = srcdir
 
+        if extra_substs:
+            config["substs"].update(extra_substs)
+
         # Create the objdir in the srcdir to ensure that they share the
         # same drive on Windows.
         objdir = mkdtemp(dir=srcdir)
@@ -250,15 +253,15 @@ class BackendTester(unittest.TestCase):
 
         return ConfigEnvironment(srcdir, objdir, **config)
 
-    def _emit(self, name, env=None):
-        env = env or self._get_environment(name)
+    def _emit(self, name, env=None, extra_substs=None):
+        env = env or self._get_environment(name, extra_substs=extra_substs)
         reader = BuildReader(env)
         emitter = TreeMetadataEmitter(env)
 
         return env, emitter.emit(reader.read_topsrcdir())
 
-    def _consume(self, name, cls, env=None):
-        env, objs = self._emit(name, env=env)
+    def _consume(self, name, cls, env=None, extra_substs=None):
+        env, objs = self._emit(name, env=env, extra_substs=extra_substs)
         backend = cls(env)
         backend.consume(objs)
 

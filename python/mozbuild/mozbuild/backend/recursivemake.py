@@ -20,7 +20,6 @@ from mozbuild.frontend.context import (
     AbsolutePath,
     ObjDirPath,
     Path,
-    RenamedSourcePath,
     SourcePath,
 )
 
@@ -1601,7 +1600,6 @@ class RecursiveMakeBackend(MakeBackend):
             absolute_files = []
 
             for f in subfiles:
-                assert not isinstance(f, RenamedSourcePath)
                 dest_dir = mozpath.join(reltarget, subpath)
                 dest_file = mozpath.join(dest_dir, f.target_basename)
                 if not isinstance(f, ObjDirPath):
@@ -1773,7 +1771,7 @@ class RecursiveMakeBackend(MakeBackend):
             make_quote(shell_quote(str(obj.entry))),
         ]
         rule.add_commands([
-            "$(call py_action,buildlist %s,%s)" % (obj.entry.path, " ".join(args))
+            "$(call py_action,buildlist %s,%s)" % (str(obj.entry), " ".join(args))
         ])
         fragment.dump(backend_file.fh, removal_guard=False)
 
