@@ -23,6 +23,8 @@ subsuite = "mozbuild"
 
 ["backend/test_recursivemake.py"]
 
+["backend/test_staging_spec.py"]
+
 ["backend/test_test_manifest.py"]
 
 ["backend/test_visualstudio.py"]
@@ -100,6 +102,8 @@ subsuite = "mozbuild"
 ["test_licenses.py"]
 
 ["test_line_endings.py"]
+
+["test_locale_staging.py"]
 
 ["test_makeutil.py"]
 

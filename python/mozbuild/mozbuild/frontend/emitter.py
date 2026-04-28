@@ -183,6 +183,17 @@ class TreeMetadataEmitter(LoggingMixin):
             for o in emit_objs(objs):
                 yield o
 
+        # After all per-context emit is done, yield one ``StagingContext``
+        # per moz.build context with locale-aware content. The build
+        # backend collects them and writes ``<topobjdir>/staging-spec.json``,
+        # consumed at command time by ``mach langpack`` /
+        # ``mach repackage-zip`` / ``mach package-multi-locale`` /
+        # ``mach repackage-single-locales``.
+        from .staging_spec import emit_staging_spec
+
+        for o in emit_objs(emit_staging_spec(self, contexts)):
+            yield o
+
     def _emit_libs_derived(self, contexts):
         # First aggregate idl sources.
         webidl_attrs = [

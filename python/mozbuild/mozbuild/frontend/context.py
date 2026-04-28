@@ -2128,6 +2128,32 @@ VARIABLES = {
         see :ref:`jar_manifests`.
         """,
     ),
+    "LOCALE_PP_DEFINES": (
+        dict,
+        dict,
+        """Per-locale preprocessor defines for ``JAR_MANIFESTS``.
+
+        Maps a define name to a dict whose keys are either an exact
+        ``ab_cd`` or an ``fnmatch``-style pattern (e.g. ``"es*"``), and
+        whose values are the value the define should take when the
+        localized jar.mn is preprocessed for that locale. Exact keys take
+        precedence over patterns, so a more-specific entry overrides a
+        catch-all. Used to express locale-conditional jar.mn entries
+        without a make-time recursion. Example::
+
+           LOCALE_PP_DEFINES = {
+               "ANDROID_MARKETPLACE_AB_CD": {
+                   "es*": "es-ES",
+                   "es-MX": "es-MX",
+                   "fr": "fr",
+               },
+           }
+
+        Locales that match neither an exact key nor any pattern leave the
+        corresponding define unset, which lets jar.mn ``#if defined(...)``
+        guards select a fallback branch.
+        """,
+    ),
     # IDL Generation.
     "XPIDL_SOURCES": (
         ContextDerivedTypedList(SourcePath, StrictOrderingOnAppendList),

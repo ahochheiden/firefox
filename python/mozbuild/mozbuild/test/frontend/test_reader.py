@@ -543,6 +543,29 @@ class TestBuildReader(unittest.TestCase):
         self.assertEqual(contexts["foo/biz"]["DEFINES"], {"ALL": True, "FOO": True})
         self.assertEqual(contexts["bar"]["DEFINES"], {"ALL": True, "BAR_ONLY": True})
 
+    def test_locale_pp_defines(self):
+        """LOCALE_PP_DEFINES parses to the expected dict-of-dicts: each
+        define name maps to a dict whose keys are exact ab_cd codes or
+        fnmatch patterns, and whose values are the per-locale value the
+        define should take when the localized jar.mn is preprocessed.
+        """
+        reader = self.reader("locale-pp-defines")
+
+        contexts = list(reader.read_topsrcdir())
+        self.assertEqual(len(contexts), 1)
+
+        locale_pp_defines = contexts[0]["LOCALE_PP_DEFINES"]
+        self.assertEqual(
+            locale_pp_defines,
+            {
+                "ANDROID_MARKETPLACE_AB_CD": {
+                    "es*": "es-ES",
+                    "es-MX": "es-MX",
+                    "fr": "fr",
+                },
+            },
+        )
+
 
 if __name__ == "__main__":
     main()

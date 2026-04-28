@@ -42,6 +42,11 @@ from mozbuild.frontend.data import (
     XPCOMComponentManifests,
     XPIDLModule,
 )
+from mozbuild.frontend.staging_spec import (
+    StagingContext,
+    build_staging_spec_from_substs,
+    write_staging_spec,
+)
 from mozbuild.jar import DeprecatedJarManifest, JarManifestParser
 from mozbuild.preprocessor import Preprocessor
 
@@ -108,6 +113,7 @@ class CommonBackend(BuildBackend):
         self._binaries = BinariesCollection()
         self._configs = set()
         self._generated_sources = set()
+        self._staging_data = []
 
     def consume_object(self, obj):
         self._configs.add(obj.config)
@@ -208,6 +214,9 @@ class CommonBackend(BuildBackend):
                     ])
             return False
 
+        elif isinstance(obj, StagingContext):
+            self._staging_data.append(obj.data)
+
         else:
             return False
 
@@ -236,6 +245,17 @@ class CommonBackend(BuildBackend):
                 ),
             }
             json.dump(d, fh, sort_keys=True, indent=4)
+
+        # Write the locale-independent staging spec consumed at command time
+        # by ``mach langpack`` / ``mach repackage-zip`` /
+        # ``mach package-multi-locale`` / ``mach repackage-single-locales`` to
+        # materialize ``dist/xpi-stage/locale-<ab_cd>/``. Skip writing when no
+        # context contributed locale-aware content.
+        if self._staging_data:
+            spec = build_staging_spec_from_substs(
+                self.environment.substs, self._staging_data
+            )
+            write_staging_spec(spec, mozpath.join(topobjdir, "staging-spec.json"))
 
         # Write out a file listing generated sources.
         with self._write_file(mozpath.join(topobjdir, "generated-sources.json")) as fh:
