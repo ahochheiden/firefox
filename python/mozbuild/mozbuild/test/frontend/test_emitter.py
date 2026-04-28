@@ -1183,6 +1183,58 @@ class TestEmitterBasic(unittest.TestCase):
             reader = self.reader("jar-manifests-multiple-files")
             self.read_topsrcdir(reader)
 
+    def test_jar_manifest_use_extension_manifest(self):
+        """USE_EXTENSION_MANIFEST contexts mirror JarMaker's -e mode under
+        ``MOZ_LOCALE_STAGING``.
+
+        All chrome.manifest entries land in a single inline file at
+        ``<install_target>/chrome.manifest`` (not per-jar
+        ``<jarname>.manifest`` files), which is what addons (reftest,
+        mochitest, specialpowers, mozscreenshots) expect. The chromebase
+        substitution differs from default mode: ``%`` expands to
+        ``dirname(jarname)+"/"+basename(jarname)+"/"`` so entries reference
+        paths rooted at the install_target root rather than at a per-jar
+        subdirectory. Without the gate, USE_EXTENSION_MANIFEST contexts go
+        through the legacy ``JARManifest`` path and don't reach this code.
+        """
+        from mozpack.chrome.manifest import ManifestContent, ManifestLocale
+
+        from mozbuild.frontend.data import ChromeManifestEntry
+
+        reader = self.reader(
+            "jar-manifest-use-extension-manifest",
+            extra_substs={"MOZ_LOCALE_STAGING": "1"},
+        )
+        objs = self.read_topsrcdir(reader)
+
+        chrome_entries = [o for o in objs if isinstance(o, ChromeManifestEntry)]
+        self.assertEqual(len(chrome_entries), 2)
+
+        # Both jar.mn `% ...` lines route to the same single chrome.manifest
+        # at the addon's install_target root, not to a per-jar test.manifest.
+        for entry in chrome_entries:
+            self.assertTrue(
+                entry.path.endswith("/chrome.manifest"),
+                f"{entry.path} should land in chrome.manifest",
+            )
+            self.assertNotIn("test.manifest", entry.path)
+
+        # The chromebase substitution mirrors make_jars.py -e. JarInfo
+        # auto-prefixes jar names without an explicit base with "chrome/",
+        # so `test.jar:` becomes jarinfo.name="chrome/test" and
+        # chromebase=dirname("chrome/test")+"/"+basename("chrome/test")+"/"
+        # = "chrome/test/". `%content/` then expands to "chrome/test/content/".
+        by_type = {type(e.entry): e.entry for e in chrome_entries}
+        self.assertIn(ManifestContent, by_type)
+        self.assertIn(ManifestLocale, by_type)
+        self.assertEqual(
+            str(by_type[ManifestContent]), "content test chrome/test/content/"
+        )
+        self.assertEqual(
+            str(by_type[ManifestLocale]),
+            "locale test en-US chrome/test/locale/en-US/test/",
+        )
+
     def test_xpidl_module_no_sources(self):
         """XPIDL_MODULE without XPIDL_SOURCES should be rejected."""
         with self.assertRaisesRegex(
