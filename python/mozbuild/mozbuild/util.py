@@ -1410,6 +1410,35 @@ def ensure_l10n_central(command_context):
                 )
 
 
+def verify_l10n_preconditions(command_context):
+    """Fast gate for the l10n mach commands.
+
+    Returns True when the build backend has produced ``staging-spec.json``
+    and ``dist/bin`` has been populated. Logs a single ERROR with the
+    missing artifacts and remediation guidance otherwise. Callers should
+    propagate a non-zero exit code. ``application.ini`` is the gate for the
+    populated-dist check because it lands in ``dist/bin`` for both local
+    and artifact builds.
+    """
+    topobjdir = command_context.topobjdir
+    required = [
+        os.path.join(topobjdir, "staging-spec.json"),
+        os.path.join(topobjdir, "dist", "bin", "application.ini"),
+    ]
+    missing = [os.path.relpath(p, topobjdir) for p in required if not os.path.exists(p)]
+    if not missing:
+        return True
+    command_context.log(
+        logging.ERROR,
+        "l10n-preconditions",
+        {"missing": ", ".join(missing)},
+        "Required files missing ({missing}). You need a valid Firefox build "
+        "to repackage to a different locale. Run `./mach build && "
+        "./mach package` before retrying.",
+    )
+    return False
+
+
 # Taskcluster API root URL (Firefox's production instance)
 TASKCLUSTER_ROOT_URL = "https://firefox-ci-tc.services.mozilla.com"
 
