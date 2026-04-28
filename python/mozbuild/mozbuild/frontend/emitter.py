@@ -14,13 +14,23 @@ import mozinfo
 import mozpack.path as mozpath
 import toml
 from mach.mixin.logging import LoggingMixin
-from mozpack.chrome.manifest import Manifest
+from mozpack.chrome.manifest import Manifest, parse_manifest_line
 
 from mozbuild.base import ExecutionSummary
+from mozbuild.jar import DeprecatedJarManifest, JarManifestParser
+from mozbuild.preprocessor import Preprocessor
 from mozbuild.util import HierarchicalStringList
 
 from ..testing import REFTEST_FLAVORS, TEST_MANIFESTS, SupportFilesConverter
-from .context import Context, ObjDirPath, Path, SourcePath, SubContext
+from .context import (
+    VARIABLES,
+    Context,
+    ObjDirPath,
+    Path,
+    RenamedSourcePath,
+    SourcePath,
+    SubContext,
+)
 from .data import (
     BaseRustProgram,
     ChromeManifestEntry,
@@ -1943,8 +1953,27 @@ class TreeMetadataEmitter(LoggingMixin):
                 context,
             )
 
+        # When ``MOZ_LOCALE_STAGING`` is set, dist/bin contexts parse jar.mn
+        # at emit time and yield FinalTargetFiles / ChromeManifestEntry
+        # directly. Otherwise (the default), every JAR_MANIFEST goes through
+        # the legacy ``JARManifest`` path consumed by
+        # ``CommonBackend._consume_jar_manifest`` and the recursivemake
+        # backend's ``JAR_MANIFEST :=`` emission. USE_EXTENSION_MANIFEST
+        # addon contexts always take the legacy path here; N2 extends the
+        # gated branch to cover them.
+        locale_staging = bool(self.config.substs.get("MOZ_LOCALE_STAGING"))
+        final_target = context.get("FINAL_TARGET") or "dist/bin"
+        use_extension_manifest = bool(context.get("USE_EXTENSION_MANIFEST"))
+
         for path in jar_manifests:
-            yield JARManifest(context, path)
+            if (
+                locale_staging
+                and final_target.startswith("dist/bin")
+                and not use_extension_manifest
+            ):
+                yield from self._process_en_us_jar_sections(context, path)
+            else:
+                yield JARManifest(context, path)
 
         # Temporary test to look for jar.mn files that creep in without using
         # the new declaration. Before, we didn't require jar.mn files to
@@ -1958,6 +1987,163 @@ class TreeMetadataEmitter(LoggingMixin):
                     "Please define JAR_MANIFESTS.",
                     context,
                 )
+
+    def _process_en_us_jar_sections(self, context, path):
+        """Parse a jar.mn at emit time and yield the en-US install entries
+        (FinalTargetFiles, FinalTargetPreprocessedFiles, ChromeManifestEntry).
+
+        Replaces ``CommonBackend._consume_jar_manifest`` for ``dist/bin``
+        contexts. Yielding from the emitter makes jar.mn another regular
+        source of FinalTargetFiles, so non-make backends can consume them
+        without replicating the parser.
+        """
+        defines_dict = context.get("DEFINES") or None
+
+        pp = Preprocessor()
+        if defines_dict:
+            pp.context.update(defines_dict)
+        pp.context.update(self.config.defines)
+        pp.context.update(AB_CD=self.config.substs.get("MOZ_UI_LOCALE", "en-US"))
+        pp.out = JarManifestParser()
+        try:
+            pp.do_include(path.full_path)
+        except DeprecatedJarManifest as e:
+            raise DeprecatedJarManifest(
+                f"Parsing error while processing {path.full_path}: {e}"
+            )
+
+        install_target = context.get("FINAL_TARGET") or "dist/bin"
+
+        for jarinfo in pp.out:
+            jar_context = Context(allowed_variables=VARIABLES, config=context.config)
+            jar_context.push_source(context.main_path)
+            jar_context.push_source(path.full_path)
+            # Track jar manifest includes as backend inputs.
+            for inc in pp.includes:
+                jar_context.add_source(inc)
+
+            section_target = install_target
+            if jarinfo.base:
+                section_target = mozpath.normpath(
+                    mozpath.join(section_target, jarinfo.base)
+                )
+            jar_context["FINAL_TARGET"] = section_target
+            if defines_dict:
+                jar_context["DEFINES"] = defines_dict
+
+            files = jar_context["FINAL_TARGET_FILES"]
+            files_pp = jar_context["FINAL_TARGET_PP_FILES"]
+            localized_files = jar_context["LOCALIZED_FILES"]
+            localized_files_pp = jar_context["LOCALIZED_PP_FILES"]
+
+            for e in jarinfo.entries:
+                if e.is_locale:
+                    if jarinfo.relativesrcdir:
+                        src = f"/{jarinfo.relativesrcdir}"
+                    else:
+                        src = ""
+                    src = mozpath.join(src, "en-US", e.source)
+                else:
+                    src = e.source
+
+                if "*" in e.source:
+                    if e.preprocess:
+                        raise SandboxValidationError(
+                            f"{path.full_path}: Wildcards are not supported "
+                            f"with preprocessing",
+                            context,
+                        )
+                    # Mirror jar.py's _processEntryLine wildcard handling:
+                    # split the source on the first wildcard component, find
+                    # matches under the literal prefix, and synthesize one
+                    # destination per match by appending the path-after-prefix
+                    # to ``e.output``. add_pattern_link's default semantics
+                    # would keep the literal prefix in the destination
+                    # (``content/* (out/)`` → ``out/content/<file>`` instead
+                    # of ``out/<file>``), so we expand at emit time.
+                    from mozpack.files import FileFinder
+
+                    src_path = Path(jar_context, src)
+                    full_pattern = src_path.full_path
+                    parts = full_pattern.split("/")
+                    base_parts = []
+                    for p in parts:
+                        if "*" in p:
+                            break
+                        base_parts.append(p)
+                    base = "/".join(base_parts)
+                    pattern = full_pattern[len(base) + 1 :]
+
+                    if not os.path.isdir(base):
+                        continue
+
+                    finder = FileFinder(base)
+                    for matched_rel, _ in sorted(finder.find(pattern)):
+                        match_full = mozpath.join(base, matched_rel)
+                        match_output = mozpath.join(e.output, matched_rel)
+                        match_subpath = mozpath.dirname(
+                            mozpath.join(jarinfo.name, match_output)
+                        )
+                        match_basename = mozpath.basename(match_output)
+                        match_src = Path(jar_context, match_full)
+                        if match_basename != match_src.target_basename:
+                            match_src = RenamedSourcePath(
+                                jar_context, (match_src, match_basename)
+                            )
+                        if e.is_locale:
+                            localized_files[match_subpath] += [match_src]
+                        else:
+                            files[match_subpath] += [match_src]
+                    continue
+
+                src = Path(jar_context, src)
+
+                if not os.path.exists(src.full_path):
+                    if e.is_locale:
+                        raise SandboxValidationError(
+                            f"{path.full_path}: Cannot find {e.source} "
+                            f"(tried {src.full_path})",
+                            context,
+                        )
+                    if e.source.startswith("/"):
+                        src = Path(jar_context, "!" + e.source)
+                    else:
+                        # If the jar.mn is not in the same directory as the
+                        # moz.build that declares it, look for objdir
+                        # outputs relative to the moz.build's objdir.
+                        src = Path(context, "!" + e.source)
+
+                output_basename = mozpath.basename(e.output)
+                if output_basename != src.target_basename:
+                    src = RenamedSourcePath(jar_context, (src, output_basename))
+                subpath = mozpath.dirname(mozpath.join(jarinfo.name, e.output))
+
+                if e.preprocess:
+                    if e.is_locale:
+                        localized_files_pp[subpath] += [src]
+                    else:
+                        files_pp[subpath] += [src]
+                elif e.is_locale:
+                    localized_files[subpath] += [src]
+                else:
+                    files[subpath] += [src]
+
+            if any(files.walk()):
+                yield FinalTargetFiles(jar_context, files)
+            if any(files_pp.walk()):
+                yield FinalTargetPreprocessedFiles(jar_context, files_pp)
+            if any(localized_files.walk()):
+                yield FinalTargetFiles(jar_context, localized_files)
+            if any(localized_files_pp.walk()):
+                yield FinalTargetPreprocessedFiles(jar_context, localized_files_pp)
+
+            manifest_relpath = f"{jarinfo.name}.manifest"
+            chromebase = mozpath.basename(jarinfo.name) + "/"
+            base = mozpath.dirname(jarinfo.name)
+
+            for m in jarinfo.chrome_manifests:
+                entry = parse_manifest_line(base, m.replace("%", chromebase))
+                yield ChromeManifestEntry(jar_context, manifest_relpath, entry)
 
     def _emit_directory_traversal_from_context(self, context):
         o = DirectoryTraversal(context)
