@@ -46,6 +46,7 @@ from mozbuild.frontend.reader import (
     BuildReaderError,
     SandboxValidationError,
 )
+from mozbuild.frontend.staging_spec import StagingContext
 from mozbuild.test.common import MockConfig
 
 data_path = mozpath.abspath(mozpath.dirname(__file__))
@@ -87,7 +88,7 @@ class TestEmitterBasic(unittest.TestCase):
 
         filtered = []
         for obj in objs:
-            if filter_common and isinstance(obj, DirectoryTraversal):
+            if filter_common and isinstance(obj, (DirectoryTraversal, StagingContext)):
                 continue
 
             filtered.append(obj)
