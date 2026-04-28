@@ -1159,6 +1159,9 @@ class TestEmitterBasic(unittest.TestCase):
         self.assertEqual(defines, expected)
 
     def test_jar_manifests(self):
+        # Default (``MOZ_LOCALE_STAGING`` unset): the emitter yields a single
+        # ``JARManifest`` per jar.mn, consumed by the legacy
+        # ``CommonBackend._consume_jar_manifest`` path.
         reader = self.reader("jar-manifests")
         objs = self.read_topsrcdir(reader)
 
@@ -1166,6 +1169,14 @@ class TestEmitterBasic(unittest.TestCase):
         for obj in objs:
             self.assertIsInstance(obj, JARManifest)
             self.assertIsInstance(obj.path, Path)
+
+    def test_jar_manifests_locale_staging(self):
+        # ``MOZ_LOCALE_STAGING`` enabled: dist/bin jar.mn parses at emit time
+        # and yields FinalTargetFiles / ChromeManifestEntry directly. An empty
+        # jar group produces no objects.
+        reader = self.reader("jar-manifests", extra_substs={"MOZ_LOCALE_STAGING": "1"})
+        objs = self.read_topsrcdir(reader)
+        self.assertEqual(objs, [])
 
     def test_jar_manifests_multiple_files(self):
         with self.assertRaisesRegex(SandboxValidationError, "limited to one value"):
