@@ -234,6 +234,7 @@ class NinjaBackend(CommonBackend):
             # `mach langpack` / `mach repackage-zip`.
             install_target = obj.install_target
             defines = {"AB_CD": "en-US"}
+            extra_deps = [mozpath.normsep(d.full_path) for d in obj.extra_deps]
             for subpath, files in obj.files.walk():
                 for f in files:
                     if isinstance(f, ObjDirPath) or "*" in f:
@@ -243,7 +244,7 @@ class NinjaBackend(CommonBackend):
                     dst = mozpath.join(
                         self._topobjdir, install_target, subpath, basename
                     )
-                    self._pp_installs.append((src, dst, defines))
+                    self._pp_installs.append((src, dst, defines, extra_deps))
         elif isinstance(obj, LocalizedFiles):
             # LOCALIZED_FILES: en-US install. Non-en-US locales are
             # staged at command time via `mach langpack`.
@@ -265,6 +266,7 @@ class NinjaBackend(CommonBackend):
             defines = {}
             if getattr(obj, "defines", None):
                 defines = obj.defines.defines
+            extra_deps = [mozpath.normsep(d.full_path) for d in obj.extra_deps]
             for subpath, files in obj.files.walk():
                 for f in files:
                     src = mozpath.normsep(f.full_path)
@@ -275,7 +277,7 @@ class NinjaBackend(CommonBackend):
                         subpath,
                         basename,
                     )
-                    self._pp_installs.append((src, dst, defines))
+                    self._pp_installs.append((src, dst, defines, extra_deps))
         elif isinstance(obj, FinalTargetFiles):
             # Mozmake's `_process_final_target_files` (recursivemake.py:
             # 1576) routes entries by install_target. Two distinct paths
@@ -961,8 +963,20 @@ class NinjaBackend(CommonBackend):
             restat=True,
         )
         writer.newline()
-        # OBJDIR_PP_FILES preprocess-and-install (not covered by any
-        # install manifest — mozmake has a dedicated rule for it).
+        # OBJDIR_PP_FILES / LOCALIZED_PP_FILES preprocess-and-install
+        # (not covered by any install manifest). Batched: one ninja
+        # edge for all entries, manifest passed to `pp_install_batch`
+        # which loops calling `preprocessor.main(...)` in-process.
+        writer.rule(
+            "pp_install_batch",
+            command="$PYTHON -m mozbuild.action.pp_install_batch $manifest",
+            description="PP (batch)",
+            restat=True,
+        )
+        writer.newline()
+        # Single-file preprocessor invocation for callers that don't
+        # batch (IPDL, WebIDL — small volume and per-edge dep tracking
+        # matters more for them than Python-startup amortization).
         writer.rule(
             "pp_install",
             command="$PYTHON -m mozbuild.action.preprocessor $defines -o $out $in",
@@ -1324,7 +1338,7 @@ class NinjaBackend(CommonBackend):
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
                 host_safe_generated.append(dst)
-        for _, dst, _ in self._pp_installs:
+        for _, dst, _, _ in self._pp_installs:
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
                 host_safe_generated.append(dst)
@@ -2523,15 +2537,23 @@ class NinjaBackend(CommonBackend):
             )
             self._install_tracks["_ninja_test_files"] = track_path
 
-        # OBJDIR_PP_FILES: preprocess the .in and install. One edge per
-        # output (no batching — each has unique defines). Mirror mozmake's
-        # `$(DEFINES) $(ACDEFINES)` order: per-dir defines first, then
-        # the global ACDEFINES from configure (which carries MOZ_BUILD_APP
-        # and similar that AppConstants.sys.mjs references).
+        # OBJDIR_PP_FILES / LOCALIZED_PP_FILES: preprocess and install.
+        # Each entry has its own defines (per-dir DEFINES + ACDEFINES +
+        # AB_CD), so they can't share a single preprocessor invocation,
+        # but they CAN share a Python process — we batch all entries
+        # into one ninja edge whose recipe loops over them.
+        # `acdefines` is already shell-quoted by configure; split it
+        # back into individual `-D...` tokens for the manifest.
+        import shlex
+
         acdefines = self.environment.substs.get("ACDEFINES", "")
+        acdefines_args = shlex.split(acdefines) if acdefines else []
         seen_pp = set()
         pp_install_outputs = []
-        for src, dst, defines in self._pp_installs:
+        manifest_entries = []
+        all_extra_deps = []
+        seen_extra = set()
+        for src, dst, defines, extra_deps in self._pp_installs:
             if dst in seen_pp:
                 continue
             seen_pp.add(dst)
@@ -2543,16 +2565,39 @@ class NinjaBackend(CommonBackend):
                     pass
                 else:
                     def_args.append(f"-D{k}={v}")
-            defines_str = " ".join(response_arg(a) for a in def_args)
-            if acdefines:
-                defines_str = f"{defines_str} {acdefines}" if defines_str else acdefines
-            writer.build(
-                self._n_rel(dst),
-                "pp_install",
-                inputs=self._n_rel(src),
-                variables={"defines": defines_str},
-            )
+            def_args.extend(acdefines_args)
+            manifest_entries.append({
+                "src": src,
+                "dst": dst,
+                "defines": def_args,
+            })
+            for d in extra_deps:
+                if d not in seen_extra:
+                    seen_extra.add(d)
+                    all_extra_deps.append(d)
             pp_install_outputs.append(dst)
+
+        if manifest_entries:
+            manifest_path = mozpath.join(
+                self._topobjdir, ".ninja-pp-install-batch.manifest"
+            )
+            with self._write_file(manifest_path) as mh:
+                json.dump(manifest_entries, mh, indent=2)
+            # `all_extra_deps` is the union of every entry's
+            # `PP_FILES_EXTRA_DEPS`. The whole batch is one ninja edge,
+            # so any path the preprocessor opens at runtime via
+            # `#include @TOPOBJDIR@/...` must exist before the batch
+            # runs.
+            implicit = [self._n_rel(manifest_path)]
+            implicit.extend(self._n_rel(d) for d in all_extra_deps)
+            writer.build(
+                [self._n_rel(e["dst"]) for e in manifest_entries],
+                "pp_install_batch",
+                inputs=[self._n_rel(e["src"]) for e in manifest_entries],
+                implicit=implicit,
+                variables={"manifest": self._n_rel(manifest_path)},
+            )
+
         # Feed pp_install outputs into the `install` phony so they're
         # reachable from the default target (e.g. dist/bin/modules/
         # AppConstants.sys.mjs from EXTRA_PP_JS_MODULES). The dist/include
