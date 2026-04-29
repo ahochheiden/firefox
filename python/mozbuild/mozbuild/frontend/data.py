@@ -1170,8 +1170,9 @@ class UnifiedSources(BaseSources):
         )
 
         unified_build = context.config.substs.get("ENABLE_UNIFIED_BUILD", False)
+        default = int(context.config.substs.get("FILES_PER_UNIFIED_FILE", 16))
         files_per_unified_file = (
-            context.get("FILES_PER_UNIFIED_FILE", 16) if unified_build else 1
+            context.get("FILES_PER_UNIFIED_FILE", default) if unified_build else 1
         )
 
         self.have_unified_mapping = files_per_unified_file > 1
