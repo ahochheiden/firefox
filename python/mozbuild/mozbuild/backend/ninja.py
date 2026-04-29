@@ -244,6 +244,7 @@ class NinjaBackend(CommonBackend):
             # `mach langpack` / `mach repackage-zip`.
             install_target = obj.install_target
             defines = {"AB_CD": "en-US"}
+            extra_deps = [mozpath.normsep(d.full_path) for d in obj.extra_deps]
             for subpath, files in obj.files.walk():
                 for f in files:
                     if isinstance(f, ObjDirPath) or "*" in f:
@@ -253,7 +254,7 @@ class NinjaBackend(CommonBackend):
                     dst = mozpath.join(
                         self._topobjdir, install_target, subpath, basename
                     )
-                    self._pp_installs.append((src, dst, defines))
+                    self._pp_installs.append((src, dst, defines, extra_deps))
         elif isinstance(obj, LocalizedFiles):
             # LOCALIZED_FILES: en-US install. Non-en-US locales are
             # staged at command time via `mach langpack`.
@@ -275,6 +276,7 @@ class NinjaBackend(CommonBackend):
             defines = {}
             if getattr(obj, "defines", None):
                 defines = obj.defines.defines
+            extra_deps = [mozpath.normsep(d.full_path) for d in obj.extra_deps]
             for subpath, files in obj.files.walk():
                 for f in files:
                     src = mozpath.normsep(f.full_path)
@@ -285,7 +287,7 @@ class NinjaBackend(CommonBackend):
                         subpath,
                         basename,
                     )
-                    self._pp_installs.append((src, dst, defines))
+                    self._pp_installs.append((src, dst, defines, extra_deps))
         elif isinstance(obj, FinalTargetFiles):
             # Mozmake's `_process_final_target_files` (recursivemake.py:
             # 1576) routes entries by install_target. Two distinct paths
@@ -2966,7 +2968,7 @@ class NinjaBackend(CommonBackend):
         acdefines = self.environment.substs.get("ACDEFINES", "")
         seen_pp = set()
         pp_install_outputs = []
-        for src, dst, defines in self._pp_installs:
+        for src, dst, defines, extra_deps in self._pp_installs:
             if dst in seen_pp:
                 continue
             seen_pp.add(dst)
@@ -2981,10 +2983,18 @@ class NinjaBackend(CommonBackend):
             defines_str = " ".join(response_arg(a) for a in def_args)
             if acdefines:
                 defines_str = f"{defines_str} {acdefines}" if defines_str else acdefines
+            # `extra_deps` carry the per-directory `PP_FILES_EXTRA_DEPS`
+            # value: paths the preprocessor opens at runtime via
+            # `#include @TOPOBJDIR@/...` but that aren't passed as
+            # arguments. Wire them as implicit deps so the edge waits
+            # for them to exist before running.
             writer.build(
                 self._rel_n_path(dst),
                 "pp_install",
                 inputs=self._rel_n_path(src),
+                implicit=[self._rel_n_path(d) for d in extra_deps]
+                if extra_deps
+                else None,
                 variables={"defines": defines_str},
             )
             pp_install_outputs.append(dst)
