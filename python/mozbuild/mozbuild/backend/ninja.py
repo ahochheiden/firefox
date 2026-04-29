@@ -1640,6 +1640,14 @@ class NinjaBackend(CommonBackend):
             all_generated.append(track)
             host_safe_generated.append(track)
         dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
+        # `rust_prereqs` is a narrower subset for the `cargo_build`
+        # edge to fence behind: cargo's build.rs scripts (bindgen) only
+        # need dist/include populated plus the early configure-define
+        # files. They don't need IPDL/WebIDL/XPIDL/wasm2c outputs, so
+        # the rust edges shouldn't have to wait for those.
+        rust_prereqs = []
+        if track:
+            rust_prereqs.append(track)
         for _, dst in self._installs:
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
@@ -1648,6 +1656,29 @@ class NinjaBackend(CommonBackend):
             if dst.startswith(dist_include_prefix):
                 all_generated.append(dst)
                 host_safe_generated.append(dst)
+                rust_prereqs.append(dst)
+        # `required_before_export` GeneratedFiles (e.g. mozilla-config.h,
+        # source-repo.h, buildid.h) are read directly from the objdir
+        # by some build.rs scripts before they're installed, so include
+        # them in the rust prereq set.
+        for g in self._generated_files:
+            if not g.script or not g.required_before_export:
+                continue
+            declared = []
+            for o in g.outputs:
+                if isinstance(o, str):
+                    if o.startswith("/"):
+                        declared.append(mozpath.join(self._topobjdir, o[1:]))
+                    else:
+                        declared.append(mozpath.join(g.objdir, o))
+                else:
+                    declared.append(mozpath.normsep(o.full_path))
+            if declared:
+                rust_prereqs.extend(
+                    self._expand_num_outputs_outputs(
+                        declared[0], declared, g.flags or ()
+                    )
+                )
         # IPDL, WebIDL, and XPIDL codegen are pure-Python (no
         # host-program transit); safe for host compiles to wait on too.
         all_generated.extend(self._ipdl_outputs)
@@ -1671,6 +1702,13 @@ class NinjaBackend(CommonBackend):
                 if host_safe_generated
                 else None
             ),
+        )
+        writer.build(
+            ".ninja-rust-prereqs",
+            "phony",
+            inputs=[self._rel_n_path(o) for o in rust_prereqs]
+            if rust_prereqs
+            else None,
         )
         writer.newline()
 
@@ -3229,7 +3267,7 @@ class NinjaBackend(CommonBackend):
             writer.build(
                 self._rel_n_path(out),
                 "cargo_build",
-                order_only=[".ninja-generated"],
+                order_only=[".ninja-rust-prereqs"],
                 variables={
                     "cargo_dir": self._rel_n_path(cargo_dir),
                     "depfile": self._rel_n_path(depfile),
