@@ -305,14 +305,38 @@ class WebIDLCollection(ContextDerived):
     def generated_events_stems(self):
         return [mozpath.splitext(b)[0] for b in self.generated_events_basenames()]
 
+    # Bindings whose generated `.cpp` is so large that bundling it into
+    # a unified TU makes that TU the wallclock floor for the bindings
+    # batch. Compile these as their own standalone edges so they run
+    # in parallel with the unified shards instead of stacking inside
+    # one of them. Stems (no `.cpp`, no `Binding` suffix removed).
+    STANDALONE_BINDING_STEMS = (
+        "WebGPUBinding",
+        "WebGLRenderingContextBinding",
+        "WebGL2RenderingContextBinding",
+        "WindowBinding",
+    )
+
+    def _standalone_cpp_basenames(self):
+        existing = set(self.all_regular_cpp_basenames())
+        return [
+            "%s.cpp" % stem
+            for stem in self.STANDALONE_BINDING_STEMS
+            if "%s.cpp" % stem in existing
+        ]
+
     @property
     def unified_source_mapping(self):
         # Bindings are compiled in unified mode to speed up compilation and
         # to reduce linker memory size. Note that test bindings are separated
         # from regular ones so tests bindings aren't shipped.
+        standalone = set(self._standalone_cpp_basenames())
+        unified_inputs = sorted(
+            b for b in self.all_regular_cpp_basenames() if b not in standalone
+        )
         return list(
             group_unified_files(
-                sorted(self.all_regular_cpp_basenames()),
+                unified_inputs,
                 unified_prefix="UnifiedBindings",
                 unified_suffix="cpp",
                 files_per_unified_file=32,
@@ -322,8 +346,10 @@ class WebIDLCollection(ContextDerived):
     def all_source_files(self):
         from mozwebidlcodegen import WebIDLCodegenManager
 
-        return sorted(list(WebIDLCodegenManager.GLOBAL_DEFINE_FILES)) + sorted(
-            set(p for p, _ in self.unified_source_mapping)
+        return (
+            sorted(list(WebIDLCodegenManager.GLOBAL_DEFINE_FILES))
+            + sorted(set(p for p, _ in self.unified_source_mapping))
+            + sorted(self._standalone_cpp_basenames())
         )
 
 
