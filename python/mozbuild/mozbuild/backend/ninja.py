@@ -7,6 +7,7 @@
 Emits a single `build.ninja` at `$topobjdir`.
 """
 
+import json
 import os
 from collections import defaultdict
 
@@ -688,7 +689,7 @@ class NinjaBackend(CommonBackend):
             return
         html_files = sorted(
             glob.glob(mozpath.join(timings_dir, "cargo-timing-*.html")),
-            key=lambda p: os.path.getmtime(p),
+            key=os.path.getmtime,
         )
         if not html_files:
             return
@@ -1390,7 +1391,7 @@ class NinjaBackend(CommonBackend):
         # from `.ninja_log`.
         writer.rule(
             "cargo_build",
-            command="$MAKE -C $topobjdir $cargo_target MACH=1",
+            command="$MAKE -s -C $cargo_dir force-cargo-library-build MACH=1",
             description="CARGO $out",
             depfile="$depfile",
             deps="gcc",
@@ -3224,18 +3225,13 @@ class NinjaBackend(CommonBackend):
         for lib in self._rust_libs:
             out = self._lib_output_path(lib)
             depfile = mozpath.splitext(out)[0] + ".d"
-            # Match recursive-make's `_build_target_for_obj`: when a
-            # `RustLibrary` has `output_category` set (e.g. gkrust-gtest
-            # with `output_category="gtest"`), its make target is named
-            # by the category instead of `target-objects`.
-            output_category = getattr(lib, "output_category", None)
-            target_name = output_category if output_category else "target-objects"
+            cargo_dir = mozpath.join(self._topobjdir, lib.relobjdir)
             writer.build(
                 self._rel_n_path(out),
                 "cargo_build",
                 order_only=[".ninja-generated"],
                 variables={
-                    "cargo_target": f"{self._rel_n_path(lib.relobjdir)}/{target_name}",
+                    "cargo_dir": self._rel_n_path(cargo_dir),
                     "depfile": self._rel_n_path(depfile),
                 },
             )
@@ -3251,9 +3247,7 @@ class NinjaBackend(CommonBackend):
         # locate cargo-timings .html files.
         manifest_path = mozpath.join(self._topobjdir, ".ninja-rust-libs.json")
         with self._write_file(manifest_path) as fh:
-            json.dump(
-                self._rust_lib_outputs, fh, indent=2, sort_keys=True
-            )
+            json.dump(self._rust_lib_outputs, fh, indent=2, sort_keys=True)
 
     def _lib_output_path(self, lib):
         """Return the on-disk path of a library's output .lib / .dll.
