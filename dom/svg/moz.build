@@ -5,6 +5,21 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "SVG")
 
+# Workaround: both `SVGAnimatedOrient.cpp` and
+# `SVGAnimatedEnumeration.cpp` define a file-scope
+# `sSVGAnimatedEnumTearoffTable` (different
+# `SVGAttrTearoffTable<...>` instantiations). With no `static` and
+# no anonymous namespace, separate TUs each end up with a tentative
+# global definition that the linker accepts because the headers
+# don't extern-declare it; in a unified TU they collide as a
+# redefinition with conflicting types, which then cascades into
+# argument-type errors at every use site in `SVGAnimatedOrient.cpp`.
+#
+# Proper fix: rename one (e.g. `sSVGAnimatedOrientTearoffTable`) or
+# wrap each in an anonymous namespace. Either eliminates both the
+# unification clash and the latent ODR hazard.
+FILES_PER_UNIFIED_FILE = 16
+
 MOCHITEST_MANIFESTS += ["test/mochitest.toml"]
 
 EXPORTS.mozilla += [

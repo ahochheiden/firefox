@@ -2,6 +2,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# Workaround: cairo is upstream third-party C code that makes heavy use
+# of file-scope `static` helpers and per-file `#define` macros. With C
+# linkage rules, separate TUs each get their own static; in a unified TU
+# the redefinitions collide. Symptom seen at high N: redefinition of
+# helpers and macro-redefined warnings escalating to errors.
+#
+# Proper fix: not realistic for upstream code — would require rewriting
+# imported cairo to namespace its file-scope statics. Keep the per-dir
+# cap unless we drop cairo from the tree.
+FILES_PER_UNIFIED_FILE = 16
+
 EXPORTS.cairo += [
     'cairo-deprecated.h',
     'cairo-features.h',

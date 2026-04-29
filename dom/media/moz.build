@@ -3,6 +3,19 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 include("/dom/media/webrtc/third_party_build/webrtc.mozbuild")
 
+# Workaround: both `MediaMIMETypes.cpp` and `VideoUtils.cpp` define a
+# `static bool StartsWith(const nsACString&, const char (&)[N])` function
+# template at file scope. Static function templates have internal
+# linkage, so in separate TUs they don't conflict; in one unified TU
+# the same symbol is defined twice and the compiler reports a
+# redefinition (then can't pick a candidate for the call sites in
+# VideoUtils.cpp).
+#
+# Proper fix: hoist the helper into a shared header (e.g.
+# `mozilla::media::StartsWith`) under an inline/anonymous-namespace,
+# or rename the per-file copies. Either eliminates the clash.
+FILES_PER_UNIFIED_FILE = 16
+
 with Files("*"):
     BUG_COMPONENT = ("Core", "Audio/Video")
 

@@ -2,6 +2,23 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# Workaround: two unification collisions seen at high N.
+# 1. `LOG5_ENABLED()` macro is `#define`d in both `SSLTokensCache.cpp`
+#    (locally) and pulled in via `netwerk/protocol/http/HttpLog.h` from
+#    `nsNetUtil.cpp`. Without an `#undef` between them they redefine.
+# 2. `static const char* gCallbackPrefs[]` is defined at file scope in
+#    both `nsIOService.cpp` and `nsSocketTransportService2.cpp`. With
+#    separate TUs `static` gives them internal linkage; in one unified
+#    TU they collide as redefinitions.
+#
+# Proper fix:
+#   - Move `LOG5_ENABLED` to a single shared header, or `#undef` it at
+#     the bottom of `SSLTokensCache.cpp`.
+#   - Rename the per-file `gCallbackPrefs` arrays (e.g. `kIOServicePrefs`
+#     and `kSocketTransportPrefs`) or move them into anonymous
+#     namespaces so the names don't clash.
+FILES_PER_UNIFIED_FILE = 16
+
 XPIDL_SOURCES += [
     "mozIThirdPartyUtil.idl",
     "nsIAndroidContentInputStream.idl",

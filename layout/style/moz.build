@@ -5,6 +5,20 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "CSS Parsing and Computation")
 
+# Workaround: `nsAnimationManager.cpp` has a file-scope
+# `using mozilla::dom::Animation;` and uses unqualified `Animation`
+# in its method signatures. In small TUs that's unambiguous; in a
+# unified TU, a sibling .cpp pulls in `mozilla/layers/AnimationInfo.h`
+# (which forward-declares `mozilla::layers::Animation`) and likely
+# also has a `using namespace mozilla::layers;` somewhere. With both
+# `Animation`s reachable at the same lookup level, the unqualified
+# reference at line 116 becomes ambiguous.
+#
+# Proper fix: in `nsAnimationManager.cpp`, drop the `using` and
+# fully qualify as `mozilla::dom::Animation` at every use site (or
+# rename the type alias to something namespace-disambiguated).
+FILES_PER_UNIFIED_FILE = 16
+
 with Files("nsComputedDOMStyle.*"):
     BUG_COMPONENT = ("Core", "DOM: CSS Object Model")
 

@@ -2,6 +2,27 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# Workaround: two unification collisions seen at high N.
+# 1. `nsPageSequenceFrame.cpp` and `nsColumnSetFrame.cpp` both define
+#    `static void MarkPrincipalChildrenDirty(nsIFrame*)` at file
+#    scope. Internal-linkage in separate TUs; redefinition in one
+#    unified TU. Common helper, common name.
+# 2. `nsVideoFrame.cpp` uses unqualified `Image*` in
+#    `Image* image = autoLock.GetImage(...)`. With sibling-included
+#    headers, both `mozilla::layers::Image` (from
+#    nsICanvasRenderingContextInternal.h) and `mozilla::image::Image`
+#    (from imgRequest.h) become reachable via name lookup at the
+#    same level, and the reference becomes ambiguous.
+#
+# Proper fix:
+#   - Hoist `MarkPrincipalChildrenDirty` into a shared header (it's
+#     the same logic in both files), or rename per-file and wrap in
+#     anonymous namespaces.
+#   - In `nsVideoFrame.cpp`, fully qualify as
+#     `mozilla::layers::Image` at every use site (drop any
+#     unqualified `Image` or `using` directive).
+FILES_PER_UNIFIED_FILE = 16
+
 with Files("nsBlock*"):
     # Parts of these files are really Layout: Floats
     BUG_COMPONENT = ("Core", "Layout: Block and Inline")

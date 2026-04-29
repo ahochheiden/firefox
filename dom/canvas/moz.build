@@ -5,6 +5,31 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "Graphics: Canvas2D")
 
+# Workaround: two unification collisions seen at high N.
+# 1. Three siblings each define
+#      static mozilla::LazyLogModule gFingerprinterDetection(
+#          "FingerprinterDetection");
+#    at file scope (`CanvasRenderingContext2D.cpp`,
+#    `nsICanvasRenderingContextInternal.cpp`,
+#    `OffscreenCanvas.cpp`). With separate TUs `static` gives them
+#    internal linkage so each is local; in one unified TU they collide.
+#    `OffscreenCanvas.cpp` declares its copy inside `namespace
+#    mozilla::dom`, which adds an extra ambiguity error on top of the
+#    redefinition.
+# 2. `WebGLShaderValidator.cpp` uses unqualified `MallocSizeOf` in a
+#    function signature and relies on a `using` / namespace-context
+#    that's reachable in its own TU but not inside a large unified
+#    group (compiler reports "did you mean '::MallocSizeOf'?").
+#
+# Proper fix:
+#   - Hoist `gFingerprinterDetection` into a single shared .cpp/.h
+#     under the canvas namespace, or wrap each in an anonymous
+#     namespace with a file-specific name.
+#   - In `WebGLShaderValidator.cpp`, fully qualify as
+#     `mozilla::MallocSizeOf` (or add an explicit `using` at file
+#     scope inside the function's enclosing namespace).
+FILES_PER_UNIFIED_FILE = 16
+
 with Files("TexUnpackBlob.cpp"):
     BUG_COMPONENT = ("Core", "Graphics: CanvasWebGL")
 

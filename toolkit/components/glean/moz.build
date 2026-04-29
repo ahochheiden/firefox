@@ -2,6 +2,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# Workaround: both `ipc/FOGIPC.cpp` (`sLog("fog")`) and
+# `bindings/jog/JOG.cpp` (`sLog("jog")`) define a file-scope
+# `static LazyLogModule sLog(...)`. Internal-linkage in separate TUs;
+# in a unified TU two `sLog` definitions collide as redefinitions.
+#
+# Proper fix: rename one (e.g. `sFogLog` and `sJogLog`) or wrap each
+# in an anonymous namespace with file-specific names.
+FILES_PER_UNIFIED_FILE = 16
+
 SPHINX_TREES["/toolkit/components/glean"] = "docs"
 
 # Needed so that we can include IPC things.

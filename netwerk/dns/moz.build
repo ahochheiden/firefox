@@ -5,6 +5,27 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "Networking: DNS")
 
+# Workaround for a unified-build name collision on Windows.
+#
+# `nsHostResolver::GetAddrInfo(...)` (5 args, declared in nsHostResolver.h)
+# collides with the `#define GetAddrInfo GetAddrInfoW` macro from
+# <ws2tcpip.h>. When a sibling .cpp in the same unified TU pulls in
+# <ws2tcpip.h> before nsHostResolver.h, the macro rewrites every
+# `GetAddrInfo` token (including the method declaration and its call
+# sites) to `GetAddrInfoW`, and compilation fails with
+# `no matching function for 'GetAddrInfoW'` because the Win32 function
+# takes 4 args.
+#
+# Pinning unification to 16 here keeps nsHostResolver.cpp out of any
+# group big enough to include such a sibling. This is fragile (it
+# depends on the file-ordering produced by the emitter) and caps this
+# directory's unified-TU benefit for everyone.
+#
+# Proper fix: rename `nsHostResolver::GetAddrInfo` to a name that does
+# not shadow a Win32 API macro (e.g. `LookupAddrInfo` or `ResolveHost`)
+# and drop this override.
+FILES_PER_UNIFIED_FILE = 16
+
 XPIDL_SOURCES += [
     "nsIDNSAdditionalInfo.idl",
     "nsIDNSByTypeRecord.idl",

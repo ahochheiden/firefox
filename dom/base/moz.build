@@ -8,6 +8,20 @@ with Files("*Selection*"):
 with Files("**"):
     BUG_COMPONENT = ("Core", "DOM: Core & HTML")
 
+# Workaround: `mozilla/webgpu/Buffer.h` references `ipc::SharedMemoryMapping`
+# inside `namespace mozilla::webgpu`, expecting it to bind to
+# `mozilla::ipc::SharedMemoryMapping`. In small TUs that's
+# unambiguous; in a large unified TU, sibling .cpp files in dom/base
+# bring in IPDL-generated headers that declare `mozilla::dom::ipc`
+# (e.g. `mozilla/net/PDocumentChannelParent.h`) AND have file-scope
+# `using namespace mozilla::dom;` directives, so unqualified `ipc::`
+# inside `mozilla::webgpu` becomes ambiguous between `mozilla::ipc`
+# and `mozilla::dom::ipc`.
+#
+# Proper fix: in `dom/webgpu/Buffer.h`, fully qualify as
+# `mozilla::ipc::SharedMemoryMapping`. (Same pattern as FOGIPC.h.)
+FILES_PER_UNIFIED_FILE = 16
+
 TEST_DIRS += ["test"]
 
 if CONFIG["FUZZING"]:

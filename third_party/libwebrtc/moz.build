@@ -6,6 +6,28 @@
   ### This moz.build was AUTOMATICALLY GENERATED from a GN config,  ###
   ### DO NOT edit it by hand.                                       ###
 
+# Workaround: upstream libwebrtc routinely declares file-scope
+# `constexpr` constants and free helper functions (e.g.
+# `kMaxMediaPackets`, `kObuSizePresentBit`, `ObuHasExtension`,
+# `kX2BandEnergyThreshold`) in `.cc` files without anonymous
+# namespaces. With separate TUs each inline/internal-linkage
+# definition is fine; in a unified TU, two siblings with the same
+# constant or function name redefine the symbol.
+#
+# This pattern is endemic to libwebrtc (dozens of `_gn` subdirs would
+# need fixing), so cap unification at 16 for all of libwebrtc and
+# `export()` so every nested `_gn` subdir picks it up without each
+# needing its own override.
+#
+# Proper fix: get upstream to wrap file-scope constants/helpers in
+# anonymous namespaces (or land Mozilla-side patches that do so), then
+# drop this. Not realistic short-term given vendor cadence.
+#
+# Mirror this in whatever script generates this file — otherwise the
+# next libwebrtc vendor pass will clobber the override.
+FILES_PER_UNIFIED_FILE = 16
+export("FILES_PER_UNIFIED_FILE")
+
 DIRS += [
     "/third_party/libwebrtc/api/adaptation/resource_adaptation_api_gn",
     "/third_party/libwebrtc/api/array_view_gn",

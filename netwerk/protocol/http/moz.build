@@ -5,6 +5,22 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "Networking: HTTP")
 
+# Workaround: at file scope, both `BackgroundChannelRegistrar.cpp` and
+# `EarlyHintRegistrar.cpp` define a global named `gSingleton`:
+#   mozilla::StaticRefPtr<mozilla::net::BackgroundChannelRegistrar> gSingleton;
+#   mozilla::StaticRefPtr<mozilla::net::EarlyHintRegistrar>          gSingleton;
+# These have external linkage (no `static`, no anonymous namespace), so
+# with separate TUs the linker would also complain — but in practice the
+# headers don't extern-declare them and each .cpp only references its
+# own. In a unified TU they sit side-by-side and collide as
+# redefinitions with different types.
+#
+# Proper fix: wrap each `gSingleton` in an anonymous namespace at file
+# scope, or rename them (e.g. `sBackgroundChannelRegistrar`,
+# `sEarlyHintRegistrar`). Either eliminates both the unification clash
+# and the latent linker hazard.
+FILES_PER_UNIFIED_FILE = 16
+
 XPIDL_SOURCES += [
     "nsIBackgroundChannelRegistrar.idl",
     "nsIBinaryHttp.idl",

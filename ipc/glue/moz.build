@@ -3,6 +3,21 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 include("/dom/media/webrtc/third_party_build/webrtc.mozbuild")
 
+# Workaround: mozilla/FOGIPC.h declares its functions inside
+# `namespace mozilla::glean` and refers to `ipc::ByteBuf` (intending
+# `mozilla::ipc::ByteBuf`). C++ name lookup for `ipc::` searches the
+# current namespace first, so if any sibling .cpp in the same unified
+# TU has opened or referenced `namespace mozilla::glean::ipc` (e.g. via
+# IPDL-generated `mozilla/glean/ipc/P*.h` headers), `ipc::ByteBuf`
+# binds to `mozilla::glean::ipc::ByteBuf` instead and fails to find
+# `ByteBuf`. With this directory's mix of FOG and IPDL siblings, that
+# clash is reachable in unified groups larger than ~16.
+#
+# Proper fix: in toolkit/components/glean/ipc/FOGIPC.h, fully qualify
+# `ipc::ByteBuf` as `mozilla::ipc::ByteBuf` (or `::mozilla::ipc::ByteBuf`)
+# inside the `namespace mozilla::glean` block, then drop this override.
+FILES_PER_UNIFIED_FILE = 16
+
 EXPORTS += [
     "nsIIPCSerializableInputStream.h",
 ]

@@ -2,6 +2,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# Workaround: Win32 macro pollution. `<rpcndr.h>` does
+# `#define small char`. `nsGkAtoms::small` (the HTML `<small>` atom)
+# appears as a member access in `HTMLEditHelpers.cpp` and
+# `HTMLEditUtils.cpp`. Without `<rpcndr.h>` in scope, fine; with it
+# in scope, `nsGkAtoms::small` becomes `nsGkAtoms::char`, which is a
+# parse error. In a unified TU, a sibling drags in `<rpcndr.h>`
+# (transitively via `<objbase.h>` from various Windows headers) and
+# poisons subsequent member-access expressions.
+#
+# Proper fix: `#undef small` after Windows-header includes in a
+# Mozilla wrapper, or rename the atom (`nsGkAtoms::small_` etc.).
+# The same family bites for `boolean`, `GetAddrInfo`, `CreateFile`,
+# `GetMessage`, etc. across the tree on Windows.
+FILES_PER_UNIFIED_FILE = 16
+
 MOCHITEST_MANIFESTS += [
     "tests/browserscope/mochitest.toml",
     "tests/mochitest.toml",
