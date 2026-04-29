@@ -1822,6 +1822,14 @@ class NinjaBackend(CommonBackend):
                 continue
 
             base_inputs = [mozpath.normsep(inp.full_path) for inp in g.inputs]
+            # extra_deps are build-graph prereqs only (not passed to the
+            # script as positional args). Used for things the script
+            # discovers at runtime, like a preprocessor's
+            # `#include @TOPOBJDIR@/foo.h`.
+            extra_deps = [
+                mozpath.normsep(d.full_path)
+                for d in getattr(g, "extra_deps", ()) or ()
+            ]
 
             # Localized GeneratedFile: en-US only in the build graph.
             # Outputs may contain `{AB_CD}`/`{AB_rCD}` placeholders (per
@@ -1880,13 +1888,16 @@ class NinjaBackend(CommonBackend):
                     )
 
             script_path = g.script
+            implicit = [self._n_rel(script_path)]
+            implicit.extend(self._n_rel(d) for d in extra_deps)
             writer.build(
                 [self._n_rel(o) for o in outs],
                 "pygen",
                 inputs=rel_inputs if rel_inputs else None,
                 # Script is an implicit dep so ninja rebuilds when the
-                # script changes.
-                implicit=self._n_rel(script_path),
+                # script changes. extra_deps are GeneratedFile-declared
+                # runtime deps (e.g. `#include @TOPOBJDIR@/foo.h`).
+                implicit=implicit,
                 variables={
                     "script": self._n_rel(script_path),
                     "method": n_value(g.method or "main"),

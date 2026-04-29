@@ -1197,6 +1197,7 @@ SchedulingComponents = ContextDerivedTypedRecord(
 GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory({
     "script": str,
     "inputs": list,
+    "extra_deps": list,
     "force": bool,
     "flags": list,
 })
