@@ -207,6 +207,25 @@ option(
 set_config("ENABLE_UNIFIED_BUILD", True, when="--disable-unified-build")
 
 
+option(
+    "--with-files-per-unified-file",
+    nargs=1,
+    default="16",
+    help="Number of source files lumped into each unified translation unit",
+)
+
+
+@depends("--with-files-per-unified-file")
+def files_per_unified_file(value):
+    n = int(value[0])
+    if n < 1:
+        die("--with-files-per-unified-file must be >= 1")
+    return str(n)
+
+
+set_config("FILES_PER_UNIFIED_FILE", files_per_unified_file)
+
+
 include("build/moz.configure/bootstrap.configure")
 
 
