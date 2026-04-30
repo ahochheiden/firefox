@@ -1664,9 +1664,27 @@ class NinjaBackend(CommonBackend):
         categories["webidl"]["all"].extend(self._webidl_outputs)
         categories["webidl"]["host"].extend(self._webidl_outputs)
 
-        # headers-codegen: GeneratedFile outputs the emitter marked as
-        # required_before_compile / required_during_compile. Per-GF
-        # host-safety filter (no-op until wasm2c lands on top).
+        # headers-codegen split by output location:
+        #
+        #   * global   — outputs in dist/include. Reachable via
+        #     `-I dist/include` from anywhere; gates every compile.
+        #   * local    — outputs that stay in the generator's relobjdir
+        #     tree. Only attributed to that relobjdir + relobjdirs whose
+        #     LOCAL_INCLUDES reach the generator's objdir.
+        #
+        # Cross-relobjdir consumers reached via relative `#include
+        # "../foo/X.h"` (no configured include path) won't be detected
+        # by the LOCAL_INCLUDES scan. Such a consumer needs an explicit
+        # `LOCAL_INCLUDES = ["!/path/to/generator/dir"]` entry in its
+        # moz.build to opt back into the prereq, or the GeneratedFile
+        # should publish its output via `EXPORTS` so it lands in
+        # dist/include and joins the global aggregate.
+        #
+        # Per-GF host-safety filter (no-op until wasm2c lands on top).
+        codegen_local_all = defaultdict(list)
+        codegen_local_host = defaultdict(list)
+        gen_relobjdir_to_objdir = {}
+        dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
         for g in self._generated_files:
             if not g.script:
                 continue
@@ -1690,9 +1708,36 @@ class NinjaBackend(CommonBackend):
             outs = self._expand_num_outputs_outputs(
                 declared[0], declared, g.flags or ()
             )
-            categories["codegen"]["all"].extend(outs)
-            if not _depends_on_host_program(g):
-                categories["codegen"]["host"].extend(outs)
+            host_safe = not _depends_on_host_program(g)
+            g_relobjdir = mozpath.relpath(g.objdir, self._topobjdir)
+            gen_relobjdir_to_objdir[g_relobjdir] = mozpath.normsep(g.objdir)
+            for o in outs:
+                if o.startswith(dist_include_prefix):
+                    categories["codegen"]["all"].append(o)
+                    if host_safe:
+                        categories["codegen"]["host"].append(o)
+                else:
+                    codegen_local_all[g_relobjdir].append(o)
+                    if host_safe:
+                        codegen_local_host[g_relobjdir].append(o)
+            # Source-style outputs are excluded from the global codegen
+            # aggregate (their consuming compile lists them in `inputs=`
+            # already, so the global fence would just over-couple), but
+            # we still record them in codegen_local so a consumer that
+            # LOCAL_INCLUDES the generator's directory waits for the
+            # generator edge to complete. Some GeneratedFile actions
+            # write side-effect outputs that aren't formally declared
+            # (canonical case: `wasm2c` emits `<base>.wasm.h` alongside
+            # the declared `<base>.wasm.c`); a consumer that #includes
+            # the side-effect header has no input-dep path to that
+            # edge, so it must reach it through codegen_local.
+            source_outs = [o for o in outs if o.endswith(SOURCE_EXTS)]
+            for o in source_outs:
+                if o.startswith(dist_include_prefix):
+                    continue
+                codegen_local_all[g_relobjdir].append(o)
+                if host_safe:
+                    codegen_local_host[g_relobjdir].append(o)
 
         # Persist for the per-relobjdir attribution pass (next commit).
         self._prereq_categories = categories
@@ -1713,6 +1758,22 @@ class NinjaBackend(CommonBackend):
                     if buckets["host"]
                     else None
                 ),
+            )
+
+        # Per-generator local codegen phonies. One phony per relobjdir
+        # that contains any local-codegen output. Consumers attribute
+        # to these in the per-relobjdir prereq pass below.
+        for gen_relobjdir, outs in sorted(codegen_local_all.items()):
+            writer.build(
+                f".ninja-headers-codegen-local/{gen_relobjdir}",
+                "phony",
+                inputs=[self._rel_n_path(o) for o in outs],
+            )
+        for gen_relobjdir, outs in sorted(codegen_local_host.items()):
+            writer.build(
+                f".ninja-headers-codegen-local-host/{gen_relobjdir}",
+                "phony",
+                inputs=[self._rel_n_path(o) for o in outs],
             )
 
         # Union aliases. Compile edges use per-relobjdir phonies emitted
@@ -1772,6 +1833,47 @@ class NinjaBackend(CommonBackend):
                 if full == webidl_root or full.startswith(webidl_root_prefix):
                     webidl_consumer_dirs.add(reldir)
 
+        # codegen_local consumers: which relobjdirs need each
+        # generator's local codegen outputs as a prereq. Direct
+        # consumer is the generator's own relobjdir. Indirect consumers
+        # are anyone whose LOCAL_INCLUDES resolves to (or under) the
+        # generator's directory.
+        #
+        # LOCAL_INCLUDES entries can be source-tree paths (`/foo/bar`)
+        # or objdir paths (`!/foo/bar`). Mach auto-adds both `-I
+        # srcdir/X` and `-I objdir/X` when a source-tree LOCAL_INCLUDES
+        # is set, so generated headers in `objdir/X` are reachable from
+        # any consumer that wrote either form. Match both: normalize
+        # `li.path.full_path` against topsrcdir and topobjdir, treat the
+        # relative remainder as a candidate relobjdir.
+        #
+        # Cross-module relative `#include "../foo/X.h"` paths that don't
+        # go through LOCAL_INCLUDES will still not be detected and need
+        # an explicit LOCAL_INCLUDES entry to opt back in.
+        codegen_local_consumers = defaultdict(set)
+        for gen_relobjdir in codegen_local_all:
+            codegen_local_consumers[gen_relobjdir].add(gen_relobjdir)
+        for gen_relobjdir in codegen_local_host:
+            codegen_local_consumers[gen_relobjdir].add(gen_relobjdir)
+        gen_relobjdirs = set(gen_relobjdir_to_objdir)
+        topsrc_prefix = mozpath.normsep(self._topsrcdir) + "/"
+        topobj_prefix = mozpath.normsep(self._topobjdir) + "/"
+        for reldir, includes in self._local_includes_by_dir.items():
+            for li in includes:
+                full = mozpath.normsep(li.path.full_path)
+                candidate = None
+                if full.startswith(topobj_prefix):
+                    candidate = full[len(topobj_prefix) :]
+                elif full.startswith(topsrc_prefix):
+                    candidate = full[len(topsrc_prefix) :]
+                if candidate is None:
+                    continue
+                for gen_relobjdir in gen_relobjdirs:
+                    if candidate == gen_relobjdir or candidate.startswith(
+                        gen_relobjdir + "/"
+                    ):
+                        codegen_local_consumers[gen_relobjdir].add(reldir)
+
         base_cats = ("base", "xpidl", "codegen")
 
         def _categories_for(reldir):
@@ -1791,16 +1893,33 @@ class NinjaBackend(CommonBackend):
         attribution = {}
         for reldir in compile_dirs:
             cats = _categories_for(reldir)
-            attribution[reldir] = cats
+            local_codegen = sorted(
+                gen_relobjdir
+                for gen_relobjdir, consumers in codegen_local_consumers.items()
+                if reldir in consumers
+            )
+            attribution[reldir] = {
+                "categories": cats,
+                "codegen_local": local_codegen,
+            }
+            inputs = [f".ninja-headers-{c}" for c in cats]
+            inputs_host = [f".ninja-headers-{c}-host" for c in cats]
+            for gen_relobjdir in local_codegen:
+                if codegen_local_all.get(gen_relobjdir):
+                    inputs.append(f".ninja-headers-codegen-local/{gen_relobjdir}")
+                if codegen_local_host.get(gen_relobjdir):
+                    inputs_host.append(
+                        f".ninja-headers-codegen-local-host/{gen_relobjdir}"
+                    )
             writer.build(
                 f".ninja-prereqs/{reldir}",
                 "phony",
-                inputs=[f".ninja-headers-{c}" for c in cats],
+                inputs=inputs,
             )
             writer.build(
                 f".ninja-prereqs-host/{reldir}",
                 "phony",
-                inputs=[f".ninja-headers-{c}-host" for c in cats],
+                inputs=inputs_host,
             )
         writer.newline()
 
