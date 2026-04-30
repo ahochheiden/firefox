@@ -549,9 +549,38 @@ class NinjaBackend(CommonBackend):
         else:
             self._ninja_test_manifest_path = None
 
+        self._dump_rust_crates_metadata()
+
         ninja_path = mozpath.join(self._topobjdir, "build.ninja")
         with self._write_file(ninja_path) as fh:
             self._write_ninja(fh)
+
+    def _dump_rust_crates_metadata(self):
+        """Walk every RustLibrary's Cargo.toml via `cargo metadata` and
+        write an aggregated `rust_crates.json` to $topobjdir.
+
+        No ninja edges depend on this yet. Plan B's later phases use it
+        to emit per-crate `rustc` edges, replacing the opaque cargo
+        sub-build."""
+        if not self._rust_libs:
+            return
+        from mozbuild.action import generate_rust_crates as grc
+
+        cargo = self.environment.substs.get("CARGO") or "cargo"
+        libs_data = {}
+        for lib in self._rust_libs:
+            target = self.environment.substs.get(lib.TARGET_SUBST_VAR)
+            libs_data[lib.basename] = grc.run_for_library(
+                root_basename=lib.basename,
+                manifest_path=mozpath.normsep(lib.cargo_file),
+                target=target,
+                features=list(lib.features or ()),
+                cargo=cargo,
+            )
+
+        out_path = mozpath.join(self._topobjdir, "rust_crates.json")
+        with self._write_file(out_path) as fh:
+            json.dump(libs_data, fh, indent=2, sort_keys=True)
 
     def build(self, config, output, jobs, verbose, what=None):
         """Invoke ninja for `mach build`. Targets default to all.
