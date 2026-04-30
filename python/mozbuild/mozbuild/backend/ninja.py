@@ -556,42 +556,59 @@ class NinjaBackend(CommonBackend):
             self._write_ninja(fh)
 
     def _dump_rust_crates_metadata(self):
-        """Walk every RustLibrary's Cargo.toml via `cargo metadata` and
-        write an aggregated `rust_crates.json` to $topobjdir.
+        """Emit a small manifest of RustLibraries for the regen tool, and
+        load any pre-generated `cargo build --build-plan` JSONs.
 
-        Cargo serializes on its package-cache lock, so wall time is
-        bounded by ~N/3 of the sequential cost in practice; one
-        invocation per RustLibrary is still required because cargo's
-        feature unification is per-package, not per-workspace.
+        Plan generation lives in
+        `mozbuild.action.regen_rust_build_plans` (run via `./mach python
+        -m ...`), which invokes mozmake's `force-cargo-library-build-plan`
+        per library so rust.mk's full env setup applies. Plans are dumped
+        to <topobjdir>/.ninja-rust-plans/<basename>.json. The user runs
+        the regen tool after Cargo.lock changes; the backend never invokes
+        cargo itself.
 
-        No ninja edges depend on the output yet. Plan B's later phases
-        consume this to emit per-crate `rustc` edges, replacing the
-        opaque cargo sub-build."""
+        If plans exist on disk, we load them; otherwise the per-crate
+        edge emission is a no-op and the build falls back to the opaque
+        cargo path."""
         if not self._rust_libs:
             return
-        from concurrent.futures import ThreadPoolExecutor
-        from mozbuild.action import generate_rust_crates as grc
 
-        cargo = self.environment.substs.get("CARGO") or "cargo"
-
-        def run_one(lib):
+        # Manifest the regen tool reads.
+        manifest = []
+        for lib in self._rust_libs:
             target = self.environment.substs.get(lib.TARGET_SUBST_VAR)
-            return lib.basename, grc.run_for_library(
-                root_basename=lib.basename,
-                manifest_path=mozpath.normsep(lib.cargo_file),
-                target=target,
-                features=list(lib.features or ()),
-                cargo=cargo,
+            manifest.append(
+                {
+                    "basename": lib.basename,
+                    "cargo_dir": mozpath.join(self._topobjdir, lib.relobjdir),
+                    "manifest_path": mozpath.normsep(lib.cargo_file),
+                    "target": target,
+                    "features": list(lib.features or ()),
+                }
             )
+        manifest_path = mozpath.join(
+            self._topobjdir, ".ninja-rust-libs-manifest.json"
+        )
+        with self._write_file(manifest_path) as fh:
+            json.dump(manifest, fh, indent=2, sort_keys=True)
 
-        libs_data = {}
-        with ThreadPoolExecutor(max_workers=len(self._rust_libs)) as ex:
-            for name, entry in ex.map(run_one, self._rust_libs):
-                libs_data[name] = entry
-
-        out_path = mozpath.join(self._topobjdir, "rust_crates.json")
-        with self._write_file(out_path) as fh:
-            json.dump(libs_data, fh, indent=2, sort_keys=True)
+        # Plans live in-tree (committed, manually maintained, regenerated
+        # via `mach python -m mozbuild.action.regen_rust_build_plans` when
+        # Cargo.lock changes). The objdir never holds them.
+        plans_dir = mozpath.join(
+            self._topsrcdir,
+            "python",
+            "mozbuild",
+            "mozbuild",
+            "rust_build_plans",
+        )
+        self._rust_build_plans = {}
+        for entry in manifest:
+            plan_path = mozpath.join(plans_dir, f"{entry['basename']}.json")
+            if not os.path.exists(plan_path):
+                continue
+            with open(plan_path, encoding="utf-8") as fh:
+                self._rust_build_plans[entry["basename"]] = json.load(fh)
 
     def build(self, config, output, jobs, verbose, what=None):
         """Invoke ninja for `mach build`. Targets default to all.
@@ -602,7 +619,14 @@ class NinjaBackend(CommonBackend):
         import subprocess
         import time as _time
 
-        cmd = ["ninja", "-C", config.topobjdir, "--jobserver-pool"]
+        # Resolve ninja against configure-time PATH (Python's subprocess
+        # on Windows uses the parent process's PATH for executable
+        # lookup, not env['PATH']).
+        import shutil
+        ninja_bin = shutil.which(
+            "ninja", path=config.substs.get("PATH", os.environ.get("PATH"))
+        ) or "ninja"
+        cmd = [ninja_bin, "-C", config.topobjdir, "--jobserver-pool"]
         if jobs:
             cmd += ["-j", str(jobs)]
         if verbose:
@@ -611,8 +635,11 @@ class NinjaBackend(CommonBackend):
             cmd += list(what)
         # Mirror mozmake's `export INCLUDE` / `export LIB` (config/config.mk):
         # cl/ml64/link rely on these env vars to find SDK headers and libs.
+        # Also use configure-time PATH so subprocess can find `ninja`
+        # (which lives in a configure-known dir but isn't on the user's
+        # interactive shell PATH).
         env = os.environ.copy()
-        for var in ("INCLUDE", "LIB"):
+        for var in ("INCLUDE", "LIB", "PATH"):
             val = config.substs.get(var)
             if val:
                 env[var] = val
@@ -1122,6 +1149,50 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
+        # Per-crate rustc invocation. Spec JSON encodes program/args/env/cwd
+        # from `cargo build --build-plan`. `$buildrs_arg` is empty for
+        # crates without a build script; for crates with one, it's
+        # `--buildrs-output <dir>` so the wrapper can splice in
+        # build-script-derived cfg/env at exec time.
+        writer.rule(
+            "rust_invoke",
+            command="$PYTHON -m mozbuild.action.rust_invoke --spec $spec $buildrs_arg",
+            description="RUSTC $description",
+            restat=True,
+        )
+        writer.newline()
+
+        # Build-script execution. Runs the compiled build-script binary,
+        # captures stdout, parses cargo: directives, writes structured
+        # outputs (cfg.txt, env.txt, linklibs.txt) for the dependent
+        # rustc edge to consume.
+        writer.rule(
+            "rust_buildrs_run",
+            command=(
+                "$PYTHON -m mozbuild.action.rust_buildrs_run "
+                "--spec $spec --output-dir $output_dir"
+            ),
+            description="BUILDRS-RUN $description",
+            restat=True,
+        )
+        writer.newline()
+
+        # Cutover: when a build plan exists for a RustLibrary, the
+        # per-crate `staticlib` rustc edge produces a hashed `.lib` in
+        # cargo's deps dir. libxul's link expects the unhashed location
+        # cargo's normal flow produces via its post-build link step. We
+        # replicate that with a plain file copy.
+        writer.rule(
+            "rust_staticlib_install",
+            command=(
+                "$PYTHON -c \"import shutil,sys; shutil.copy(sys.argv[1], sys.argv[2])\" "
+                "$in $out"
+            ),
+            description="STATICLIB-INSTALL $out",
+            restat=True,
+        )
+        writer.newline()
+
         # Wasm compile / link. WASM_CC and WASM_CXX are clang targeting
         # wasm32-wasi; flag handling matches the regular cxx/cc rules
         # (rspfile + clang depfile via -Xclang -dependency-file). The
@@ -1394,6 +1465,12 @@ class NinjaBackend(CommonBackend):
         # Rust libraries are built by delegating to mozmake, which already
         # knows how to invoke cargo with the right env.
         self._emit_rust_statements(writer)
+
+        # Per-crate rustc edges replayed from `cargo build --build-plan`.
+        # Outputs sit alongside the opaque cargo path; nothing in the
+        # default graph consumes them yet (Plan B cutover replaces the
+        # cargo edge in a later commit).
+        self._emit_rust_build_plan_edges(writer)
 
         # Emit link build statements for static libs, shared libs, and programs.
         self._emit_archive_statements(writer)
@@ -2932,24 +3009,57 @@ class NinjaBackend(CommonBackend):
         self._pp_install_outputs = pp_install_outputs
 
     def _emit_rust_statements(self, writer):
-        """Delegate Rust library builds to mozmake in the rust subdir.
+        """Emit one edge per RustLibrary that produces the `.lib` libxul
+        consumes. Two paths:
 
-        The recursive-make backend's config/makefiles/rust.mk wraps a cargo
-        invocation that sets CARGO_TARGET_DIR, RUSTFLAGS, etc. We delegate
-        to mozmake for the rust subdir — same opaque-sub-build pattern
-        used for ICU."""
+          * Plan available → install (copy) the per-crate `staticlib`
+            rustc edge's output to libxul's expected location. The
+            per-crate edges (compile, build-script-run, etc.) come from
+            `_emit_rust_build_plan_edges`; this just renames the final
+            artifact.
+          * No plan → fall back to the opaque `cargo_build` edge that
+            delegates to mozmake's `force-cargo-library-build`."""
         writer.newline()
-        writer.comment("------ rust libraries (opaque mozmake sub-build) ------")
+        writer.comment("------ rust library install / opaque cargo fallback ------")
         writer.newline()
         if not self._rust_libs:
             return
+        plans = getattr(self, "_rust_build_plans", {})
         for lib in self._rust_libs:
             out = self._lib_output_path(lib)
+            self._rust_lib_outputs[mozpath.normsep(out)] = mozpath.splitext(
+                mozpath.basename(out)
+            )[0]
+
+            plan = plans.get(lib.basename)
+            staticlib_out = None
+            if plan:
+                for inv in plan["invocations"]:
+                    if (
+                        inv.get("target_kind") == ["staticlib"]
+                        and inv.get("compile_mode") == "build"
+                        and inv.get("outputs")
+                    ):
+                        # Same package the RustLibrary represents.
+                        # cargo replaces `-` with `_` in target names; the
+                        # plan's package_name uses the original. Normalize
+                        # for the comparison.
+                        if inv["package_name"].replace("-", "_") == lib.basename.replace(
+                            "-", "_"
+                        ):
+                            staticlib_out = mozpath.normsep(inv["outputs"][0])
+                            break
+
+            if staticlib_out:
+                writer.build(
+                    n_path(out),
+                    "rust_staticlib_install",
+                    inputs=n_path(staticlib_out),
+                )
+                continue
+
+            # Fallback: opaque cargo via mozmake.
             depfile = mozpath.splitext(out)[0] + ".d"
-            # Match recursive-make's `_build_target_for_obj`: when a
-            # `RustLibrary` has `output_category` set (e.g. gkrust-gtest
-            # with `output_category="gtest"`), its make target is named
-            # by the category instead of `target-objects`.
             output_category = getattr(lib, "output_category", None)
             target_name = output_category if output_category else "target-objects"
             writer.build(
@@ -2961,12 +3071,6 @@ class NinjaBackend(CommonBackend):
                     "depfile": self._n_rel(depfile),
                 },
             )
-            # Key by the same form ninja records in `.ninja_log` (the
-            # unescaped relative-from-topobjdir path emitted on the
-            # build edge), so `_classify_ninja_edge` lookups match.
-            self._rust_lib_outputs[self._rel(out)] = mozpath.splitext(
-                mozpath.basename(out)
-            )[0]
         # Persist for `_record_ninja_log_markers` so a separate
         # `./mach build` invocation can still classify cargo edges and
         # locate cargo-timings .html files.
@@ -2974,6 +3078,335 @@ class NinjaBackend(CommonBackend):
         with self._write_file(manifest_path) as fh:
             json.dump(
                 self._rust_lib_outputs, fh, indent=2, sort_keys=True
+            )
+
+    def _emit_rust_build_plan_edges(self, writer):
+        """Walk per-RustLibrary build plans (from `_dump_rust_crates_metadata`),
+        emit one ninja edge per cargo invocation. Outputs use the paths
+        cargo's plan dictates so deps resolve via filesystem path equality.
+
+        Cargo's `--build-plan` enumerates three kinds of invocations:
+          * `compile_mode == 'build'`, `target_kind == ['custom-build']`
+            -- compile a `build.rs` to a host binary. Run as rustc.
+          * `compile_mode == 'run-custom-build'`
+            -- execute that binary and capture its cargo:* output.
+          * `compile_mode == 'build'`, other target_kind
+            -- regular rustc compile of a lib / proc-macro / staticlib.
+
+        For lib/proc-macro/staticlib invocations whose package has a
+        build script, we add `--buildrs-output <dir>` so the rust_invoke
+        wrapper can splice cfg/env from the run."""
+        plans = getattr(self, "_rust_build_plans", None)
+        if not plans:
+            return
+
+        writer.newline()
+        writer.comment("------ rust per-crate edges (from cargo build --build-plan) ------")
+        writer.newline()
+
+        # Firefox-specific env vars cargo filters out of the plan but
+        # build.rs scripts (e.g. nss_build_common::link_nss) inspect.
+        # Inject them into every spec env so ninja-replayed invocations
+        # see the same environment cargo's normal build does.
+        #
+        # We deliberately do NOT inject RUSTC / RUSTDOC: the plan was
+        # generated via mozmake which set RUSTC to Firefox's pinned
+        # stable toolchain, and build.rs scripts use that env to detect
+        # rustc capabilities. Overriding to nightly here causes
+        # detection mismatches (e.g. proc-macro2 sees nightly, emits
+        # `--cfg proc_macro_span`, then the lib compile with stable
+        # rustc rejects the `#![feature]` attribute that cfg gates).
+        firefox_env = {
+            "MOZ_TOPOBJDIR": self._topobjdir,
+            "MOZ_TOPSRCDIR": self._topsrcdir,
+        }
+        # MSVC env: build.rs scripts using cc-rs invoke cl.exe, which
+        # needs INCLUDE / LIB / LIBPATH from configure. Mozmake sets
+        # these implicitly when running cargo; cargo --build-plan
+        # filters them out, so we inject them back.
+        for var in ("INCLUDE", "LIB", "LIBPATH"):
+            v = self.environment.substs.get(var)
+            if v:
+                firefox_env[var] = v
+        # Constants that rust.mk exports when invoking cargo. Some are
+        # consumed by the lib's source via `env!()` (e.g.
+        # libz-rs-sys reads LIBZ_RS_SYS_PREFIX at compile time).
+        firefox_env["LIBZ_RS_SYS_PREFIX"] = "MOZ_Z_"
+        firefox_env["RUST_BACKTRACE"] = "full"
+        firefox_env["MOZ_FOLD_LIBS"] = self.environment.substs.get(
+            "MOZ_FOLD_LIBS", ""
+        )
+        # rust.mk's RUSTC_BOOTSTRAP allowlist: crates Firefox is
+        # permitted to compile with `#![feature]` on stable rustc.
+        bootstrap = ["mozglue_static", "qcms"]
+        if self.environment.substs.get("MOZ_RUST_SIMD"):
+            bootstrap.extend(["encoding_rs", "any_all_workaround"])
+        firefox_env["RUSTC_BOOTSTRAP"] = ",".join(bootstrap)
+
+        # cc-rs in build scripts (mozglue-static, swgl, etc.) reads
+        # CC_<triple> / CXX_<triple> to pick the C/C++ compiler. Without
+        # them it falls back to whatever cl.exe it can find — typically
+        # a system MSVC install that doesn't understand Firefox's
+        # clang-cl-flavored headers (`__builtin_*`, `/std:c++17`).
+        # rust.mk exports both the dash and underscore forms via
+        # `rust_cc_env_name = varize(RUST_TARGET)`.
+        target = self.environment.substs.get("RUST_TARGET")
+        host = self.environment.substs.get("HOST_RUST_TARGET", target)
+        cc = (self.environment.substs.get("CC") or "").strip()
+        cxx = (self.environment.substs.get("CXX") or "").strip()
+        ar = (self.environment.substs.get("AR") or "").strip()
+        host_cc = (self.environment.substs.get("HOST_CC") or "").strip()
+        host_cxx = (self.environment.substs.get("HOST_CXX") or "").strip()
+        host_ar = (self.environment.substs.get("HOST_AR") or "").strip()
+
+        def _set_cc_env(triple, cc_v, cxx_v, ar_v):
+            for sep in (triple, triple.replace("-", "_")):
+                if cc_v:
+                    firefox_env[f"CC_{sep}"] = cc_v
+                if cxx_v:
+                    firefox_env[f"CXX_{sep}"] = cxx_v
+                if ar_v:
+                    firefox_env[f"AR_{sep}"] = ar_v
+
+        if target:
+            _set_cc_env(target, cc, cxx, ar)
+        if host:
+            _set_cc_env(host, host_cc, host_cxx, host_ar)
+
+        # bindgen build.rs scripts (style/Stylo, nss-sys, etc.) load
+        # libclang for header parsing. rust.mk exports LIBCLANG_PATH /
+        # CLANG_PATH pointing at Firefox's bundled clang. Without
+        # these, bindgen finds a system clang too old for current
+        # MSVC STL headers.
+        for var, key in (("LIBCLANG_PATH", "MOZ_LIBCLANG_PATH"),
+                         ("CLANG_PATH", "MOZ_CLANG_PATH")):
+            v = self.environment.substs.get(key)
+            if v:
+                firefox_env[var] = v
+        # Linker wrapper env. rustc invocations in the plan have
+        # `-C linker=build/cargo-linker.bat`; the bat needs PYTHON3,
+        # the wrapped Python script needs MOZ_CARGO_WRAP_LD /
+        # MOZ_CARGO_WRAP_LDFLAGS / MOZ_CARGO_WRAP_LD_CXX. Without
+        # them the bat hangs (no PYTHON3 → cmd can't dispatch the
+        # extensionless cargo-linker file) and rustc waits forever
+        # on its child.
+        py3 = self.environment.substs.get("PYTHON3")
+        if py3:
+            firefox_env["PYTHON3"] = py3
+        linker = self.environment.substs.get("LINKER")
+        if linker:
+            firefox_env["MOZ_CARGO_WRAP_LD"] = linker
+            firefox_env["MOZ_CARGO_WRAP_LD_CXX"] = linker
+        host_linker = self.environment.substs.get("HOST_LINKER", linker)
+        if host_linker:
+            firefox_env["MOZ_CARGO_WRAP_HOST_LD"] = host_linker
+            firefox_env["MOZ_CARGO_WRAP_HOST_LD_CXX"] = host_linker
+        # cargo-linker.py reads MOZ_CARGO_WRAP_LDFLAGS unconditionally
+        # via os.environ[]; empty string is fine for the prototype
+        # (most of Firefox's LDFLAGS aren't needed for the small
+        # build-script binaries cargo emits).
+        firefox_env.setdefault("MOZ_CARGO_WRAP_LDFLAGS", "")
+        firefox_env.setdefault("MOZ_CARGO_WRAP_HOST_LDFLAGS", "")
+
+        for basename, plan in plans.items():
+            invocations = plan["invocations"]
+            target_dir = mozpath.join(self._topobjdir, ".ninja-rust", basename)
+            specs_dir = mozpath.join(target_dir, ".specs")
+            ensureParentDir(mozpath.join(specs_dir, ".keep"))
+
+            # Map each run-custom-build invocation to its output dir.
+            # Cargo can have multiple runs of the same package (target +
+            # host for proc-macro deps), each with a distinct OUT_DIR --
+            # key by invocation index, not package name.
+            run_dir_by_idx = {}
+            for idx, inv in enumerate(invocations):
+                if inv.get("compile_mode") == "run-custom-build":
+                    out_dir = inv.get("env", {}).get("OUT_DIR")
+                    if out_dir:
+                        run_dir_by_idx[idx] = mozpath.dirname(
+                            mozpath.normsep(out_dir)
+                        )
+
+            # Precompute, for each invocation, the set of transitively
+            # reachable run-custom-build indices. Their linklibs.txt is
+            # what cargo would aggregate into rustc's link step for any
+            # consumer that produces a binary / dylib / staticlib /
+            # cdylib (where the linker actually runs).
+            transitive_rcb = {}
+            for start_idx, inv in enumerate(invocations):
+                visited = set()
+                queue = list(inv.get("deps", ()))
+                rcb_set = set()
+                while queue:
+                    d = queue.pop()
+                    if d in visited:
+                        continue
+                    visited.add(d)
+                    d_inv = invocations[d]
+                    if d_inv.get("compile_mode") == "run-custom-build":
+                        rcb_set.add(d)
+                    queue.extend(d_inv.get("deps", ()))
+                transitive_rcb[start_idx] = rcb_set
+
+            for idx, inv in enumerate(invocations):
+                mode = inv.get("compile_mode")
+                target_kind = inv.get("target_kind", [])
+                pkg = inv["package_name"]
+
+                if mode == "run-custom-build":
+                    # Build-script execution. The plan's `program` is a
+                    # logical name (e.g. `build-script-build`, no .exe)
+                    # that cargo creates as a hardlink alongside the
+                    # actual hashed binary. We bypass that link by
+                    # using the compile invocation's first .exe output
+                    # directly.
+                    run_dir = run_dir_by_idx.get(idx)
+                    if not run_dir:
+                        continue
+                    program = inv["program"]
+                    for dep_idx in inv.get("deps", ()):
+                        dep_outs = invocations[dep_idx].get("outputs", ())
+                        for o in dep_outs:
+                            n = mozpath.normsep(o)
+                            if n.lower().endswith(".exe"):
+                                program = n
+                                break
+                        if program != inv["program"]:
+                            break
+                    spec_path = mozpath.join(specs_dir, f"{idx:04d}-run.json")
+                    run_env = dict(inv.get("env", {}))
+                    run_env.update(firefox_env)
+                    spec = {
+                        "program": program,
+                        "args": inv.get("args", []),
+                        "env": run_env,
+                        "cwd": inv.get("cwd"),
+                    }
+                    with self._write_file(spec_path) as fh:
+                        json.dump(spec, fh, indent=2, sort_keys=True)
+
+                    inputs = [n_path(spec_path)]
+                    for dep_idx in inv.get("deps", ()):
+                        for o in invocations[dep_idx].get("outputs", ()):
+                            inputs.append(n_path(mozpath.normsep(o)))
+
+                    run_outputs = [
+                        mozpath.join(run_dir, name)
+                        for name in (
+                            "cfg.txt",
+                            "env.txt",
+                            "linklibs.txt",
+                            "rerun_files.txt",
+                            "warnings.txt",
+                        )
+                    ]
+                    writer.build(
+                        [n_path(o) for o in run_outputs],
+                        "rust_buildrs_run",
+                        inputs=inputs,
+                        variables={
+                            "spec": n_path(spec_path),
+                            "output_dir": n_path(run_dir),
+                            "description": f"{pkg}/build-script-run",
+                        },
+                    )
+                    continue
+
+                # Regular rustc invocation (compile build.rs to bin OR
+                # compile a lib/proc-macro/staticlib).
+                if not inv.get("outputs"):
+                    continue
+
+                # Inject Firefox env first so the program-override below
+                # can resolve "rustc"/"rustdoc" via the augmented env.
+                inv_env = dict(inv.get("env", {}))
+                inv_env.update(firefox_env)
+
+                # The plan's `program` for rustc invocations is the
+                # bare string "rustc", which resolves via PATH to the
+                # rustup proxy. Concurrent proxy invocations race on
+                # on-demand component installs. Bypass the proxy by
+                # using the absolute rustc path from the env.
+                program = inv["program"]
+                if program in ("rustc", "rustdoc"):
+                    program = inv_env.get(program.upper(), program)
+
+                spec_path = mozpath.join(specs_dir, f"{idx:04d}.json")
+                # Collect transitive run-custom-build output dirs whose
+                # linklibs.txt the wrapper will splice in as `-l` / `-L`
+                # rustc args. Ignored at rlib stage (rustc just records
+                # the directives in its rmeta) but load-bearing at any
+                # link-producing stage (bin, dylib, staticlib).
+                linklibs_dirs = sorted(
+                    run_dir_by_idx[r]
+                    for r in transitive_rcb.get(idx, ())
+                    if r in run_dir_by_idx
+                )
+                spec = {
+                    "program": program,
+                    "args": inv.get("args", []),
+                    "env": inv_env,
+                    "cwd": inv.get("cwd"),
+                    "linklibs_dirs": linklibs_dirs,
+                }
+                with self._write_file(spec_path) as fh:
+                    json.dump(spec, fh, indent=2, sort_keys=True)
+
+                inputs = [n_path(spec_path)]
+                for dep_idx in inv.get("deps", ()):
+                    dep_outputs = invocations[dep_idx].get("outputs", ())
+                    for o in dep_outputs:
+                        inputs.append(n_path(mozpath.normsep(o)))
+
+                outputs = [n_path(mozpath.normsep(o)) for o in inv["outputs"]]
+                desc = f"{pkg}/{target_kind[0] if target_kind else 'unknown'}"
+
+                buildrs_arg = ""
+                implicit = []
+                # Only non-build-script compiles consume run output.
+                # Look in this invocation's deps for a run-custom-build
+                # entry; that dep's run_dir is what we splice in.
+                if "custom-build" not in target_kind:
+                    for dep_idx in inv.get("deps", ()):
+                        run_dir = run_dir_by_idx.get(dep_idx)
+                        if run_dir:
+                            buildrs_arg = (
+                                f"--buildrs-output {n_path(run_dir)}"
+                            )
+                            implicit.append(
+                                n_path(mozpath.join(run_dir, "cfg.txt"))
+                            )
+                            break
+                # All transitive run-custom-build outputs we'll splice
+                # link directives from must exist before this edge runs.
+                for d in linklibs_dirs:
+                    p = n_path(mozpath.join(d, "linklibs.txt"))
+                    if p not in implicit:
+                        implicit.append(p)
+
+                writer.build(
+                    outputs,
+                    "rust_invoke",
+                    inputs=inputs,
+                    implicit=implicit if implicit else None,
+                    order_only=["$topobjdir/.ninja-generated"],
+                    variables={
+                        "spec": n_path(spec_path),
+                        "buildrs_arg": buildrs_arg,
+                        "description": desc,
+                    },
+                )
+
+            # Phony aggregating every concrete output for this RustLibrary,
+            # so `ninja .ninja-rust-all/<basename>` drives a smoke-test build.
+            all_outputs = []
+            for inv in invocations:
+                for o in inv.get("outputs", ()):
+                    all_outputs.append(n_path(mozpath.normsep(o)))
+            writer.build(
+                f"$topobjdir/.ninja-rust-all/{basename}",
+                "phony",
+                inputs=all_outputs,
             )
 
     def _lib_output_path(self, lib):

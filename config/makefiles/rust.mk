@@ -572,6 +572,21 @@ endif
 
 $(eval $(call make_cargo_rule,$(RUST_LIBRARY_FILE),force-cargo-library-build))
 
+# Dump cargo's full build plan (rustc/build-script invocations with
+# resolved args + env) for this RustLibrary to a JSON file. The
+# NinjaBackend prototype consumes these to emit per-crate ninja edges.
+# `--build-plan` requires nightly cargo; resolve via rustup so the
+# regular $(CARGO) (a stable toolchain binary) doesn't need to support
+# `+nightly`.
+RUST_BUILD_PLAN_OUT ?= $(CARGO_TARGET_DIR)/build-plan.json
+# `rustup which` returns a backslash-laden Windows path that mozmake's
+# /bin/sh recipe normalizes by stripping `\`. Translate to forward
+# slashes via tr so the shell sees a usable path.
+NIGHTLY_CARGO ?= $(shell rustup which --toolchain nightly cargo | tr '\\' '/')
+
+force-cargo-library-build-plan:
+	$(NIGHTLY_CARGO) build --build-plan -Z unstable-options $(cargo_build_flags) --lib $(cargo_target_flag) $(rust_features_flag) > $(RUST_BUILD_PLAN_OUT)
+
 SUGGEST_INSTALL_ON_FAILURE = (ret=$$?; if [ $$ret = 101 ]; then echo If $1 is not installed, install it using: cargo install $1; fi; exit $$ret)
 
 ifndef CARGO_NO_AUTO_ARG
