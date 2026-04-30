@@ -6,13 +6,35 @@ import errno
 import os
 import shutil
 import stat
-import sys
 from collections import Counter, OrderedDict, defaultdict
 from concurrent import futures
 
 import mozpack.path as mozpath
 from mozpack.errors import errors
 from mozpack.files import AbsoluteSymlinkFile, BaseFile, Dest, File
+
+# Worker count for parallel file installs. Hardcoded to 4 in older code,
+# which under-utilizes modern dev machines and CI hosts (16-128 logical
+# CPUs). File copies and hardlinks release the GIL during their
+# syscalls, so threads scale near-linearly until disk bandwidth or
+# NTFS metadata-lock contention starts dominating.
+_MAX_COPY_WORKERS = min(32, (os.cpu_count() or 4))
+
+
+def parallel_apply(items, fn, threshold=64):
+    """Apply ``fn`` to each item, parallelized via a thread pool when
+    item count exceeds ``threshold``. Returns ``[(item, fn(item)), ...]``
+    in input order.
+
+    ``fn`` must release the GIL during its work — true for file syscalls
+    (``os.link``, ``shutil.copy*``, ``os.symlink``, ``os.makedirs``,
+    ``os.unlink``) used by callers in this module and ``ninja_install``.
+    """
+    if len(items) <= threshold or _MAX_COPY_WORKERS <= 1:
+        return [(it, fn(it)) for it in items]
+    with futures.ThreadPoolExecutor(_MAX_COPY_WORKERS) as e:
+        submitted = [(it, e.submit(fn, it)) for it in items]
+    return [(it, f.result()) for it, f in submitted]
 
 
 def _scandir_dest_info(top):
@@ -547,25 +569,16 @@ class FileCopier(FileRegistry):
 
             files_to_copy.append((destfile, f))
 
-        # Install files that need updating.
-        #
-        # Creating/appending new files on Windows/NTFS is slow. So we use a
-        # thread pool to speed it up significantly. The performance of this
-        # loop is so critical to common build operations on Linux that the
-        # overhead of the thread pool is worth avoiding, so we have 2 code
-        # paths. We also employ a low watermark to prevent thread pool
-        # creation if the number of files is too small to benefit.
-        copy_results = []
-        if sys.platform == "win32" and len(files_to_copy) > 100:
-            with futures.ThreadPoolExecutor(4) as e:
-                fs = []
-                for destfile, f in files_to_copy:
-                    fs.append((destfile, e.submit(f.copy, destfile, skip_if_older)))
-
-            copy_results = [(path, f.result()) for path, f in fs]
-        else:
-            for destfile, f in files_to_copy:
-                copy_results.append((destfile, f.copy(destfile, skip_if_older)))
+        # Install files that need updating. Copy/hardlink syscalls
+        # release the GIL, so a thread pool gets near-linear scaling
+        # for I/O until disk bandwidth saturates.
+        copy_results = [
+            (destfile, result)
+            for (destfile, _f), result in parallel_apply(
+                files_to_copy,
+                lambda pair: pair[1].copy(pair[0], skip_if_older),
+            )
+        ]
 
         for destfile, copy_result in copy_results:
             dest_files.add(destfile)

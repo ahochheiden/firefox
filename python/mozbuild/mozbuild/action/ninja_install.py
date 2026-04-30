@@ -9,14 +9,21 @@ Used by the ninja backend's `install_file` rule (single-pair) and
 per line). Hardlinks are near-instant on NTFS and avoid the per-file
 Python startup cost that a copy-per-edge would incur across hundreds
 of EXPORTS entries.
+
+The batch path parallelizes via mozpack.copier.parallel_apply so a
+single mega-edge with thousands of inputs scales across all available
+cores instead of bottlenecking on a single-threaded for-loop.
 """
 
 import os
 import shutil
 import sys
 
+from mozpack.copier import parallel_apply
 
-def _install_one(src, dst):
+
+def _install_one(pair):
+    src, dst = pair
     dst_dir = os.path.dirname(dst)
     if dst_dir:
         os.makedirs(dst_dir, exist_ok=True)
@@ -33,16 +40,18 @@ def _install_one(src, dst):
 
 def main(argv):
     if len(argv) == 1 and argv[0].endswith(".manifest"):
+        pairs = []
         with open(argv[0]) as f:
             for line in f:
                 stripped = line.rstrip("\r\n")
                 if not stripped:
                     continue
                 src, _, dst = stripped.partition("\t")
-                _install_one(src, dst)
+                pairs.append((src, dst))
+        parallel_apply(pairs, _install_one)
         return 0
     if len(argv) == 2:
-        _install_one(argv[0], argv[1])
+        _install_one((argv[0], argv[1]))
         return 0
     print("usage: ninja_install <src> <dst> | <manifest>", file=sys.stderr)
     return 2
