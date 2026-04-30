@@ -564,24 +564,20 @@ class NinjaBackend(CommonBackend):
     def build(self, config, output, jobs, verbose, what=None):
         """Invoke ninja for `mach build`. Targets default to all.
 
+        `./mach build clean` is special-cased: invokes `ninja -t clean`
+        first to remove every output ninja knows about, then continues
+        with a full build. (ninja's `-t clean` is not a build target;
+        passing "clean" as a regular target would fail.) Other targets
+        passed alongside "clean" still build after the clean.
+
         After ninja completes, replays `.ninja_log` through the resource
         monitor as per-edge markers so the build profile gets per-target
         timing (richer than mozmake's link-only markers)."""
         import subprocess
         import time as _time
 
-        cmd = [
-            config.substs.get("NINJA", "ninja"),
-            "-C",
-            config.topobjdir,
-            "--jobserver-pool",
-        ]
-        if jobs:
-            cmd += ["-j", str(jobs)]
-        if verbose:
-            cmd.append("-v")
-        if what:
-            cmd += list(what)
+        ninja = config.substs.get("NINJA", "ninja")
+
         # Mirror mozmake's `export INCLUDE` / `export LIB` (config/config.mk):
         # cl/ml64/link rely on these env vars to find SDK headers and libs.
         env = os.environ.copy()
@@ -589,6 +585,23 @@ class NinjaBackend(CommonBackend):
             val = config.substs.get(var)
             if val:
                 env[var] = val
+
+        targets = list(what) if what else []
+        if "clean" in targets:
+            targets = [t for t in targets if t != "clean"]
+            output.write_line("ninja: cleaning all outputs (`-t clean`)")
+            clean_cmd = [ninja, "-C", config.topobjdir, "-t", "clean"]
+            rc = subprocess.call(clean_cmd, env=env)
+            if rc != 0:
+                return rc
+
+        cmd = [ninja, "-C", config.topobjdir, "--jobserver-pool"]
+        if jobs:
+            cmd += ["-j", str(jobs)]
+        if verbose:
+            cmd.append("-v")
+        if targets:
+            cmd += targets
         # Capture wall-clock just before invoking ninja so .ninja_log's
         # "ms since build start" timestamps can be anchored.
         ninja_start_wall = _time.time()
