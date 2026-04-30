@@ -1630,28 +1630,52 @@ class NinjaBackend(CommonBackend):
             categories["base"]["host"].append(track)
         dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
         # `rust_prereqs` is a narrower subset for the `cargo_build`
-        # edge to fence behind: cargo's build.rs scripts (bindgen) only
-        # need dist/include populated plus the early configure-define
-        # files. They don't need IPDL/WebIDL/XPIDL/wasm2c outputs, so
-        # the rust edges shouldn't have to wait for those.
+        # edge to fence behind. Cargo needs the cargo config and early
+        # configure-define files, and it should not consume job slots
+        # before the cbindgen export path has completed.
         rust_prereqs = []
+        rust_prereqs_seen = set()
+
+        def add_rust_prereq(path):
+            if path and path not in rust_prereqs_seen:
+                rust_prereqs_seen.add(path)
+                rust_prereqs.append(path)
+
         if track:
-            rust_prereqs.append(track)
+            add_rust_prereq(track)
         for _, dst in self._installs:
             if dst.startswith(dist_include_prefix):
                 categories["base"]["all"].append(dst)
                 categories["base"]["host"].append(dst)
+        cargo_config = mozpath.join(self._topobjdir, ".cargo/config.toml")
         for _, dst, _, _ in self._pp_installs:
             if dst.startswith(dist_include_prefix):
                 categories["base"]["all"].append(dst)
                 categories["base"]["host"].append(dst)
-                rust_prereqs.append(dst)
+                add_rust_prereq(dst)
+            if dst == cargo_config:
+                add_rust_prereq(dst)
         # `required_before_export` GeneratedFiles (e.g. mozilla-config.h,
         # source-repo.h, buildid.h) are read directly from the objdir
-        # by some build.rs scripts before they're installed, so include
-        # them in the rust prereq set.
+        # by some build.rs scripts before they're installed. Cbindgen
+        # outputs are also kept ahead of Rust to match the recursive
+        # export-before-compile scheduling. `.rs` outputs from any
+        # GeneratedFile are added too: cargo `include!()`s them at
+        # compile time (e.g. mozbuild's buildconfig.rs, fog's
+        # metrics.rs/pings.rs/factory.rs), and recursive-make happens
+        # to schedule them via the export tier before cargo runs.
         for g in self._generated_files:
-            if not g.script or not g.required_before_export:
+            if not g.script:
+                continue
+            is_cbindgen = mozpath.basename(
+                mozpath.normsep(g.script)
+            ) == "RunCbindgen.py" and g.method in ("generate", "generate_metadata")
+            include_all = g.required_before_export or is_cbindgen
+            has_rs = any(
+                (o if isinstance(o, str) else o.full_path).endswith(".rs")
+                for o in g.outputs
+            )
+            if not include_all and not has_rs:
                 continue
             declared = []
             for o in g.outputs:
@@ -1663,11 +1687,11 @@ class NinjaBackend(CommonBackend):
                 else:
                     declared.append(mozpath.normsep(o.full_path))
             if declared:
-                rust_prereqs.extend(
-                    self._expand_num_outputs_outputs(
-                        declared[0], declared, g.flags or ()
-                    )
-                )
+                for output in self._expand_num_outputs_outputs(
+                    declared[0], declared, g.flags or ()
+                ):
+                    if include_all or output.endswith(".rs"):
+                        add_rust_prereq(output)
 
         # IPDL, WebIDL, XPIDL codegen is pure-Python; outputs are
         # uniformly host-safe.
