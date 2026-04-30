@@ -1672,6 +1672,16 @@ class NinjaBackend(CommonBackend):
         #     tree. Only attributed to that relobjdir + relobjdirs whose
         #     LOCAL_INCLUDES reach the generator's objdir.
         #
+        # Source-style outputs (.c/.cpp/.cc/.m/.mm/.s/.S/.asm) are
+        # excluded entirely from both buckets: those land in some
+        # compile edge's `inputs=` (as a regular dep, via SOURCES with a
+        # `!` prefix), so ninja already gates the consuming compile on
+        # the file's existence. Including them in any codegen aggregate
+        # would force unrelated relobjdirs to wait for the entire
+        # generator chain (canonical case: wasm2c — rlbox.wasm.c only
+        # matters to lgpllibs but folding it in would block every
+        # compile in the tree behind host_wabt → wasm2c).
+        #
         # Cross-relobjdir consumers reached via relative `#include
         # "../foo/X.h"` (no configured include path) won't be detected
         # by the LOCAL_INCLUDES scan. Such a consumer needs an explicit
@@ -1681,6 +1691,18 @@ class NinjaBackend(CommonBackend):
         # dist/include and joins the global aggregate.
         #
         # Per-GF host-safety filter (no-op until wasm2c lands on top).
+        SOURCE_EXTS = (
+            ".c",
+            ".cpp",
+            ".cc",
+            ".cxx",
+            ".C",
+            ".m",
+            ".mm",
+            ".s",
+            ".S",
+            ".asm",
+        )
         codegen_local_all = defaultdict(list)
         codegen_local_host = defaultdict(list)
         gen_relobjdir_to_objdir = {}
@@ -1708,10 +1730,11 @@ class NinjaBackend(CommonBackend):
             outs = self._expand_num_outputs_outputs(
                 declared[0], declared, g.flags or ()
             )
+            header_outs = [o for o in outs if not o.endswith(SOURCE_EXTS)]
             host_safe = not _depends_on_host_program(g)
             g_relobjdir = mozpath.relpath(g.objdir, self._topobjdir)
             gen_relobjdir_to_objdir[g_relobjdir] = mozpath.normsep(g.objdir)
-            for o in outs:
+            for o in header_outs:
                 if o.startswith(dist_include_prefix):
                     categories["codegen"]["all"].append(o)
                     if host_safe:
@@ -2527,18 +2550,22 @@ class NinjaBackend(CommonBackend):
                     else:
                         writer.comment(f"unknown wasm source extension for {src_norm}")
                         continue
-                    # Wasm compiles must not depend on `.ninja-generated`:
-                    # wasm objects link into `<name>.wasm`, which feeds the
-                    # `<name>.wasm.c` GeneratedFile that's itself in
-                    # `.ninja-generated`. An order_only edge here would
-                    # close the cycle wasm_obj → wasm_link → wasm.c →
-                    # .ninja-generated → wasm_obj. Wasm code is sandboxed
-                    # and produces inputs to codegen, not consumers of it
-                    # — same shape as the host-compile exclusion.
+                    # Wasm compiles need dist/include populated to find
+                    # `mozilla/mozalloc.h`, stl_wrappers, etc. Fence on
+                    # `.ninja-headers-base` only — that's the install-
+                    # manifest track + dist/include _installs/_pp_installs,
+                    # nothing that transitively depends on wasm output.
+                    #
+                    # Source-style GeneratedFile outputs (the `.wasm.c`
+                    # produced by wasm2c) are excluded from the codegen
+                    # category, so even the broader `.ninja-headers-codegen`
+                    # would be cycle-free; we still keep this minimal to
+                    # avoid coupling wasm compiles to unrelated codegen.
                     writer.build(
                         self._rel_n_path(obj),
                         rule_name,
                         inputs=self._rel_n_path(src_norm),
+                        order_only=".ninja-headers-base",
                         variables={flag_var: flag_value},
                     )
 
