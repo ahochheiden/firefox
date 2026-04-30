@@ -1563,9 +1563,9 @@ class NinjaBackend(CommonBackend):
                 ),
             )
 
-        # Union aliases — compiles still order-only on these. The
-        # follow-up commit switches the compile sites to per-relobjdir
-        # phonies that select a subset of categories.
+        # Union aliases. Cargo edges still order-only on these (see
+        # `_emit_rust_statements`); compile edges use per-relobjdir
+        # phonies emitted below.
         writer.build(
             ".ninja-generated",
             "phony",
@@ -1577,6 +1577,78 @@ class NinjaBackend(CommonBackend):
             inputs=[f"$topobjdir/.ninja-headers-{name}-host" for name in categories],
         )
         writer.newline()
+
+        # Per-relobjdir prereq phonies. Each compile order-only's on
+        # its relobjdir's phony, which aggregates only the categories
+        # that relobjdir's context actually consumes.
+        #
+        # Attribution: always include base+xpidl+codegen; add ipdl /
+        # webidl per consumer detection below. The detection is
+        # producer-centric (catches contexts that compile gen .cpp's
+        # or LOCAL_INCLUDE the gen dir); header-only consumers via
+        # dist/include are not detected and may need explicit
+        # special-casing if they break on cold build.
+        ipdl_root = mozpath.join(self._topobjdir, "ipc/ipdl")
+        webidl_root = mozpath.join(self._topobjdir, "dom/bindings")
+        ipdl_root_prefix = ipdl_root + "/"
+        webidl_root_prefix = webidl_root + "/"
+
+        ipdl_consumer_dirs = set()
+        webidl_consumer_dirs = set()
+        for buckets in (self._sources_by_dir, self._unified_by_dir):
+            for reldir, sources_list in buckets.items():
+                for sobj in sources_list:
+                    for f in sobj.files:
+                        norm = mozpath.normsep(f)
+                        if norm.startswith(ipdl_root_prefix):
+                            ipdl_consumer_dirs.add(reldir)
+                        if norm.startswith(webidl_root_prefix):
+                            webidl_consumer_dirs.add(reldir)
+        for reldir, includes in self._local_includes_by_dir.items():
+            for li in includes:
+                full = mozpath.normsep(li.path.full_path)
+                if full == ipdl_root or full.startswith(ipdl_root_prefix):
+                    ipdl_consumer_dirs.add(reldir)
+                if full == webidl_root or full.startswith(webidl_root_prefix):
+                    webidl_consumer_dirs.add(reldir)
+
+        base_cats = ("base", "xpidl", "codegen")
+
+        def _categories_for(reldir):
+            cats = list(base_cats)
+            if reldir in ipdl_consumer_dirs:
+                cats.append("ipdl")
+            if reldir in webidl_consumer_dirs:
+                cats.append("webidl")
+            return cats
+
+        compile_dirs = sorted(
+            set(self._sources_by_dir)
+            | set(self._unified_by_dir)
+            | set(self._host_sources_by_dir)
+        )
+
+        attribution = {}
+        for reldir in compile_dirs:
+            cats = _categories_for(reldir)
+            attribution[reldir] = cats
+            writer.build(
+                f"$topobjdir/.ninja-prereqs/{reldir}",
+                "phony",
+                inputs=[f"$topobjdir/.ninja-headers-{c}" for c in cats],
+            )
+            writer.build(
+                f"$topobjdir/.ninja-prereqs-host/{reldir}",
+                "phony",
+                inputs=[f"$topobjdir/.ninja-headers-{c}-host" for c in cats],
+            )
+        writer.newline()
+
+        attribution_path = mozpath.join(
+            self._topobjdir, ".ninja-prereq-attribution.json"
+        )
+        with self._write_file(attribution_path) as fh:
+            json.dump(attribution, fh, indent=2, sort_keys=True)
 
         # Flags are per-directory (ComputedFlags objects are emitted by
         # context), but a source's declaring directory may differ from the
@@ -1670,9 +1742,8 @@ class NinjaBackend(CommonBackend):
                         "ASOUTOPTION", substs.get("ASOUTOPTION", "-o ")
                     )
                     flag_value = " ".join(response_arg(f) for f in asflags_only + extra)
-                    # Host compiles excluded by the conditional below; the
                     # `.asm` dispatch is target-side, never host.
-                    order_only = ".ninja-generated"
+                    order_only = f"$topobjdir/.ninja-prereqs/{relobjdir}"
                     writer.build(
                         self._n_rel(obj),
                         "asm_native",
@@ -1689,13 +1760,16 @@ class NinjaBackend(CommonBackend):
                 else:
                     writer.comment(f"unknown source extension for {src}")
                     continue
-                # Host compiles depend on `.ninja-generated-host` (the
-                # subset of generated files whose producers don't
-                # transitively need a host program), avoiding the cycle
-                # host_obj → host_link → wasm2c output → .ninja-generated
-                # → host_obj while still letting host compiles wait on
-                # plain generated headers like `wabt/config.h`.
-                order_only = ".ninja-generated-host" if is_host else ".ninja-generated"
+                # Host compiles use the host-safe variant of the
+                # per-relobjdir phony, which excludes categories whose
+                # producers transitively depend on a host program
+                # (avoids host_obj → host_link → wasm2c output →
+                # category → host_obj cycle).
+                order_only = (
+                    f"$topobjdir/.ninja-prereqs-host/{relobjdir}"
+                    if is_host
+                    else f"$topobjdir/.ninja-prereqs/{relobjdir}"
+                )
                 writer.build(
                     self._n_rel(obj),
                     rule_name,
@@ -2841,7 +2915,7 @@ class NinjaBackend(CommonBackend):
             writer.build(
                 self._n_rel(out),
                 "cargo_build",
-                order_only=[".ninja-generated"],
+                order_only=["$topobjdir/.ninja-headers-base"],
                 variables={
                     "cargo_target": f"{n_path(lib.relobjdir)}/{target_name}",
                     "depfile": self._n_rel(depfile),
