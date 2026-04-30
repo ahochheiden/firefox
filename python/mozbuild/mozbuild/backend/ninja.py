@@ -595,7 +595,24 @@ class NinjaBackend(CommonBackend):
         # Capture wall-clock just before invoking ninja so .ninja_log's
         # "ms since build start" timestamps can be anchored.
         ninja_start_wall = _time.time()
-        rc = subprocess.call(cmd, env=env)
+        # Run ninja under a try/except so a ctrl+c during the build
+        # still replays whatever made it into .ninja_log into the build
+        # profile. Useful for benchmarking the early phase: let ninja
+        # run for ~1m, ctrl+c, inspect the partial profile.
+        proc = subprocess.Popen(cmd, env=env)
+        try:
+            rc = proc.wait()
+        except KeyboardInterrupt:
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            rc = 130  # conventional "interrupted" exit code
+            output.write_line(
+                "ninja: interrupted; replaying partial .ninja_log into profile"
+            )
         self._record_ninja_log_markers(config, output, ninja_start_wall)
         return rc
 
