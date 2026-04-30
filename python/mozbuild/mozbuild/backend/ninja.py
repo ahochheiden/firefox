@@ -559,24 +559,35 @@ class NinjaBackend(CommonBackend):
         """Walk every RustLibrary's Cargo.toml via `cargo metadata` and
         write an aggregated `rust_crates.json` to $topobjdir.
 
-        No ninja edges depend on this yet. Plan B's later phases use it
-        to emit per-crate `rustc` edges, replacing the opaque cargo
-        sub-build."""
+        Cargo serializes on its package-cache lock, so wall time is
+        bounded by ~N/3 of the sequential cost in practice; one
+        invocation per RustLibrary is still required because cargo's
+        feature unification is per-package, not per-workspace.
+
+        No ninja edges depend on the output yet. Plan B's later phases
+        consume this to emit per-crate `rustc` edges, replacing the
+        opaque cargo sub-build."""
         if not self._rust_libs:
             return
+        from concurrent.futures import ThreadPoolExecutor
         from mozbuild.action import generate_rust_crates as grc
 
         cargo = self.environment.substs.get("CARGO") or "cargo"
-        libs_data = {}
-        for lib in self._rust_libs:
+
+        def run_one(lib):
             target = self.environment.substs.get(lib.TARGET_SUBST_VAR)
-            libs_data[lib.basename] = grc.run_for_library(
+            return lib.basename, grc.run_for_library(
                 root_basename=lib.basename,
                 manifest_path=mozpath.normsep(lib.cargo_file),
                 target=target,
                 features=list(lib.features or ()),
                 cargo=cargo,
             )
+
+        libs_data = {}
+        with ThreadPoolExecutor(max_workers=len(self._rust_libs)) as ex:
+            for name, entry in ex.map(run_one, self._rust_libs):
+                libs_data[name] = entry
 
         out_path = mozpath.join(self._topobjdir, "rust_crates.json")
         with self._write_file(out_path) as fh:
