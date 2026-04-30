@@ -87,6 +87,10 @@ class NinjaBackend(CommonBackend):
         self._static_libs = []
         self._shared_libs = []
         self._rust_libs = []
+        # output_path -> short library name (e.g. "gkrust"). Populated
+        # during emit; persisted to `.ninja-rust-libs.json` so it
+        # survives `./mach build-backend && ./mach build`.
+        self._rust_lib_outputs = {}
         self._programs = []
         self._host_libraries = []
         self._host_programs = []
@@ -112,7 +116,7 @@ class NinjaBackend(CommonBackend):
         # objdir root), ObjdirPreprocessedFiles (→ objdir root, run through
         # preprocessor).
         self._installs = []  # [(src, dest)] — simple copies
-        self._pp_installs = []  # [(src, dest, defines_dict)] — preprocess + copy
+        self._pp_installs = []  # [(src, dst, defines_dict, extra_deps)] — preprocess + copy
 
         # ChromeManifestEntry objects: per-manifest-path collection of
         # entry strings. `XPCOM_MANIFESTS` in moz.build emits these to
@@ -557,8 +561,13 @@ class NinjaBackend(CommonBackend):
             self._write_ninja(fh)
 
     def build(self, config, output, jobs, verbose, what=None):
-        """Invoke ninja for `mach build`. Targets default to all."""
+        """Invoke ninja for `mach build`. Targets default to all.
+
+        After ninja completes, replays `.ninja_log` through the resource
+        monitor as per-edge markers so the build profile gets per-target
+        timing (richer than mozmake's link-only markers)."""
         import subprocess
+        import time as _time
 
         cmd = [
             config.substs.get("NINJA", "ninja"),
@@ -579,7 +588,197 @@ class NinjaBackend(CommonBackend):
             val = config.substs.get(var)
             if val:
                 env[var] = val
-        return subprocess.call(cmd, env=env)
+        # Capture wall-clock just before invoking ninja so .ninja_log's
+        # "ms since build start" timestamps can be anchored.
+        ninja_start_wall = _time.time()
+        rc = subprocess.call(cmd, env=env)
+        self._record_ninja_log_markers(config, output, ninja_start_wall)
+        return rc
+
+    def _record_ninja_log_markers(self, config, output, ninja_start_wall):
+        """Parse `<topobjdir>/.ninja_log` and emit per-edge resource
+        markers. ninja records `start_ms end_ms` per edge relative to
+        the start of the build; we anchor those against
+        `ninja_start_wall` and feed each edge as a marker on the active
+        SystemResourceMonitor.
+
+        The monitor lives on `output` (the BuildOutputManager), not on
+        the driver — `BuildDriver` doesn't expose it directly."""
+        log_path = mozpath.join(config.topobjdir, ".ninja_log")
+        if not os.path.exists(log_path):
+            return
+        monitor = getattr(output, "monitor", None)
+        if monitor is None:
+            return
+        resources = getattr(monitor, "resources", None)
+        if resources is None or resources.start_time is None:
+            return
+        self._load_rust_lib_outputs_from_disk()
+        # Track each cargo-edge's start wall-time so we can anchor the
+        # per-crate markers from `cargo-timing-*.html` against it.
+        rust_edges = []  # list of (end_wall, start_mono, label)
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.rstrip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) < 5:
+                        continue
+                    try:
+                        start_ms = int(parts[0])
+                        end_ms = int(parts[1])
+                        mtime_ns = int(parts[2])
+                    except ValueError:
+                        continue
+                    # Filter out entries from prior ninja sessions.
+                    # `.ninja_log` accumulates across builds (Recompact
+                    # only dedupes by output, never drops by age), and
+                    # each entry's start_ms/end_ms are relative to the
+                    # session that produced it — anchoring an old
+                    # entry against this session's `ninja_start_wall`
+                    # would falsely show it as "ran this build". Use
+                    # the recorded output mtime (ns since epoch in
+                    # ninja log v7) as a session marker: edges that
+                    # ran this session wrote the output now-ish, so
+                    # mtime >= ninja_start_wall. Edges from prior
+                    # sessions have older mtimes.
+                    if mtime_ns / 1e9 < ninja_start_wall:
+                        continue
+                    output_path = parts[3]
+                    kind, label = self._classify_ninja_edge(output_path)
+                    start_wall = ninja_start_wall + start_ms / 1000.0
+                    end_wall = ninja_start_wall + end_ms / 1000.0
+                    start_mono = resources.convert_to_monotonic_time(start_wall)
+                    end_mono = resources.convert_to_monotonic_time(end_wall)
+                    resources.record_marker(
+                        kind, start_mono, end_mono, {"type": "Text", "text": label}
+                    )
+                    if kind.startswith("Rust:"):
+                        rust_edges.append((end_wall, start_mono, label))
+        except OSError:
+            pass
+        if rust_edges:
+            self._record_cargo_timings(config, resources, rust_edges)
+
+    def _record_cargo_timings(self, config, resources, rust_edges):
+        """Find cargo's `--timings` HTML reports and emit per-crate
+        `RustCrate` markers anchored against the matching cargo edge.
+
+        Cargo writes one HTML per invocation to
+        `<CARGO_TARGET_DIR>/cargo-timings/cargo-timing-<timestamp>.html`.
+        Firefox sets `CARGO_TARGET_DIR=<topobjdir>` for every rust
+        library (see `recursivemake.py:_process_rust_library`), so all
+        reports share one directory. We match each report to a cargo
+        edge by the report file's mtime (rough proxy for cargo finish
+        time) — close enough since cargo invocations don't typically
+        finish at the exact same instant.
+
+        UNIT_DATA is the JS array embedded in the HTML; each entry has
+        `name`, `version`, optional `target`, `start`, and `duration`,
+        with times in seconds relative to the cargo invocation's
+        start. Mirrors `record_cargo_timings` in
+        `mozbuild/controller/building.py:172`."""
+        import glob
+        from itertools import dropwhile, islice, takewhile
+
+        timings_dir = mozpath.join(config.topobjdir, "cargo-timings")
+        if not os.path.isdir(timings_dir):
+            return
+        html_files = sorted(
+            glob.glob(mozpath.join(timings_dir, "cargo-timing-*.html")),
+            key=lambda p: os.path.getmtime(p),
+        )
+        if not html_files:
+            return
+        # Pair edges and reports in chronological order. If the counts
+        # don't match exactly (e.g. stale reports), pair as many as we
+        # can from the most recent end of each list.
+        rust_edges = sorted(rust_edges, key=lambda t: t[0])
+        n = min(len(rust_edges), len(html_files))
+        for (_end_wall, start_mono, label), html_path in zip(
+            rust_edges[-n:], html_files[-n:]
+        ):
+            try:
+                with open(html_path, encoding="utf-8") as fh:
+                    unit_data = dropwhile(
+                        lambda l: l.rstrip() != "const UNIT_DATA = [", fh
+                    )
+                    unit_data = islice(unit_data, 1, None)
+                    lines = takewhile(lambda l: l.rstrip() != "];", unit_data)
+                    entries = json.loads("[" + "".join(lines) + "]")
+            except (OSError, ValueError):
+                continue
+            # Each cargo invocation's crates share the same marker
+            # name as their parent cargo edge (`Rust:<libname>`). The
+            # Firefox Profiler creates one row per unique marker name,
+            # so the parent's wide span and the individual crate
+            # sub-spans render together on a single `Rust:gkrust` (or
+            # `Rust:gkrust-shared`, etc.) row.
+            crate_marker = f"Rust:{label}"
+            for entry in entries:
+                try:
+                    name = "{} v{}{}".format(
+                        entry["name"],
+                        entry["version"],
+                        entry.get("target", ""),
+                    )
+                    start_offset = entry["start"] or 0
+                    duration = entry["duration"] or 0
+                except (KeyError, TypeError):
+                    continue
+                resources.record_marker(
+                    crate_marker,
+                    start_mono + start_offset,
+                    start_mono + start_offset + duration,
+                    {"type": "Text", "text": name},
+                )
+
+    def _classify_ninja_edge(self, output_path):
+        """Bucket a ninja edge's primary output by what kind of work it
+        represents, for marker grouping in the build profile."""
+        norm = mozpath.normsep(output_path)
+        base = mozpath.basename(norm)
+        ext = mozpath.splitext(norm)[1].lower()
+        # Cargo edges produce `.lib`/`.a` outputs that look like
+        # ordinary static libs. Use `Rust:<libname>` as the marker
+        # name so the per-crate sub-build markers (emitted in
+        # `_record_cargo_timings`) land on the same marker-chart row
+        # as their parent cargo build, and so all rust rows cluster
+        # alphabetically in the profiler.
+        if norm in self._rust_lib_outputs:
+            libname = self._rust_lib_outputs[norm]
+            return f"Rust:{libname}", libname
+        if ext in (".obj", ".o"):
+            return "Compile", base
+        if ext == ".wasm":
+            return "WasmCompile", base
+        if ext in (".lib", ".a"):
+            return "StaticLib", base
+        if ext in (".dll", ".so", ".dylib"):
+            return "SharedLib", base
+        if ext == ".exe":
+            return "Program", base
+        return "Generated", base
+
+    def _load_rust_lib_outputs_from_disk(self):
+        """Repopulate `_rust_lib_outputs` from the persisted manifest.
+
+        `./mach build` may run on a NinjaBackend instance that never
+        went through emit (build-backend already up to date). Read
+        the manifest written during the previous emit so cargo edges
+        get classified correctly."""
+        if self._rust_lib_outputs:
+            return
+        path = mozpath.join(self._topobjdir, ".ninja-rust-libs.json")
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                self._rust_lib_outputs = json.load(fh)
+        except (OSError, ValueError):
+            pass
 
     # ---------------------------------------------------------------------
     # Data helpers
@@ -1181,9 +1380,17 @@ class NinjaBackend(CommonBackend):
         # Makefile so the config/makefiles/rust.mk machinery
         # (CARGO_TARGET_DIR, RUSTFLAGS, etc) is in scope. No shell wrap;
         # mozmake's argv is plain with no embedded quoting.
+        #
+        # `MACH=1` makes rust.mk's `ifdef MACH` branch fire, which adds
+        # `--timings` to cargo and produces
+        # `<cargo-target-dir>/cargo-timings/cargo-timing-*.html` per
+        # invocation. We post-process those files in
+        # `_record_ninja_log_markers` to emit per-crate `RustCrate`
+        # markers anchored against the `cargo_build` edge's start time
+        # from `.ninja_log`.
         writer.rule(
             "cargo_build",
-            command="$MAKE -C $topobjdir $cargo_target",
+            command="$MAKE -C $topobjdir $cargo_target MACH=1",
             description="CARGO $out",
             depfile="$depfile",
             deps="gcc",
@@ -3031,6 +3238,21 @@ class NinjaBackend(CommonBackend):
                     "cargo_target": f"{self._rel_n_path(lib.relobjdir)}/{target_name}",
                     "depfile": self._rel_n_path(depfile),
                 },
+            )
+            # Key by the same form ninja records in `.ninja_log`: the
+            # topobjdir-relative path that was written on the build
+            # edge (via `_rel_n_path`), so `_classify_ninja_edge`
+            # lookups match.
+            self._rust_lib_outputs[self._rel_n_path(out)] = mozpath.splitext(
+                mozpath.basename(out)
+            )[0]
+        # Persist for `_record_ninja_log_markers` so a separate
+        # `./mach build` invocation can still classify cargo edges and
+        # locate cargo-timings .html files.
+        manifest_path = mozpath.join(self._topobjdir, ".ninja-rust-libs.json")
+        with self._write_file(manifest_path) as fh:
+            json.dump(
+                self._rust_lib_outputs, fh, indent=2, sort_keys=True
             )
 
     def _lib_output_path(self, lib):
