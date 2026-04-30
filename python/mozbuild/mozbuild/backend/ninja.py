@@ -1570,24 +1570,30 @@ class NinjaBackend(CommonBackend):
         writer.comment("------ compile rules ------")
         writer.newline()
 
-        # Aggregate pre-compile generated-file outputs under a phony target
-        # so every compile statement can depend on it as an order-only
-        # prerequisite. Include only files the emitter marked as required
-        # before or during compile (e.g. js-confdefs.h, selfhosted.out.h);
-        # post-link generators (like spidermonkey_checks) would create a
-        # dep cycle through the static library if aggregated here.
+        # Pre-compile generated-file fence. Every compile order-only's on
+        # the union of these category phonies. Splitting by category is
+        # structural — a follow-up commit narrows per-relobjdir to only
+        # the categories actually consumed.
         #
-        # Two phonies are emitted:
-        #   * `.ninja-generated`     — every generated file; target
-        #     compiles depend on this.
-        #   * `.ninja-generated-host` — the subset whose producers don't
-        #     transitively need a host program. Host compiles depend on
-        #     this. Splitting avoids the host_compile → host_link →
-        #     wasm2c output → .ninja-generated → host_compile cycle while
-        #     still letting host compiles wait on plain generated headers
-        #     (e.g. `wabt/config.h`).
-        all_generated = []
-        host_safe_generated = []
+        # Two variants per category: the full set, and a host-safe subset
+        # that excludes entries whose producers transitively depend on a
+        # host program. The host-safe split avoids the host_compile →
+        # host_link → host-program output → category → host_compile cycle
+        # (canonical case: wasm2c, when wasm support lands on top of this
+        # commit).
+        #
+        # Only files marked `required_before_compile` / `required_during_compile`
+        # join the codegen category — post-link generators (like
+        # spidermonkey_checks) would otherwise cycle through the static
+        # library.
+        categories = {
+            "base": {"all": [], "host": []},
+            "xpidl": {"all": [], "host": []},
+            "ipdl": {"all": [], "host": []},
+            "webidl": {"all": [], "host": []},
+            "codegen": {"all": [], "host": []},
+        }
+
         host_program_outputs = {
             mozpath.normsep(p.output_path.full_path) for p in self._host_programs
         }
@@ -1598,50 +1604,16 @@ class NinjaBackend(CommonBackend):
                     return True
             return False
 
-        for g in self._generated_files:
-            if not g.script:
-                continue
-            if not (g.required_before_compile or g.required_during_compile):
-                continue
-            declared = []
-            for o in g.outputs:
-                if isinstance(o, str):
-                    if o.startswith("/"):
-                        declared.append(mozpath.join(self._topobjdir, o[1:]))
-                    else:
-                        declared.append(mozpath.join(g.objdir, o))
-                else:
-                    declared.append(mozpath.normsep(o.full_path))
-            if not declared:
-                continue
-            # Apply the same `--num-outputs` expansion that
-            # `_emit_generated_file_statements` does, so the actual
-            # produced files (e.g. wasm2c's `<base>_0.c` ... `<base>_{N-1}.c`)
-            # are what consumers wait on, not the unwritten primary.
-            outs = self._expand_num_outputs_outputs(
-                declared[0], declared, g.flags or ()
-            )
-            all_generated.extend(outs)
-            if not _depends_on_host_program(g):
-                host_safe_generated.extend(outs)
-
-        # dist/include must be fully populated before compiles can resolve
-        # `-I dist/include` header references. Three sources of files end
-        # up under dist/include:
-        #   1. Source-tree headers via the install manifest (track file
-        #      emitted as output of the install_manifest edge).
-        #   2. Generated files (ObjDirPath EXPORTS) — each has its own
-        #      install_file edge; dst is under dist/include.
-        #   3. Preprocessed OBJDIR_PP_FILES whose dest is under dist/include.
-        # We fold all three into .ninja-generated so compiles wait on them.
-        # The install-manifest track is also safe for host compiles (it
-        # only stages source-tree EXPORTS, no host-program outputs).
-        # ObjDirPath EXPORTS and OBJDIR_PP_FILES might transit through
-        # host programs, so they stay in `.ninja-generated` only.
+        # headers-base: dist/include must be fully populated before
+        # compiles can resolve `-I dist/include` references. Three sources
+        # land there: the source-tree EXPORTS install-manifest track,
+        # ObjDirPath EXPORTS (`_installs`, generated files copied to
+        # dist/include), and preprocessed OBJDIR_PP_FILES (`_pp_installs`)
+        # whose dst is under dist/include.
         track = getattr(self, "_install_tracks", {}).get("dist_include")
         if track:
-            all_generated.append(track)
-            host_safe_generated.append(track)
+            categories["base"]["all"].append(track)
+            categories["base"]["host"].append(track)
         dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
         # `rust_prereqs` is a narrower subset for the `cargo_build`
         # edge to fence behind: cargo's build.rs scripts (bindgen) only
@@ -1653,12 +1625,12 @@ class NinjaBackend(CommonBackend):
             rust_prereqs.append(track)
         for _, dst in self._installs:
             if dst.startswith(dist_include_prefix):
-                all_generated.append(dst)
-                host_safe_generated.append(dst)
-        for _, dst, _ in self._pp_installs:
+                categories["base"]["all"].append(dst)
+                categories["base"]["host"].append(dst)
+        for _, dst, _, _ in self._pp_installs:
             if dst.startswith(dist_include_prefix):
-                all_generated.append(dst)
-                host_safe_generated.append(dst)
+                categories["base"]["all"].append(dst)
+                categories["base"]["host"].append(dst)
                 rust_prereqs.append(dst)
         # `required_before_export` GeneratedFiles (e.g. mozilla-config.h,
         # source-repo.h, buildid.h) are read directly from the objdir
@@ -1682,29 +1654,79 @@ class NinjaBackend(CommonBackend):
                         declared[0], declared, g.flags or ()
                     )
                 )
-        # IPDL, WebIDL, and XPIDL codegen are pure-Python (no
-        # host-program transit); safe for host compiles to wait on too.
-        all_generated.extend(self._ipdl_outputs)
-        host_safe_generated.extend(self._ipdl_outputs)
-        all_generated.extend(self._webidl_outputs)
-        host_safe_generated.extend(self._webidl_outputs)
-        all_generated.extend(self._xpidl_outputs)
-        host_safe_generated.extend(self._xpidl_outputs)
+
+        # IPDL, WebIDL, XPIDL codegen is pure-Python; outputs are
+        # uniformly host-safe.
+        categories["xpidl"]["all"].extend(self._xpidl_outputs)
+        categories["xpidl"]["host"].extend(self._xpidl_outputs)
+        categories["ipdl"]["all"].extend(self._ipdl_outputs)
+        categories["ipdl"]["host"].extend(self._ipdl_outputs)
+        categories["webidl"]["all"].extend(self._webidl_outputs)
+        categories["webidl"]["host"].extend(self._webidl_outputs)
+
+        # headers-codegen: GeneratedFile outputs the emitter marked as
+        # required_before_compile / required_during_compile. Per-GF
+        # host-safety filter (no-op until wasm2c lands on top).
+        for g in self._generated_files:
+            if not g.script:
+                continue
+            if not (g.required_before_compile or g.required_during_compile):
+                continue
+            declared = []
+            for o in g.outputs:
+                if isinstance(o, str):
+                    if o.startswith("/"):
+                        declared.append(mozpath.join(self._topobjdir, o[1:]))
+                    else:
+                        declared.append(mozpath.join(g.objdir, o))
+                else:
+                    declared.append(mozpath.normsep(o.full_path))
+            if not declared:
+                continue
+            # Apply the same `--num-outputs` expansion that
+            # `_emit_generated_file_statements` does, so the actual
+            # produced files (e.g. wasm2c's `<base>_0.c` ... `<base>_{N-1}.c`)
+            # are what consumers wait on, not the unwritten primary.
+            outs = self._expand_num_outputs_outputs(
+                declared[0], declared, g.flags or ()
+            )
+            categories["codegen"]["all"].extend(outs)
+            if not _depends_on_host_program(g):
+                categories["codegen"]["host"].extend(outs)
+
+        # Persist for the per-relobjdir attribution pass (next commit).
+        self._prereq_categories = categories
+
+        for name, buckets in categories.items():
+            writer.build(
+                f".ninja-headers-{name}",
+                "phony",
+                inputs=[self._rel_n_path(o) for o in buckets["all"]]
+                if buckets["all"]
+                else None,
+            )
+            writer.build(
+                f".ninja-headers-{name}-host",
+                "phony",
+                inputs=(
+                    [self._rel_n_path(o) for o in buckets["host"]]
+                    if buckets["host"]
+                    else None
+                ),
+            )
+
+        # Union aliases — compiles still order-only on these. The
+        # follow-up commit switches the compile sites to per-relobjdir
+        # phonies that select a subset of categories.
         writer.build(
             ".ninja-generated",
             "phony",
-            inputs=[self._rel_n_path(o) for o in all_generated]
-            if all_generated
-            else None,
+            inputs=[f".ninja-headers-{name}" for name in categories],
         )
         writer.build(
             ".ninja-generated-host",
             "phony",
-            inputs=(
-                [self._rel_n_path(o) for o in host_safe_generated]
-                if host_safe_generated
-                else None
-            ),
+            inputs=[f".ninja-headers-{name}-host" for name in categories],
         )
         writer.build(
             ".ninja-rust-prereqs",
