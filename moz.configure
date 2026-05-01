@@ -519,6 +519,10 @@ def build_backend_defaults(
         all_backends = ["FasterMake+RecursiveMake"]
     else:
         all_backends = ["RecursiveMake", "FasterMake"]
+    # TEMPORARY: opt every build into the Ninja backend so try exercises it.
+    # Do not land.
+    if compile_environment:
+        all_backends.append("Ninja")
     if (
         host.os == "WINNT"
         and target.os == "WINNT"
@@ -546,6 +550,25 @@ def build_backends(backends):
 
 
 set_config("BUILD_BACKENDS", build_backends)
+
+
+# Ninja is only consumed when the Ninja build backend is configured. Gating
+# the bootstrap fetch on that keeps RecursiveMake users from pulling an
+# artifact they won't use.
+@depends("--build-backends")
+def ninja_in_build_backends(backends):
+    return backends and "Ninja" in backends
+
+
+ninja_search_path = bootstrap_search_path("ninja/bin", when=ninja_in_build_backends)
+
+
+check_prog(
+    "NINJA",
+    ("ninja",),
+    paths=ninja_search_path,
+    when=ninja_in_build_backends,
+)
 
 
 # Determine whether to build the gtest xul. This happens in automation

@@ -80,6 +80,10 @@ def try_alternate_python3_executables(args):
 
 
 def main(args):
+    # TEMPORARY: force level-1 toolchain index lookups so bootstrap pulls
+    # try-built artifacts (e.g. the WIP ninja toolchain). Do not land.
+    os.environ.setdefault("MOZ_SCM_LEVEL", "1")
+
     # Ensure we are running Python 3.9+. We run this check as soon as
     # possible to avoid a cryptic import/usage error.
     if sys.version_info < MIN_PYTHON_VERSION:
