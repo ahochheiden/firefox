@@ -660,24 +660,34 @@ class NinjaBackend(CommonBackend):
                     try:
                         start_ms = int(parts[0])
                         end_ms = int(parts[1])
-                        mtime_ns = int(parts[2])
+                        log_mtime = int(parts[2])
                     except ValueError:
                         continue
+                    output_path = parts[3]
                     # Filter out entries from prior ninja sessions.
                     # `.ninja_log` accumulates across builds (Recompact
                     # only dedupes by output, never drops by age), and
                     # each entry's start_ms/end_ms are relative to the
                     # session that produced it — anchoring an old
                     # entry against this session's `ninja_start_wall`
-                    # would falsely show it as "ran this build". Use
-                    # the recorded output mtime (ns since epoch in
-                    # ninja log v7) as a session marker: edges that
-                    # ran this session wrote the output now-ish, so
-                    # mtime >= ninja_start_wall. Edges from prior
-                    # sessions have older mtimes.
-                    if mtime_ns / 1e9 < ninja_start_wall:
+                    # would falsely show the old edge as "ran this
+                    # build".
+                    #
+                    # The log's `mtime` field is ninja's internal
+                    # TimeStamp encoding (see ninja/src/disk_interface.cc):
+                    #   * POSIX: ns since Unix epoch.
+                    #   * Windows: 100-ns ticks since ~2001-01-01
+                    #     (FILETIME minus 12622770400s, where 1970→2001
+                    #     is 978296800s, so the platform conversion is
+                    #     `value / 1e7 + 978296800`).
+                    # If ninja bumps its log version and changes the
+                    # encoding, this conversion needs an update.
+                    if os.name == "nt":
+                        mtime_unix = log_mtime / 1e7 + 978296800
+                    else:
+                        mtime_unix = log_mtime / 1e9
+                    if mtime_unix < ninja_start_wall:
                         continue
-                    output_path = parts[3]
                     kind, label = self._classify_ninja_edge(output_path)
                     start_wall = ninja_start_wall + start_ms / 1000.0
                     end_wall = ninja_start_wall + end_ms / 1000.0
@@ -2185,6 +2195,34 @@ class NinjaBackend(CommonBackend):
                     variables={flag_var: flag_value},
                 )
 
+    def _emit_linkable_alias(self, writer, basename, output_path):
+        """Emit a `phony` short-name alias for a linkable's output, so
+        users can `./mach build <basename>` (e.g. `./mach build xul`)
+        instead of typing the full output path.
+
+        Collision handling: if a basename has already been claimed by
+        another linkable (rare — Firefox has 2 such cases as of writing,
+        both shared-lib gtest/test variants), disambiguate by prepending
+        the immediate parent dir of the output path. So `xul` resolves
+        to the canonical libxul, `gtest_xul` to the gtest variant.
+        Iteration order of each emit site is sorted by output-path
+        length so the canonical (shorter-path) linkable wins the bare
+        alias; the variant (deeper path) gets the prefixed form.
+        """
+        if not hasattr(self, "_linkable_aliases"):
+            self._linkable_aliases = set()
+        if basename in self._linkable_aliases:
+            parent = mozpath.basename(mozpath.dirname(output_path))
+            alias = f"{parent}_{basename}" if parent else basename
+            if alias in self._linkable_aliases:
+                # Triple-collision; rare enough to skip rather than
+                # invent a deeper prefix.
+                return
+        else:
+            alias = basename
+        self._linkable_aliases.add(alias)
+        writer.build(alias, "phony", inputs=[self._rel_n_path(output_path)])
+
     def _emit_archive_statements(self, writer):
         """Emit archive rules for StaticLibrary (excluding rust libs which
         are built via cargo). Only emit a real archive for libraries with
@@ -2193,11 +2231,16 @@ class NinjaBackend(CommonBackend):
         writer.newline()
         writer.comment("------ static libraries ------")
         writer.newline()
-        for lib in self._static_libs:
-            if isinstance(lib, RustLibrary):
-                continue
-            if not getattr(lib, "no_expand_lib", False):
-                continue
+        candidates = [
+            lib
+            for lib in self._static_libs
+            if not isinstance(lib, RustLibrary) and getattr(lib, "no_expand_lib", False)
+        ]
+        # Sort by output-path length so the shortest-path lib wins the
+        # bare-basename alias on collision (canonical primaries live
+        # at less-nested paths than variants).
+        candidates.sort(key=lambda lib: len(self._lib_output_path(lib)))
+        for lib in candidates:
             out = self._lib_output_path(lib)
             objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
             all_archive_inputs = list(objs)
@@ -2215,6 +2258,7 @@ class NinjaBackend(CommonBackend):
                 "archive",
                 inputs=[self._rel_n_path(o) for o in all_archive_inputs],
             )
+            self._emit_linkable_alias(writer, lib.basename, out)
 
     def _emit_resource_statements(self, writer):
         if self.environment.substs.get("OS_TARGET") != "WINNT":
@@ -2422,7 +2466,15 @@ class NinjaBackend(CommonBackend):
         writer.newline()
         writer.comment("------ shared libraries ------")
         writer.newline()
-        for lib in self._shared_libs:
+        # Sort by output-path length: the canonical libxul lives at
+        # `dist/bin/xul.dll` (shorter), the gtest variant at
+        # `dist/bin/gtest/xul.dll` (longer). Sorting puts the canonical
+        # one first so it wins the bare `xul` alias.
+        sorted_libs = sorted(
+            self._shared_libs,
+            key=lambda lib: len(mozpath.normsep(lib.output_path.full_path)),
+        )
+        for lib in sorted_libs:
             # For DIST_INSTALL'd shared libs, output_path puts the DLL at
             # its final dist/bin/ location so downstream js.exe finds it
             # without a separate install step.
@@ -2488,12 +2540,20 @@ class NinjaBackend(CommonBackend):
                     "ldflags": " ".join(response_arg(f) for f in ldflags_raw),
                 },
             )
+            self._emit_linkable_alias(writer, lib.basename, out)
+            stamps, syms = self._emit_post_link_stamps(writer, out, lib.install_target)
+            if stamps:
+                self._post_link_stamps[out] = stamps
+            self._syms_stamps.extend(syms)
 
     def _emit_program_statements(self, writer):
         writer.newline()
         writer.comment("------ programs ------")
         writer.newline()
-        for p in self._programs:
+        sorted_programs = sorted(
+            self._programs, key=lambda p: len(p.output_path.full_path)
+        )
+        for p in sorted_programs:
             out = p.output_path.full_path
             objs, shared_libs, os_libs, static_libs = self._expand_libs(p)
             link_inputs = list(objs)
@@ -2529,6 +2589,16 @@ class NinjaBackend(CommonBackend):
                     "ldflags": " ".join(response_arg(f) for f in ldflags),
                 },
             )
+            # Program has `.program` ("firefox.exe"), not `.basename` like
+            # libraries do; strip the extension for the alias name so users
+            # type `./mach build firefox` not `./mach build firefox.exe`.
+            self._emit_linkable_alias(writer, mozpath.splitext(p.program)[0], out)
+            stamps, syms = self._emit_post_link_stamps(
+                writer, mozpath.normsep(out), p.install_target
+            )
+            if stamps:
+                self._post_link_stamps[mozpath.normsep(out)] = stamps
+            self._syms_stamps.extend(syms)
 
     def _emit_host_archive_statements(self, writer):
         """Emit archive rules for HostLibrary. Mirrors the StaticLibrary
@@ -2547,6 +2617,7 @@ class NinjaBackend(CommonBackend):
         writer.newline()
         writer.comment("------ host static libraries ------")
         writer.newline()
+        real_libs.sort(key=lambda lib: len(self._lib_output_path(lib)))
         for lib in real_libs:
             out = self._lib_output_path(lib)
             objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
@@ -2563,6 +2634,7 @@ class NinjaBackend(CommonBackend):
                 "archive",
                 inputs=[self._rel_n_path(o) for o in all_archive_inputs],
             )
+            self._emit_linkable_alias(writer, lib.basename, out)
 
     def _emit_host_program_statements(self, writer):
         if not self._host_programs:
@@ -2570,7 +2642,10 @@ class NinjaBackend(CommonBackend):
         writer.newline()
         writer.comment("------ host programs ------")
         writer.newline()
-        for p in self._host_programs:
+        sorted_progs = sorted(
+            self._host_programs, key=lambda p: len(p.output_path.full_path)
+        )
+        for p in sorted_progs:
             out = p.output_path.full_path
             objs, shared_libs, os_libs, static_libs = self._expand_libs(p)
             link_inputs = list(objs)
@@ -2588,6 +2663,9 @@ class NinjaBackend(CommonBackend):
                     "ldflags": " ".join(response_arg(f) for f in ldflags),
                 },
             )
+            # HostProgram has `.program` ("wasm2c.exe"), not `.basename`;
+            # strip the extension for the alias.
+            self._emit_linkable_alias(writer, mozpath.splitext(p.program)[0], out)
 
     def _emit_wasm_compile_statements(self, writer):
         """Emit per-source compile rules for `WASM_SOURCES`.
@@ -2689,7 +2767,11 @@ class NinjaBackend(CommonBackend):
             "-Wl,--import-memory",
             "-Wl,--import-table",
         ]
-        for lib in self._wasm_libraries:
+        sorted_wasm = sorted(
+            self._wasm_libraries,
+            key=lambda lib: len(mozpath.join(lib.objdir, lib.basename)),
+        )
+        for lib in sorted_wasm:
             # Output filename: the basename declared by
             # `SANDBOXED_WASM_LIBRARY_NAME` already includes `.wasm`; the
             # make rule uses `libdef.basename` directly. Match that.
@@ -2719,6 +2801,11 @@ class NinjaBackend(CommonBackend):
                     "wasm_ldflags": " ".join(response_arg(f) for f in wasm_ldflags),
                 },
             )
+            # Strip the `.wasm` suffix that SANDBOXED_WASM_LIBRARY_NAME
+            # bakes into the basename, so users can `./mach build rlbox`
+            # rather than `./mach build rlbox.wasm`.
+            alias = mozpath.splitext(lib.basename)[0]
+            self._emit_linkable_alias(writer, alias, out)
 
     def _emit_generated_file_statements(self, writer):
         """Emit a ninja rule for each GeneratedFile.
@@ -3681,7 +3768,10 @@ class NinjaBackend(CommonBackend):
         writer.newline()
         if not self._rust_libs:
             return
-        for lib in self._rust_libs:
+        sorted_rust = sorted(
+            self._rust_libs, key=lambda lib: len(self._lib_output_path(lib))
+        )
+        for lib in sorted_rust:
             out = self._lib_output_path(lib)
             depfile = mozpath.splitext(out)[0] + ".d"
             cargo_dir = mozpath.join(self._topobjdir, lib.relobjdir)
@@ -3694,6 +3784,7 @@ class NinjaBackend(CommonBackend):
                     "depfile": self._rel_n_path(depfile),
                 },
             )
+            self._emit_linkable_alias(writer, lib.basename, out)
             # Key by the same form ninja records in `.ninja_log`: the
             # topobjdir-relative path that was written on the build
             # edge (via `_rel_n_path`), so `_classify_ninja_edge`
