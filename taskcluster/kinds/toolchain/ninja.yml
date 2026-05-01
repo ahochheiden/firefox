@@ -1,0 +1,72 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+---
+task-defaults:
+    description: "ninja toolchain build (mach-patched)"
+    attributes:
+        local-toolchain: true
+    worker-type: b-linux-docker-amd
+    worker:
+        max-run-time: 1800
+    run:
+        resources:
+            - 'taskcluster/scripts/misc/build-ninja.sh'
+        toolchain-artifact: public/build/ninja.tar.zst
+    fetches:
+        fetch:
+            - ninja-source
+
+linux64-ninja:
+    treeherder:
+        symbol: TL(ninja)
+    run:
+        script: build-ninja.sh
+
+linux64-aarch64-ninja:
+    treeherder:
+        symbol: TLA64(ninja)
+    run:
+        script: build-ninja.sh
+        arguments: ['--linux-aarch64']
+    fetches:
+        toolchain:
+            - linux64-clang-toolchain
+            - sysroot-aarch64-linux-gnu
+            - linux64-ninja
+
+macosx64-ninja:
+    treeherder:
+        symbol: TM(ninja)
+    worker-type: b-osx-arm64
+    run:
+        script: build-ninja.sh
+        arguments: ['--macos']
+        toolchain-alias: macosx64-aarch64-ninja
+
+win64-ninja:
+    treeherder:
+        symbol: TW64(ninja)
+    worker-type: b-win2022
+    worker:
+        max-run-time: 3600
+    run:
+        script: build-ninja.sh
+        arguments: ['--win64']
+    fetches:
+        toolchain:
+            - vs-toolchain
+
+win64-aarch64-ninja:
+    treeherder:
+        symbol: TWA64(ninja)
+    worker-type: b-win2022
+    worker:
+        max-run-time: 3600
+    run:
+        script: build-ninja.sh
+        arguments: ['--win64-aarch64']
+    fetches:
+        toolchain:
+            - vs-toolchain
+            - win64-ninja
