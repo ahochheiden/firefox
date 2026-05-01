@@ -1254,6 +1254,23 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
+        # toolchain_stamp: invalidate compile outputs when toolchain
+        # binaries change (e.g. bootstrap installs a new clang at the
+        # same path). Without this, ninja's command-hash check sees
+        # identical command lines and keeps stale .obj files compiled
+        # against the old binary. Cargo handles this for rust crates
+        # via its fingerprint; this is the C/C++/asm equivalent.
+        # `restat=True`: the stamp's mtime only updates when its
+        # content differs, so identical-toolchain rebuilds don't
+        # invalidate downstream.
+        writer.rule(
+            "toolchain_stamp",
+            command="$PYTHON -m mozbuild.action.toolchain_stamp $out $in",
+            description="STAMP $out",
+            restat=True,
+        )
+        writer.newline()
+
         # process_install_manifest: delegates to mozmake's install_manifest
         # driver so ninja gets identical pattern/wildcard handling as the
         # recursive-make backend. One invocation covers a whole install
@@ -1448,6 +1465,10 @@ class NinjaBackend(CommonBackend):
             generator=True,
         )
         writer.newline()
+
+        # Toolchain stamp first — its path is folded into the base
+        # codegen category so every compile order-only's on it.
+        self._emit_toolchain_stamp(writer)
 
         # Install manifests first — compile rules read self._install_tracks
         # to know which install targets must land before compile can start.
@@ -1644,6 +1665,14 @@ class NinjaBackend(CommonBackend):
         if track:
             categories["base"]["all"].append(track)
             categories["base"]["host"].append(track)
+        # Toolchain identity stamp is wired below as `implicit=` (not
+        # order_only) on every compile edge — order_only deps don't
+        # invalidate the consumer when the dep's mtime changes, but a
+        # toolchain-bump stamp absolutely should invalidate every .obj.
+        # Other entries in categories["base"] (install tracks, etc.)
+        # stay order_only because their mtime updates shouldn't
+        # cascade-rebuild every compile (clang's depfile catches the
+        # specific header changes that affect each consumer).
         dist_include_prefix = mozpath.join(self._topobjdir, "dist/include") + "/"
         # `rust_prereqs` is a narrower subset for the `cargo_build`
         # edge to fence behind. Cargo needs the cargo config and early
@@ -2013,6 +2042,10 @@ class NinjaBackend(CommonBackend):
         # iterate every Sources/UnifiedSources/HostSources object — each
         # carries its own `relobjdir` and `objdir`, so we can resolve flags
         # and output paths from the source's own context.
+        toolchain_stamp = getattr(self, "_toolchain_stamp_path", None)
+        toolchain_implicit = (
+            [self._rel_n_path(toolchain_stamp)] if toolchain_stamp else None
+        )
         emitted_objs = set()
         obj_suffix = self.environment.substs.get("OBJ_SUFFIX", "obj")
 
@@ -2123,6 +2156,7 @@ class NinjaBackend(CommonBackend):
                         self._rel_n_path(obj),
                         "asm_native",
                         inputs=self._rel_n_path(src_norm),
+                        implicit=toolchain_implicit,
                         order_only=order_only,
                         variables={
                             "as": n_value(asm_program),
@@ -2149,6 +2183,7 @@ class NinjaBackend(CommonBackend):
                     self._rel_n_path(obj),
                     rule_name,
                     inputs=self._rel_n_path(src_norm),
+                    implicit=toolchain_implicit,
                     order_only=order_only,
                     variables={flag_var: flag_value},
                 )
@@ -2573,6 +2608,10 @@ class NinjaBackend(CommonBackend):
         writer.newline()
 
         wasm_obj_suffix = self.environment.substs.get("WASM_OBJ_SUFFIX", "wasm")
+        toolchain_stamp = getattr(self, "_toolchain_stamp_path", None)
+        toolchain_implicit = (
+            [self._rel_n_path(toolchain_stamp)] if toolchain_stamp else None
+        )
         emitted_objs = set()
         for relobjdir, bucket in self._wasm_sources_by_dir.items():
             for sobj in bucket:
@@ -2619,6 +2658,7 @@ class NinjaBackend(CommonBackend):
                         self._rel_n_path(obj),
                         rule_name,
                         inputs=self._rel_n_path(src_norm),
+                        implicit=toolchain_implicit,
                         order_only=".ninja-headers-base",
                         variables={flag_var: flag_value},
                     )
@@ -3288,6 +3328,90 @@ class NinjaBackend(CommonBackend):
                 },
             )
             self._jar_maker_stamps.append(stamp)
+
+    def _emit_toolchain_stamp(self, writer):
+        """Emit the toolchain identity stamp.
+
+        Inputs are kept narrow on purpose: we declare the mozbuild
+        toolchains tarball directory plus a handful of well-known
+        compiler binaries, so ninja's per-build stat cost is a few
+        cheap calls. The action expands the directory at run time and
+        hashes every artifact filename — each tarball's name is
+        prefixed with the TaskCluster artifact hash, so the listing
+        is a complete version manifest of every toolchain bootstrap
+        installed.
+
+        When bootstrap installs a different artifact, the toolchains
+        directory's mtime updates (NTFS/POSIX both update dir mtime
+        on add/remove of children), the stamp action runs, the
+        listing differs, the digest differs, the stamp file is
+        rewritten, and every compile invalidates. When binaries change
+        at the same path without the tarball set changing (rare —
+        e.g., an in-place bootstrap re-extract), the binaries' own
+        mtimes catch it.
+
+        Cargo solves the equivalent for rust crates via its per-crate
+        fingerprint; this is the C/C++/asm equivalent. Recursive-make
+        currently has no equivalent — it relies on manual `CLOBBER`
+        bumps when toolchain manifests change in TaskCluster.
+        """
+        from mach.util import get_state_dir
+
+        substs = self.environment.substs
+        # The substs values for CC/CXX/etc. include base flags
+        # ("clang -fms-compatibility-version=19.50 -std:c++20"). The
+        # first token is the binary path.
+        keys = (
+            "CC",
+            "CXX",
+            "HOST_CC",
+            "HOST_CXX",
+            "WASM_CC",
+            "WASM_CXX",
+            "AR",
+            "LINKER",
+            "HOST_LINKER",
+            "RUSTC",
+        )
+        inputs = set()
+        for key in keys:
+            val = substs.get(key, "")
+            if isinstance(val, list):
+                val = " ".join(val)
+            if not val:
+                continue
+            binary = val.split()[0]
+            if os.path.exists(binary):
+                inputs.add(mozpath.normsep(binary))
+
+        # Mozbuild's toolchain artifact tarball directory: filenames
+        # are prefixed with TaskCluster artifact hashes, so listing
+        # the directory captures every toolchain version bootstrap
+        # has installed in one cheap stat. Adding it as an input
+        # makes ninja re-run the stamp action whenever bootstrap
+        # adds/removes a tarball.
+        try:
+            state_dir = get_state_dir()
+            toolchains_dir = mozpath.join(state_dir, "toolchains")
+            if os.path.isdir(toolchains_dir):
+                inputs.add(mozpath.normsep(toolchains_dir))
+        except Exception:
+            pass
+
+        stamp_path = mozpath.join(self._topobjdir, ".toolchain-stamp")
+        if not inputs:
+            self._toolchain_stamp_path = None
+            return
+        writer.newline()
+        writer.comment("------ toolchain identity stamp ------")
+        writer.newline()
+        writer.build(
+            self._rel_n_path(stamp_path),
+            "toolchain_stamp",
+            inputs=[self._rel_n_path(p) for p in sorted(inputs)],
+        )
+        writer.newline()
+        self._toolchain_stamp_path = stamp_path
 
     def _emit_install_statements(self, writer):
         """Emit one `run_install_manifest` edge per install target.
