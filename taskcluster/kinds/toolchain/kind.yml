@@ -55,6 +55,7 @@ tasks-from:
     - mozcheck.yml
     - nasm.yml
     - nimbus-fml.yml
+    - ninja.yml
     - node.yml
     - onnx.yml
     - pkgconf.yml

@@ -8,6 +8,9 @@ task-defaults:
     run-on-repo-type: [hg]
     run:
         mozconfig-variant: null
+    fetches:
+        toolchain:
+            - linux64-ninja
 
 android-geckoview-docs/opt:
     description: "Android GeckoView docs"

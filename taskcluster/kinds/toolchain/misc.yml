@@ -132,6 +132,7 @@ linux64-mar-tools:
     fetches:
         toolchain:
             - linux64-clang-toolchain
+            - linux64-ninja
     run:
         script: build-mar-tools.sh
         sparse-profile: null
@@ -152,6 +153,7 @@ linux64-zucchini-bin:
     fetches:
         toolchain:
             - linux64-clang-toolchain
+            - linux64-ninja
     run:
         script: build-zucchini.sh
         sparse-profile: null

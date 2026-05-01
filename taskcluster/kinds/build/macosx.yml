@@ -36,6 +36,7 @@ task-defaults:
             - linux64-nasm
             - linux64-node
             - sysroot-x86_64-linux-gnu
+            - linux64-ninja
 
 macosx64/debug:
     description: "MacOS X x64 Cross-compile"

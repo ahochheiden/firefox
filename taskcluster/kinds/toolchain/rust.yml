@@ -90,8 +90,8 @@ win64-rust-1.90-dev:
     fetches:
         fetch:
             - rust-1.90.0
-            - win64-ninja
         toolchain:
+            - win64-ninja
             - win64-clang-toolchain
             - win64-cmake
             - vs
@@ -346,8 +346,8 @@ win64-rust-nightly-dev:
     fetches:
         fetch:
             - rust-nightly
-            - win64-ninja
         toolchain:
+            - win64-ninja
             - win64-clang-toolchain
             - win64-cmake
             - vs

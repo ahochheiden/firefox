@@ -24,6 +24,9 @@ task-defaults:
     run:
         using: mozharness
         script: "mozharness/scripts/fx_desktop_build.py"
+    fetches:
+        toolchain:
+            - macosx64-ninja
 
 macosx64-plain/opt:
     description: "MacOS X x64 Opt Plain"

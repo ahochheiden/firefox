@@ -30,6 +30,7 @@ linux64-clang-14-stage1:
         fetch:
             - clang-14
         toolchain:
+            - linux64-ninja
             - linux64-toolchain-sysroot
 
 macosx64-clang-14-raw:
@@ -79,6 +80,7 @@ linux64-clang-17-raw:
         fetch:
             - clang-17
         toolchain:
+            - linux64-ninja
             - linux64-toolchain-sysroot
 
 linux64-clang-17:
@@ -172,6 +174,7 @@ linux64-clang-20-stage1:
         fetch:
             - clang-20
         toolchain:
+            - linux64-ninja
             - linux64-toolchain-sysroot
 
 linux64-clang-20-profile:
@@ -194,6 +197,7 @@ linux64-clang-20-profile:
         fetch:
             - clang-20
         toolchain:
+            - linux64-ninja
             - linux64-clang-20-stage1
             - linux64-x64-compiler-rt-20
             - linux64-toolchain-sysroot
@@ -217,6 +221,7 @@ linux64-clang-20-raw:
         fetch:
             - clang-20
         toolchain:
+            - linux64-ninja
             - linux64-clang-20-stage1
             - linux64-clang-20-profile
             - linux64-libxml2
@@ -279,6 +284,7 @@ linux64-aarch64-clang-20-raw:
         fetch:
             - clang-20
         toolchain:
+            - linux64-ninja
             - linux64-clang-20-stage1
             - linux64-clang-20-profile
             - linux64-aarch64-libxml2
@@ -371,8 +377,8 @@ macosx64-clang-20-profile:
         fetch:
             - clang-20
             - macosx64-cmake
-            - macosx64-ninja
         toolchain:
+            - macosx64-ninja
             - macosx64-clang-20-stage2
             - macosx64-sdk-toolchain
 
@@ -493,8 +499,8 @@ macosx64-aarch64-clang-20-profile:
         fetch:
             - clang-20
             - macosx64-cmake
-            - macosx64-ninja
         toolchain:
+            - macosx64-ninja
             - macosx64-aarch64-clang-20-stage2
             - macosx64-sdk-toolchain
 
@@ -611,8 +617,8 @@ win64-clang-20-profile:
     fetches:
         fetch:
             - clang-20
-            - win64-ninja
         toolchain:
+            - win64-ninja
             - win64-clang-20-stage2
             - win64-cmake
             - vs-toolchain
@@ -813,6 +819,7 @@ linux64-clang-21-stage1:
         fetch:
             - clang-21
         toolchain:
+            - linux64-ninja
             - linux64-toolchain-sysroot
 
 linux64-clang-21-profile:
@@ -835,6 +842,7 @@ linux64-clang-21-profile:
         fetch:
             - clang-21
         toolchain:
+            - linux64-ninja
             - linux64-clang-21-stage1
             - linux64-x64-compiler-rt-21
             - linux64-toolchain-sysroot
@@ -858,6 +866,7 @@ linux64-clang-21-raw:
         fetch:
             - clang-21
         toolchain:
+            - linux64-ninja
             - linux64-clang-21-stage1
             - linux64-clang-21-profile
             - linux64-libxml2
@@ -916,6 +925,7 @@ linux64-aarch64-clang-21-raw:
         fetch:
             - clang-21
         toolchain:
+            - linux64-ninja
             - linux64-clang-21-stage1
             - linux64-clang-21-profile
             - linux64-aarch64-libxml2
@@ -1004,8 +1014,8 @@ macosx64-clang-21-profile:
         fetch:
             - clang-21
             - macosx64-cmake
-            - macosx64-ninja
         toolchain:
+            - macosx64-ninja
             - macosx64-clang-21-stage2
             - macosx64-sdk-toolchain
 
@@ -1120,8 +1130,8 @@ macosx64-aarch64-clang-21-profile:
         fetch:
             - clang-21
             - macosx64-cmake
-            - macosx64-ninja
         toolchain:
+            - macosx64-ninja
             - macosx64-aarch64-clang-21-stage2
             - macosx64-sdk-toolchain
 
@@ -1234,8 +1244,8 @@ win64-clang-21-profile:
     fetches:
         fetch:
             - clang-21
-            - win64-ninja
         toolchain:
+            - win64-ninja
             - win64-clang-21-stage2
             - win64-cmake
             - vs-toolchain
@@ -1444,6 +1454,7 @@ linux64-clang-trunk-stage1:
         fetch:
             - clang-trunk
         toolchain:
+            - linux64-ninja
             - linux64-toolchain-sysroot
 
 linux64-clang-trunk-profile:
@@ -1468,6 +1479,7 @@ linux64-clang-trunk-profile:
         fetch:
             - clang-trunk
         toolchain:
+            - linux64-ninja
             - linux64-clang-trunk-stage1
             - linux64-x64-compiler-rt-trunk
             - linux64-toolchain-sysroot
@@ -1493,6 +1505,7 @@ linux64-clang-trunk-raw:
         fetch:
             - clang-trunk
         toolchain:
+            - linux64-ninja
             - linux64-clang-trunk-stage1
             - linux64-clang-trunk-profile
             - linux64-libxml2
@@ -1557,6 +1570,7 @@ linux64-aarch64-clang-trunk-raw:
         fetch:
             - clang-trunk
         toolchain:
+            - linux64-ninja
             - linux64-clang-trunk-stage1
             - linux64-clang-trunk-profile
             - linux64-aarch64-libxml2
@@ -1653,8 +1667,8 @@ macosx64-clang-trunk-profile:
         fetch:
             - clang-trunk
             - macosx64-cmake
-            - macosx64-ninja
         toolchain:
+            - macosx64-ninja
             - macosx64-clang-trunk-stage2
             - macosx64-sdk-toolchain
 
@@ -1781,8 +1795,8 @@ macosx64-aarch64-clang-trunk-profile:
         fetch:
             - clang-trunk
             - macosx64-cmake
-            - macosx64-ninja
         toolchain:
+            - macosx64-ninja
             - macosx64-aarch64-clang-trunk-stage2
             - macosx64-sdk-toolchain
 
@@ -1905,8 +1919,8 @@ win64-clang-trunk-profile:
     fetches:
         fetch:
             - clang-trunk
-            - win64-ninja
         toolchain:
+            - win64-ninja
             - win64-clang-trunk-stage2
             - win64-cmake
             - vs-toolchain

@@ -2,6 +2,9 @@
 set -e -v
 
 # This is shared code for building GN.
+if test -d "$MOZ_FETCHES_DIR/ninja"; then
+    export PATH="$(cd $MOZ_FETCHES_DIR/ninja && pwd)/bin:${PATH}"
+fi
 cd $MOZ_FETCHES_DIR/gn
 
 if test -n "$MAC_CROSS"; then

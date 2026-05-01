@@ -46,11 +46,10 @@ onnxruntime-x86_64-windows-msvc:
         toolchain-artifact: public/build/onnxruntime-x86_64-windows-msvc.tar.zst
     fetches:
         toolchain:
+            - win64-ninja
             - vs-toolchain
             - win64-cmake
             - win64-clang
-        fetch:
-            - win64-ninja
 
 
 onnxruntime-i686-windows-msvc:
@@ -67,11 +66,10 @@ onnxruntime-i686-windows-msvc:
         toolchain-artifact: public/build/onnxruntime-i686-windows-msvc.tar.zst
     fetches:
         toolchain:
+            - win64-ninja
             - vs-toolchain
             - win64-cmake
             - win64-clang
-        fetch:
-            - win64-ninja
 
 
 # onnxruntime-aarch64-windows-msvc: requires more work upstream
@@ -88,11 +86,11 @@ onnxruntime-x86_64-apple-darwin:
         toolchain-artifact: public/build/onnxruntime-x86_64-apple-darwin.tar.zst
     fetches:
         toolchain:
+            - macosx64-ninja
             - macosx64-clang-toolchain
             - macosx64-sdk-toolchain
         fetch:
             - macosx64-cmake
-            - macosx64-ninja
 
 
 onnxruntime-aarch64-apple-darwin:
@@ -107,11 +105,11 @@ onnxruntime-aarch64-apple-darwin:
         toolchain-artifact: public/build/onnxruntime-aarch64-apple-darwin.tar.zst
     fetches:
         toolchain:
+            - macosx64-ninja
             - macosx64-clang-toolchain
             - macosx64-sdk-toolchain
         fetch:
             - macosx64-cmake
-            - macosx64-ninja
 
 
 onnxruntime-arm-linux-androideabi:

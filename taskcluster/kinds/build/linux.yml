@@ -4,6 +4,9 @@
 ---
 task-defaults:
     worker-type: b-linux-docker-amd
+    fetches:
+        toolchain:
+            - linux64-ninja
 
 linux64/opt:
     description: "Linux64 Opt"

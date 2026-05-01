@@ -52,6 +52,7 @@ task-defaults:
             - linux64-node
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
+            - linux64-ninja
 
 android-x86_64-asan-fuzzing/opt:
     description: "Android 5.0 x86-64 Fuzzing Opt ASAN"

@@ -10,6 +10,9 @@ task-defaults:
             MOZ_JS_UPLOAD_BINARIES_DEFAULT: "0"
     run:
         tooltool-downloads: public
+    fetches:
+        toolchain:
+            - linux64-ninja
 
 sm-package-linux64/opt:
     description: "Spidermonkey source package and test"

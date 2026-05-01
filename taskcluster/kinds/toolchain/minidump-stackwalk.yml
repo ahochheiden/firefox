@@ -104,4 +104,5 @@ linux64-breakpad-injector:
     fetches:
         toolchain:
             - linux64-clang-toolchain
+            - linux64-ninja
             - linux64-toolchain-sysroot
