@@ -958,6 +958,10 @@ class NinjaBackend(CommonBackend):
         writer.variable("topsrcdir", n_path(self._topsrcdir))
         writer.variable("topobjdir", n_path(self._topobjdir))
 
+        seed_path = mozpath.join(self._topsrcdir, "build", ".ninja-seed-weights")
+        if os.path.exists(seed_path):
+            writer.variable("seed_edge_weights", n_path(seed_path))
+
         # Tools. substs["CC"]/["CXX"] include base flags embedded in the
         # string (e.g. "-fms-compatibility-version=19.50 -std:c++20"); we
         # emit them verbatim as the command prefix.
