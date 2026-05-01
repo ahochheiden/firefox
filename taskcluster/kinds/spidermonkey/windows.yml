@@ -10,6 +10,9 @@ task-defaults:
             MOZ_JS_UPLOAD_BINARIES_DEFAULT: "0"
     run:
         tooltool-downloads: public
+    fetches:
+        toolchain:
+            - win64-ninja
 
 sm-plain-win64/debug:
     description: "Spidermonkey Plain win64 debug"

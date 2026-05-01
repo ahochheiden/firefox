@@ -14,6 +14,8 @@ task-defaults:
     optimization:
         skip-unless-expanded: null
     fetches:
+        toolchain:
+            - linux64-ninja
         fetch:
             - windows-rs
 

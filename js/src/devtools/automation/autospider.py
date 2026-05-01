@@ -174,6 +174,11 @@ if AUTOMATION and platform.system() == "Windows":
     # build/win{32,64}/mozconfig.vs-latest uses TOOLTOOL_DIR to set VSPATH.
     env["TOOLTOOL_DIR"] = DIR.fetches
 
+if AUTOMATION:
+    ninja_bin = os.path.join(DIR.fetches, "ninja", "bin")
+    if os.path.isdir(ninja_bin):
+        env["PATH"] = ninja_bin + os.pathsep + env["PATH"]
+
 OBJDIR = args.objdir or os.path.join(DIR.source, "obj-spider")
 OBJDIR = os.path.abspath(OBJDIR)
 OUTDIR = os.path.join(OBJDIR, "out")

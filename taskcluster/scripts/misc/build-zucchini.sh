@@ -26,7 +26,7 @@ ac_add_options --enable-project=tools/zucchini
 ac_add_options --enable-zucchini
 EOF
 
-TOOLCHAINS="clang"
+TOOLCHAINS="clang ninja"
 
 for t in $TOOLCHAINS; do
     PATH="$MOZ_FETCHES_DIR/$t/bin:$PATH"

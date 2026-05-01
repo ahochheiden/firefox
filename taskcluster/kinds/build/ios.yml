@@ -40,6 +40,7 @@ task-defaults:
             - linux64-sccache
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
+            - linux64-ninja
 
 ios/debug:
     description: "ios debug"
