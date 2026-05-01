@@ -468,6 +468,15 @@ win64-ninja:
         artifact-name: ninja.tar.zst
         add-prefix: ninja/bin/
 
+ninja-source:
+    description: ninja source code (mach-build patched fork)
+    fetch:
+        type: git
+        repo: https://github.com/ahochheiden/ninja
+        revision: 4ad49b07d637ccc419372925c23e807bf9bea817
+        path-prefix: ninja-source
+        artifact-name: ninja-source.tar.zst
+
 macosx64-cmake:
     description: cmake 4.3.3
     fetch:
