@@ -205,7 +205,7 @@ class StructuredTerminalFormatter(StructuredHumanFormatter):
     def format(self, record):
         formatted_msg = record.msg.format(**getattr(record, "params", {}))
         elapsed_time = (
-            self.terminal.blue(format_seconds(self._time(record))) + " "
+            self.terminal.cyan(format_seconds(self._time(record))) + " "
             if self.write_times
             else ""
         )
