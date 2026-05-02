@@ -589,6 +589,8 @@ class NinjaBackend(CommonBackend):
             if val:
                 env[var] = val
 
+        env.setdefault("NINJA_STATUS", "[%f/%t %e %E %r] ")
+
         def _run(cmd):
             """Run ninja with stdout/stderr piped through `output` so
             mach's log writer sees every line (timestamps, warning
@@ -622,6 +624,8 @@ class NinjaBackend(CommonBackend):
             rc = _run([ninja, "-C", config.topobjdir, "-t", "clean"])
             if rc != 0:
                 return rc
+
+        output.start_progress()
 
         cmd = [ninja, "-C", config.topobjdir, "--jobserver-pool"]
         if jobs:

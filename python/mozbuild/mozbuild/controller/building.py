@@ -74,6 +74,13 @@ RE_BUILD_OUTPUT = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
+RE_NINJA_STATUS = re.compile(
+    r"^\[(?P<finished>\d+)/(?P<total>\d+)\s+"
+    r"(?P<elapsed>[\d.]+)\s+"
+    r"(?P<eta>[\d.]*)\s+"
+    r"(?P<running>\d+)\]\s?(?P<tail>.*)$"
+)
+
 FINDER_SLOW_MESSAGE = """
 ===================
 PERFORMANCE WARNING
@@ -264,6 +271,7 @@ class BuildMonitor(MozbuildObject):
 
         self.build_objects = []
         self.build_dirs = set()
+        self.ninja_progress = None
 
     def start(self):
         """Record the start of the build."""
@@ -364,6 +372,24 @@ class BuildMonitor(MozbuildObject):
             cargo_timings = plain_line[len("Timing report saved to ") :]
             record_cargo_timings(self.resources, cargo_timings)
             return BuildOutputResult(None, False, None)
+
+        ninja_match = RE_NINJA_STATUS.match(plain_line)
+        if ninja_match:
+            try:
+                eta_raw = ninja_match.group("eta")
+                self.ninja_progress = {
+                    "finished": int(ninja_match.group("finished")),
+                    "total": int(ninja_match.group("total")),
+                    "elapsed": float(ninja_match.group("elapsed")),
+                    "eta": float(eta_raw) if eta_raw else None,
+                    "running": int(ninja_match.group("running")),
+                }
+            except ValueError:
+                return BuildOutputResult(None, False, line)
+            tail = ninja_match.group("tail")
+            if not tail:
+                return BuildOutputResult(None, True, None)
+            return BuildOutputResult(None, True, tail)
 
         if log_record := read_serialized_record(line):
             return BuildOutputResult(None, False, log_record)
@@ -595,13 +621,41 @@ class TerminalLoggingHandler(logging.Handler):
             self.release()
 
 
+def _format_seconds(seconds):
+    seconds = int(seconds)
+    return "%dm %02ds" % (seconds // 60, seconds % 60)
+
+
 class BuildProgressFooter:
-    """Rich renderable for the recursivemake TIER row."""
+    """Rich renderable for the build progress footer.
+
+    When ninja_progress is populated, renders ninja edge counters plus
+    elapsed/eta/running. Otherwise falls back to the recursivemake TIER row.
+    """
 
     def __init__(self, monitor):
         self.monitor = monitor
 
     def __rich__(self):
+        ninja_progress = self.monitor.ninja_progress
+        if ninja_progress is not None:
+            eta = ninja_progress["eta"]
+            eta_str = _format_seconds(eta) if eta is not None else "--"
+            t = Text()
+            t.append("BUILD: ", style="bright_black")
+            t.append("[", style="bright_black")
+            t.append(str(ninja_progress["finished"]), style="cyan")
+            t.append("/", style="bright_black")
+            t.append(str(ninja_progress["total"]), style="cyan")
+            t.append("] ", style="bright_black")
+            t.append("elapsed: ", style="bright_black")
+            t.append(_format_seconds(ninja_progress["elapsed"]), style="cyan")
+            t.append(" eta: ", style="bright_black")
+            t.append(eta_str, style="cyan")
+            t.append(" running tasks: ", style="bright_black")
+            t.append(str(ninja_progress["running"]), style="cyan")
+            return t
+
         tiers = list(self.monitor.tiers.tier_status.items())
         if not tiers:
             return Text("")
@@ -660,16 +714,25 @@ class OutputManager(LoggingMixin):
                 refresh_per_second=10,
                 transient=True,
             )
+        self._live_started = False
 
     def __enter__(self):
-        if self.live is not None:
-            self.live.start()
+        self.start_progress()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.live is not None:
+        self.stop_progress()
+        self.live = None
+
+    def start_progress(self):
+        if self.live is not None and not self._live_started:
+            self.live.start()
+            self._live_started = True
+
+    def stop_progress(self):
+        if self.live is not None and self._live_started:
             self.live.stop()
-            self.live = None
+            self._live_started = False
 
     def write_line(self, line):
         if self.console is not None:
@@ -691,6 +754,11 @@ class BuildOutputManager(OutputManager):
         self._stdout_warning_lines_remaining = 0
         self._third_party_dirs = self._load_third_party_paths()
         OutputManager.__init__(self, log_manager, footer)
+
+    def __enter__(self):
+        # Defer the live region until _build decides: non-Ninja backends
+        # start it after configure, Ninja starts it inside ninja.build().
+        return self
 
     def _load_third_party_paths(self):
         paths = []
@@ -1414,6 +1482,9 @@ class BuildDriver(MozbuildObject):
 
             all_backends = config.substs.get("BUILD_BACKENDS", [None])
             active_backend = all_backends[0]
+
+            if "Ninja" not in all_backends:
+                output.start_progress()
 
             status = None
 
