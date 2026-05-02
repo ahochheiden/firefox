@@ -1436,23 +1436,15 @@ class NinjaBackend(CommonBackend):
         )
         writer.newline()
 
-        # Cargo: delegate to mozmake which handles CARGO_TARGET_DIR etc.
-        # RecursiveMake's per-rust-library target is
-        # `<relobjdir>/target-objects`, invoked from the topobjdir
-        # Makefile so the config/makefiles/rust.mk machinery
-        # (CARGO_TARGET_DIR, RUSTFLAGS, etc) is in scope. No shell wrap;
-        # mozmake's argv is plain with no embedded quoting.
-        #
-        # `MACH=1` makes rust.mk's `ifdef MACH` branch fire, which adds
-        # `--timings` to cargo and produces
-        # `<cargo-target-dir>/cargo-timings/cargo-timing-*.html` per
-        # invocation. We post-process those files in
-        # `_record_ninja_log_markers` to emit per-crate `RustCrate`
-        # markers anchored against the `cargo_build` edge's start time
-        # from `.ninja_log`.
+        # Cargo build via mozbuild.action.cargo_build. The action loads
+        # `$spec` (a per-RustLibrary JSON file emitted alongside this
+        # rule), composes the cargo argv + env, and execs cargo. Output
+        # cargo-timing-*.html files are post-processed by
+        # `_record_ninja_log_markers` to emit per-crate markers against
+        # the edge's start time from `.ninja_log`.
         writer.rule(
             "cargo_build",
-            command="$MAKE -s -C $cargo_dir force-cargo-library-build MACH=1",
+            command="$PYTHON -m mozbuild.action.cargo_build --spec $spec",
             description="CARGO $out",
             depfile="$depfile",
             deps="gcc",
@@ -3760,15 +3752,47 @@ class NinjaBackend(CommonBackend):
         # listing them again is harmless.
         self._pp_install_outputs = pp_install_outputs
 
-    def _emit_rust_statements(self, writer):
-        """Delegate Rust library builds to mozmake in the rust subdir.
+    def _write_cargo_spec(self, path, lib, output_path):
+        spec = {
+            "kind": "library",
+            "subcommand": "build",
+            "manifest_path": mozpath.normsep(lib.cargo_file),
+            "output_path": mozpath.normsep(output_path),
+            "features": list(lib.features) if lib.features else [],
+            "target_triple": self.environment.substs.get("RUST_TARGET", ""),
+            "is_megazord": "megazord" in lib.lib_name,
+            "is_gkrust_gtest": "gkrust_gtest" in lib.lib_name,
+            "is_ltoable": True,
+            "extra_rustcflags": [],
+            "cargo_extra_cli_flags": [],
+            "output_category": getattr(lib, "output_category", None),
+            "relsrcdir": lib.relsrcdir,
+            "relobjdir": lib.relobjdir,
+            "computed_cflags": " ".join(
+                self._computed_flag_list(lib.relobjdir, "CFLAGS")
+            ),
+            "computed_cxxflags": " ".join(
+                self._computed_flag_list(lib.relobjdir, "CXXFLAGS")
+            ),
+            "computed_host_cflags": " ".join(
+                self._computed_flag_list(lib.relobjdir, "HOST_CFLAGS")
+            ),
+            "computed_host_cxxflags": " ".join(
+                self._computed_flag_list(lib.relobjdir, "HOST_CXXFLAGS")
+            ),
+            "computed_ldflags": " ".join(
+                self._computed_flag_list(lib.relobjdir, "LDFLAGS")
+            ),
+        }
+        with self._write_file(path) as fh:
+            json.dump(spec, fh, indent=2, sort_keys=True)
 
-        The recursive-make backend's config/makefiles/rust.mk wraps a cargo
-        invocation that sets CARGO_TARGET_DIR, RUSTFLAGS, etc. We delegate
-        to mozmake for the rust subdir — same opaque-sub-build pattern
-        used for ICU."""
+    def _emit_rust_statements(self, writer):
+        """Emit cargo edges. One edge per RustLibrary, gated on
+        `.ninja-rust-prereqs`. Each edge calls `mozbuild.action.cargo_build`
+        with a per-target spec JSON written alongside this rule."""
         writer.newline()
-        writer.comment("------ rust libraries (opaque mozmake sub-build) ------")
+        writer.comment("------ rust libraries ------")
         writer.newline()
         if not self._rust_libs:
             return
@@ -3778,13 +3802,15 @@ class NinjaBackend(CommonBackend):
         for lib in sorted_rust:
             out = self._lib_output_path(lib)
             depfile = mozpath.splitext(out)[0] + ".d"
-            cargo_dir = mozpath.join(self._topobjdir, lib.relobjdir)
+            spec_path = mozpath.join(lib.objdir, ".cargo-spec.json")
+            self._write_cargo_spec(spec_path, lib, out)
             writer.build(
                 self._rel_n_path(out),
                 "cargo_build",
                 order_only=[".ninja-rust-prereqs"],
+                implicit=[self._rel_n_path(spec_path)],
                 variables={
-                    "cargo_dir": self._rel_n_path(cargo_dir),
+                    "spec": self._rel_n_path(spec_path),
                     "depfile": self._rel_n_path(depfile),
                 },
             )
