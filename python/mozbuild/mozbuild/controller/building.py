@@ -59,6 +59,7 @@ RE_BUILD_OUTPUT = re.compile(
     |(?P<info_cargo>^\s{3,}(?:Compiling|Downloading|Building|Finished|Fresh|Running|Documenting)\s)
     |(?P<warning_summary>^\d+\s+(?:compiler\s+)?warnings?\s+(?:generated|present)\.)
     |(?P<error_summary>^\d+\s+errors?\s+generated\.)
+    |(?P<failed_status>^FAILED:\s*\[code=\d+\])
     |(?P<make_error>make(?:\[\d+\])?\s*:\s*\*\*\*)
     |(?P<nsis_warning_block>^\d+\s+warnings?:)
     |(?P<error_block>^error(?:\[e\d+\])?:\s?)
@@ -74,6 +75,67 @@ RE_BUILD_OUTPUT = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
+RE_NINJA_STATUS = re.compile(
+    r"^\[(?P<finished>\d+)/(?P<total>\d+)\s+"
+    r"(?P<elapsed>[\d.]+)\s+"
+    r"(?P<eta>[\d.]*)\s+"
+    r"(?P<running>\d+)\]\s?(?P<tail>.*)$"
+)
+
+EDGE_TYPE_ANSI = {
+    "CXX": "\x1b[34m",
+    "CC": "\x1b[32m",
+    "HOST_CXX": "\x1b[94m",
+    "HOST_CC": "\x1b[92m",
+    "WASM_CXX": "\x1b[35m",
+    "WASM_CC": "\x1b[35m",
+    "AS": "\x1b[33m",
+    "AR": "\x1b[38;5;173m",
+    "LINK": "\x1b[1;34m",
+    "HOST_LINK": "\x1b[1;94m",
+    "WASM_LINK": "\x1b[1;35m",
+    "STAMP": "\x1b[38;5;67m",
+    "INSTALL": "\x1b[38;5;215m",
+    "PP": "\x1b[33m",
+    "GEN": "\x1b[92m",
+    "GEN_RC": "\x1b[38;5;208m",
+    "RC": "\x1b[38;5;215m",
+    "IPDL": "\x1b[95m",
+    "WebIDL": "\x1b[95m",
+    "XPIDL": "\x1b[95m",
+    "JAR": "\x1b[93m",
+    "CARGO": "\x1b[38;5;136m",
+    # Post-link inspections / transforms. Visually a STAMP-family
+    # (slate/grey) so they cluster apart from the brighter compile and
+    # link colors but are still distinguishable from each other.
+    "CHECK": "\x1b[38;5;67m",
+    "STRIP": "\x1b[38;5;245m",
+    "DUMP_SYMS": "\x1b[38;5;141m",
+    "WINCHECKSEC": "\x1b[38;5;111m",
+    # Backend regeneration ("Regenerating build.ninja"). Distinct yellow
+    # so the (rare) regen line is obvious in scrollback.
+    "Regenerating": "\x1b[38;5;220m",
+}
+
+EDGE_BRACKET_ANSI = "\x1b[90m"
+
+
+def _format_ninja_tail(tail):
+    parts = tail.split(None, 1)
+    if not parts:
+        return tail
+    edge_type = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+    if not sys.stderr.isatty():
+        return f"[{edge_type}] {rest}".rstrip()
+    color = EDGE_TYPE_ANSI.get(edge_type, "")
+    reset = "\x1b[0m"
+    label = (
+        f"{EDGE_BRACKET_ANSI}[{reset}"
+        f"{color}{edge_type}{reset}"
+        f"{EDGE_BRACKET_ANSI}]{reset}"
+    )
+    return f"{label} {rest}".rstrip()
 FINDER_SLOW_MESSAGE = """
 ===================
 PERFORMANCE WARNING
@@ -264,6 +326,7 @@ class BuildMonitor(MozbuildObject):
 
         self.build_objects = []
         self.build_dirs = set()
+        self.ninja_progress = None
 
     def start(self):
         """Record the start of the build."""
@@ -364,6 +427,24 @@ class BuildMonitor(MozbuildObject):
             cargo_timings = plain_line[len("Timing report saved to ") :]
             record_cargo_timings(self.resources, cargo_timings)
             return BuildOutputResult(None, False, None)
+
+        ninja_match = RE_NINJA_STATUS.match(plain_line)
+        if ninja_match:
+            try:
+                eta_raw = ninja_match.group("eta")
+                self.ninja_progress = {
+                    "finished": int(ninja_match.group("finished")),
+                    "total": int(ninja_match.group("total")),
+                    "elapsed": float(ninja_match.group("elapsed")),
+                    "eta": float(eta_raw) if eta_raw else None,
+                    "running": int(ninja_match.group("running")),
+                }
+            except ValueError:
+                return BuildOutputResult(None, False, line)
+            tail = ninja_match.group("tail")
+            if not tail:
+                return BuildOutputResult(None, True, None)
+            return BuildOutputResult(None, True, _format_ninja_tail(tail))
 
         if log_record := read_serialized_record(line):
             return BuildOutputResult(None, False, log_record)
@@ -595,13 +676,41 @@ class TerminalLoggingHandler(logging.Handler):
             self.release()
 
 
+def _format_seconds(seconds):
+    seconds = int(seconds)
+    return "%dm %02ds" % (seconds // 60, seconds % 60)
+
+
 class BuildProgressFooter:
-    """Rich renderable for the recursivemake TIER row."""
+    """Rich renderable for the build progress footer.
+
+    When ninja_progress is populated, renders ninja edge counters plus
+    elapsed/eta/running. Otherwise falls back to the recursivemake TIER row.
+    """
 
     def __init__(self, monitor):
         self.monitor = monitor
 
     def __rich__(self):
+        ninja_progress = self.monitor.ninja_progress
+        if ninja_progress is not None:
+            eta = ninja_progress["eta"]
+            eta_str = _format_seconds(eta) if eta is not None else "--"
+            t = Text()
+            t.append("BUILD: ", style="bright_black")
+            t.append("[", style="bright_black")
+            t.append(str(ninja_progress["finished"]), style="cyan")
+            t.append("/", style="bright_black")
+            t.append(str(ninja_progress["total"]), style="cyan")
+            t.append("] ", style="bright_black")
+            t.append("elapsed: ", style="bright_black")
+            t.append(_format_seconds(ninja_progress["elapsed"]), style="cyan")
+            t.append(" eta: ", style="bright_black")
+            t.append(eta_str, style="cyan")
+            t.append(" running tasks: ", style="bright_black")
+            t.append(str(ninja_progress["running"]), style="cyan")
+            return t
+
         tiers = list(self.monitor.tiers.tier_status.items())
         if not tiers:
             return Text("")
@@ -660,16 +769,25 @@ class OutputManager(LoggingMixin):
                 refresh_per_second=10,
                 transient=True,
             )
+        self._live_started = False
 
     def __enter__(self):
-        if self.live is not None:
-            self.live.start()
+        self.start_progress()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.live is not None:
+        self.stop_progress()
+        self.live = None
+
+    def start_progress(self):
+        if self.live is not None and not self._live_started:
+            self.live.start()
+            self._live_started = True
+
+    def stop_progress(self):
+        if self.live is not None and self._live_started:
             self.live.stop()
-            self.live = None
+            self._live_started = False
 
     def write_line(self, line):
         if self.console is not None:
@@ -691,6 +809,11 @@ class BuildOutputManager(OutputManager):
         self._stdout_warning_lines_remaining = 0
         self._third_party_dirs = self._load_third_party_paths()
         OutputManager.__init__(self, log_manager, footer)
+
+    def __enter__(self):
+        # Defer the live region until _build decides: non-Ninja backends
+        # start it after configure, Ninja starts it inside ninja.build().
+        return self
 
     def _load_third_party_paths(self):
         paths = []
@@ -758,6 +881,8 @@ class BuildOutputManager(OutputManager):
                         match_type = match.lastgroup
                         if match_type == "error_block":
                             log_level = BUILD_ERROR
+                        elif match_type == "failed_status":
+                            log_level = BUILD_ERROR
                         elif match_type in ("warning_block", "warning_num"):
                             log_level = logging.WARNING
                         elif match_type == "nsis_warning_block":
@@ -806,6 +931,7 @@ class BuildOutputManager(OutputManager):
                             "error_summary",
                             "make_error",
                             "error_block",
+                            "failed_status",
                         ):
                             self._active_log_level = log_level = BUILD_ERROR
                         elif match_type in ("warning_block", "warning_num"):
@@ -1414,6 +1540,9 @@ class BuildDriver(MozbuildObject):
 
             all_backends = config.substs.get("BUILD_BACKENDS", [None])
             active_backend = all_backends[0]
+
+            if "Ninja" not in all_backends:
+                output.start_progress()
 
             status = None
 

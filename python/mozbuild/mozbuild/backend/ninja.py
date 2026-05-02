@@ -586,14 +586,43 @@ class NinjaBackend(CommonBackend):
             if val:
                 env[var] = val
 
+        env.setdefault("NINJA_STATUS", "[%f/%t %e %E %r] ")
+
+        def _run(cmd):
+            """Run ninja with stdout/stderr piped through `output` so
+            mach's log writer sees every line (timestamps, warning
+            detection, build profile). stderr is folded into stdout so
+            we don't need a second reader thread."""
+            proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                universal_newlines=True,
+            )
+            try:
+                for line in proc.stdout:
+                    output.on_stdout_line(line.rstrip())
+                return proc.wait()
+            except KeyboardInterrupt:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                return 130  # conventional "interrupted" exit code
+
         targets = list(what) if what else []
         if "clean" in targets:
             targets = [t for t in targets if t != "clean"]
             output.write_line("ninja: cleaning all outputs (`-t clean`)")
-            clean_cmd = [ninja, "-C", config.topobjdir, "-t", "clean"]
-            rc = subprocess.call(clean_cmd, env=env)
+            rc = _run([ninja, "-C", config.topobjdir, "-t", "clean"])
             if rc != 0:
                 return rc
+
+        output.start_progress()
 
         cmd = [ninja, "-C", config.topobjdir, "--jobserver-pool"]
         if jobs:
@@ -609,17 +638,8 @@ class NinjaBackend(CommonBackend):
         # still replays whatever made it into .ninja_log into the build
         # profile. Useful for benchmarking the early phase: let ninja
         # run for ~1m, ctrl+c, inspect the partial profile.
-        proc = subprocess.Popen(cmd, env=env)
-        try:
-            rc = proc.wait()
-        except KeyboardInterrupt:
-            try:
-                proc.terminate()
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            rc = 130  # conventional "interrupted" exit code
+        rc = _run(cmd)
+        if rc == 130:
             output.write_line(
                 "ninja: interrupted; replaying partial .ninja_log into profile"
             )
