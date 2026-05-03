@@ -57,6 +57,7 @@ from mozbuild.frontend.data import (
     VariablePassthru,
     WasmSources,
 )
+from mozbuild.util import cpu_count
 
 
 def _strip_tests(path):
@@ -628,6 +629,8 @@ class NinjaBackend(CommonBackend):
         output.start_progress()
 
         cmd = [ninja, "-C", config.topobjdir, "--jobserver-pool"]
+        if jobs == 0:
+            jobs = (cpu_count() or 1) + 7
         if jobs:
             cmd += ["-j", str(jobs)]
         if verbose:
