@@ -1691,6 +1691,9 @@ class NinjaBackend(CommonBackend):
         if track:
             categories["base"]["all"].append(track)
             categories["base"]["host"].append(track)
+        clang_plugin = self.environment.substs.get("CLANG_PLUGIN")
+        if clang_plugin:
+            categories["base"]["all"].append(mozpath.normsep(clang_plugin))
         # Toolchain identity stamp is wired below as `implicit=` (not
         # order_only) on every compile edge — order_only deps don't
         # invalidate the consumer when the dep's mtime changes, but a
@@ -2485,6 +2488,7 @@ class NinjaBackend(CommonBackend):
         writer.newline()
         writer.comment("------ shared libraries ------")
         writer.newline()
+        is_clang_cl = self.environment.substs.get("CC_TYPE") == "clang-cl"
         # Sort by output-path length: the canonical libxul lives at
         # `dist/bin/xul.dll` (shorter), the gtest variant at
         # `dist/bin/gtest/xul.dll` (longer). Sorting puts the canonical
@@ -2685,6 +2689,35 @@ class NinjaBackend(CommonBackend):
             # HostProgram has `.program` ("wasm2c.exe"), not `.basename`;
             # strip the extension for the alias.
             self._emit_linkable_alias(writer, mozpath.splitext(p.program)[0], out)
+
+    def _emit_host_shared_link_statements(self, writer):
+        if not self._host_shared_libs:
+            return
+        writer.newline()
+        writer.comment("------ host shared libraries ------")
+        writer.newline()
+        sorted_libs = sorted(
+            self._host_shared_libs, key=lambda lib: len(self._lib_output_path(lib))
+        )
+        for lib in sorted_libs:
+            out = self._lib_output_path(lib)
+            objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            link_inputs = list(objs)
+            for static_lib in static_libs:
+                link_inputs.append(self._lib_output_path(static_lib))
+            for shared_lib in shared_libs:
+                link_inputs.append(self._lib_output_path(shared_lib))
+            ldflags = list(self._computed_flag_list(lib.relobjdir, "HOST_LDFLAGS"))
+            writer.build(
+                self._rel_n_path(out),
+                "host_link_shared",
+                inputs=[self._rel_n_path(o) for o in link_inputs],
+                variables={
+                    "libs": " ".join(n_value(s) for s in os_libs),
+                    "ldflags": " ".join(response_arg(f) for f in ldflags),
+                },
+            )
+            self._emit_linkable_alias(writer, lib.basename, out)
 
     def _emit_wasm_compile_statements(self, writer):
         """Emit per-source compile rules for `WASM_SOURCES`.
