@@ -81,6 +81,50 @@ RE_NINJA_STATUS = re.compile(
     r"(?P<running>\d+)\]\s?(?P<tail>.*)$"
 )
 
+EDGE_TYPE_ANSI = {
+    "CXX": "\x1b[34m",
+    "CC": "\x1b[32m",
+    "HOST_CXX": "\x1b[94m",
+    "HOST_CC": "\x1b[92m",
+    "WASM_CXX": "\x1b[35m",
+    "WASM_CC": "\x1b[35m",
+    "AS": "\x1b[33m",
+    "AR": "\x1b[38;5;173m",
+    "LINK": "\x1b[1;34m",
+    "HOST_LINK": "\x1b[1;94m",
+    "WASM_LINK": "\x1b[1;35m",
+    "STAMP": "\x1b[38;5;67m",
+    "INSTALL": "\x1b[38;5;215m",
+    "PP": "\x1b[33m",
+    "GEN": "\x1b[92m",
+    "IPDL": "\x1b[95m",
+    "WebIDL": "\x1b[95m",
+    "XPIDL": "\x1b[95m",
+    "JAR": "\x1b[93m",
+    "CARGO": "\x1b[38;5;136m",
+}
+
+EDGE_BRACKET_ANSI = "\x1b[90m"
+
+
+def _format_ninja_tail(tail):
+    parts = tail.split(None, 1)
+    if not parts:
+        return tail
+    edge_type = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+    if not sys.stderr.isatty():
+        return f"[{edge_type}] {rest}".rstrip()
+    color = EDGE_TYPE_ANSI.get(edge_type, "")
+    reset = "\x1b[0m"
+    label = (
+        f"{EDGE_BRACKET_ANSI}[{reset}"
+        f"{color}{edge_type}{reset}"
+        f"{EDGE_BRACKET_ANSI}]{reset}"
+    )
+    return f"{label} {rest}".rstrip()
+
+
 FINDER_SLOW_MESSAGE = """
 ===================
 PERFORMANCE WARNING
@@ -389,7 +433,7 @@ class BuildMonitor(MozbuildObject):
             tail = ninja_match.group("tail")
             if not tail:
                 return BuildOutputResult(None, True, None)
-            return BuildOutputResult(None, True, tail)
+            return BuildOutputResult(None, True, _format_ninja_tail(tail))
 
         if log_record := read_serialized_record(line):
             return BuildOutputResult(None, False, log_record)
