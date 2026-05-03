@@ -1943,6 +1943,18 @@ VARIABLES = {
         """Whether profile-guided optimization is disable in this directory.
         """,
     ),
+    "EARLY_COMPILE": (
+        bool,
+        bool,
+        """Allow this directory's target sources to compile before XPIDL and
+        non-core generated dist/include headers are produced.
+
+        Only valid for self-contained code that does not include XPIDL
+        headers or generated global headers (StaticPrefs, Glean, telemetry
+        enums, Rust FFI generated headers, etc). Backend-detected
+        IPDL/WebIDL/local-codegen dependencies still apply.
+        """,
+    ),
     "OS_LIBS": (
         List,
         list,
