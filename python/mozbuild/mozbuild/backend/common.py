@@ -24,6 +24,7 @@ from mozbuild.frontend.data import (
     BaseProgram,
     ChromeManifestEntry,
     ConfigFileSubstitution,
+    EarlyCompile,
     Exports,
     FinalTargetFiles,
     FinalTargetPreprocessedFiles,
@@ -216,6 +217,9 @@ class CommonBackend(BuildBackend):
 
         elif isinstance(obj, StagingContext):
             self._staging_data.append(obj.data)
+
+        elif isinstance(obj, EarlyCompile):
+            pass
 
         else:
             return False

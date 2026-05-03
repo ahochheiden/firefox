@@ -38,6 +38,7 @@ from .data import (
     ConfigFileSubstitution,
     Defines,
     DirectoryTraversal,
+    EarlyCompile,
     Exports,
     ExternalSharedLibrary,
     ExternalStaticLibrary,
@@ -1255,6 +1256,9 @@ class TreeMetadataEmitter(LoggingMixin):
         # We always emit a directory traversal descriptor. This is needed by
         # the recursive make backend.
         yield from self._emit_directory_traversal_from_context(context)
+
+        if context.get("EARLY_COMPILE"):
+            yield EarlyCompile(context)
 
         for obj in self._process_xpidl(context):
             yield obj

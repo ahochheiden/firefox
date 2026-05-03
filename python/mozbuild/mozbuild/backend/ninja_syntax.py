@@ -40,17 +40,23 @@ def path(p):
     return p.replace("$", "$$").replace(" ", "$ ").replace(":", "$:")
 
 
-def response_arg(flag):
+def response_arg(flag, msvc=None):
     """Quote a flag for inclusion in a compiler response file.
 
-    Compilers consume `@response.file` using their host-platform's
-    argument-parsing rules, not shell rules. On Windows that means MSVC
-    (CommandLineToArgvW) parsing. On POSIX systems that means a simpler
-    shell-like grammar gcc/clang implement themselves.
+    Compilers consume `@response.file` using their target argument-parsing
+    rules, not shell rules. clang-cl and lld-link use MSVC
+    (CommandLineToArgvW) parsing regardless of host OS; gcc/clang use a
+    simpler shell-like grammar they implement themselves. Pass `msvc=True`
+    when emitting flags for a clang-cl target on a non-Windows host (e.g.
+    Linux/macOS cross-compiling Firefox for Windows). When `msvc` is left
+    as `None`, the host OS is used as a default — correct for native
+    builds.
 
     The result is embedded in ninja's `rspfile_content`, so escape `$`
     after platform quoting."""
-    if os.name == "nt":
+    if msvc is None:
+        msvc = os.name == "nt"
+    if msvc:
         return subprocess.list2cmdline([flag]).replace("$", "$$")
     # POSIX gcc/clang accept response files using a simple grammar:
     # whitespace separates args, single or double quotes preserve
