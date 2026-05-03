@@ -69,7 +69,7 @@ class BackendPool:
         #    others.
         async_tasks = self.pool.map_async(BackendPool._run_worker, backends[1:])
         BackendPool._run_worker(backends[0])
-        async_tasks.wait()
+        async_tasks.get()
 
     @staticmethod
     def _init_worker(state):
@@ -191,7 +191,7 @@ def config_status(
     # `definitions` objects are unfortunately not picklable, which is a
     # requirement for "spawn" method. It's fine under "fork" method. This
     # basically excludes Windows from our optimization, we can live with it.
-    if len(selected_backends) > 1 and get_start_method() == "fork":
+    if False and len(selected_backends) > 1 and get_start_method() == "fork":
         # See https://github.com/python/cpython/commit/39889864c09741909da4ec489459d0197ea8f1fc
         # For why we cap the process count. There's also an overhead to setup
         # new processes, and not that many backends anyway.
