@@ -16,6 +16,11 @@ import mozpack.path as mozpath
 from mozbuild.backend.common import CommonBackend
 from mozbuild.backend.ninja_syntax import (
     NinjaWriter,
+)
+from mozbuild.backend.ninja_syntax import (
+    path as n_path,
+)
+from mozbuild.backend.ninja_syntax import (
     response_arg as _response_arg_raw,
 )
 from mozbuild.backend.ninja_syntax import (
@@ -1060,55 +1065,83 @@ class NinjaBackend(CommonBackend):
         # clang-cl depfile via -Xclang -dependency-file; we feed those
         # into ninja via deps = gcc + depfile = $out.d so ninja manages
         # implicit deps natively.
+        # Compiles cd into the source's relobjdir before invoking the
+        # compiler so the Mozilla clang plugin's `inThirdPartyPath` check
+        # (which calls `make_absolute` on bare filenames from `#line`
+        # directives — e.g. harfbuzz's `hb-ot-shaper-use-machine.rl` —
+        # via process `getcwd()`) sees the same path it would see under
+        # the recursive-make backend (CWD = relobjdir). With ninja's
+        # default CWD = topobjdir, the resolved path doesn't contain the
+        # third-party prefix, so the plugin treats third-party code as
+        # in-tree and fires diagnostics that should be suppressed.
+        # Paths in the rsp content are made absolute (via $topobjdir for
+        # outputs, per-edge $src_abs for inputs) so they survive the cd.
+        # `-MT $out` keeps the depfile target topobjdir-relative so ninja
+        # matches it to the build edge's output.
+        # On POSIX hosts, ninja invokes commands via `/bin/sh -c`, so
+        # `cd && cmd` works natively. On Windows, ninja uses CreateProcess
+        # directly — `cd` is a cmd.exe builtin, not an .exe — so we must
+        # explicitly wrap in `cmd /c`.
+        writer.variable("chdir", ".")
+        if os.name == "nt":
+            cd_pre = 'cmd /c "cd $chdir && '
+            cd_post = '"'
+        else:
+            cd_pre = "cd $chdir && "
+            cd_post = ""
         clang_depfile_args = (
-            "-Xclang -MP -Xclang -dependency-file -Xclang $out.d "
+            "-Xclang -MP -Xclang -dependency-file -Xclang $topobjdir/$out.d "
             "-Xclang -MT -Xclang $out"
         )
         writer.rule(
             "cxx",
-            command="$CXX @$out.rsp",
+            command=f"{cd_pre}$CXX @$topobjdir/$out.rsp{cd_post}",
             description="CXX $out",
             rspfile="$out.rsp",
-            rspfile_content=f"$cxxflags {clang_depfile_args} -o $out -c $in",
+            rspfile_content=f"$cxxflags {clang_depfile_args} -o $topobjdir/$out -c $src_abs",
             deps="gcc",
             depfile="$out.d",
         )
         writer.newline()
         writer.rule(
             "cc",
-            command="$CC @$out.rsp",
+            command=f"{cd_pre}$CC @$topobjdir/$out.rsp{cd_post}",
             description="CC $out",
             rspfile="$out.rsp",
-            rspfile_content=f"$cflags {clang_depfile_args} -o $out -c $in",
+            rspfile_content=f"$cflags {clang_depfile_args} -o $topobjdir/$out -c $src_abs",
             deps="gcc",
             depfile="$out.d",
         )
         writer.newline()
         writer.rule(
             "host_cxx",
-            command="$HOST_CXX @$out.rsp",
+            command=f"{cd_pre}$HOST_CXX @$topobjdir/$out.rsp{cd_post}",
             description="HOST_CXX $out",
             rspfile="$out.rsp",
             rspfile_content=(
-                "$HOST_CPPFLAGS $host_cxxflags $NSPR_CFLAGS -o $out -c $in"
+                "$HOST_CPPFLAGS $host_cxxflags $NSPR_CFLAGS "
+                "-o $topobjdir/$out -c $src_abs"
             ),
         )
         writer.newline()
         writer.rule(
             "host_cc",
-            command="$HOST_CC @$out.rsp",
+            command=f"{cd_pre}$HOST_CC @$topobjdir/$out.rsp{cd_post}",
             description="HOST_CC $out",
             rspfile="$out.rsp",
-            rspfile_content=("$HOST_CPPFLAGS $host_cflags $NSPR_CFLAGS -o $out -c $in"),
+            rspfile_content=(
+                "$HOST_CPPFLAGS $host_cflags $NSPR_CFLAGS "
+                "-o $topobjdir/$out -c $src_abs"
+            ),
         )
         writer.newline()
         # Assembly via clang-cl's integrated assembler (USE_INTEGRATED_CLANGCL_AS).
         writer.rule(
             "asm",
-            command="$CC @$out.rsp",
+            command=f"{cd_pre}$CC @$topobjdir/$out.rsp{cd_post}",
             description="AS $out",
             rspfile="$out.rsp",
-            rspfile_content="$asflags -o $out -c $in",
+            rspfile_content="$asflags -o $topobjdir/$out -c $src_abs",
         )
         writer.newline()
         # Native assembler rule for `.asm` files (Intel-syntax). Per
@@ -2215,9 +2248,18 @@ class NinjaBackend(CommonBackend):
                     flag_var = "host_cxxflags" if is_host else "cxxflags"
                     flag_value = " ".join(self._rarg(f) for f in cxxflags + extra)
                 elif ext == ".mm":
-                    cmmflags = self._computed_flag_list(
-                        relobjdir, "HOST_CMMFLAGS" if is_host else "CMMFLAGS"
-                    )
+                    # CMMFLAGS / HOST_CMMFLAGS land in
+                    # `passthru.variables["MOZBUILD_(HOST_)CMMFLAGS"]`
+                    # (see frontend/emitter.py:1310), not ComputedFlags.
+                    # `_computed_flag_list("CMMFLAGS")` returns empty;
+                    # pull the per-dir passthru entry instead. Canonical
+                    # case: dom/media/systemservices `CMMFLAGS +=
+                    # ["-fobjc-arc"]` for the objc_video_capture .mm
+                    # files on Darwin.
+                    passthru = self._variable_passthru.get(relobjdir)
+                    pv = passthru.variables if passthru else {}
+                    mmkey = "MOZBUILD_HOST_CMMFLAGS" if is_host else "MOZBUILD_CMMFLAGS"
+                    cmmflags = list(pv.get(mmkey, []))
                     rule_name = "host_cxx" if is_host else "cxx"
                     flag_var = "host_cxxflags" if is_host else "cxxflags"
                     flag_value = " ".join(
@@ -2228,9 +2270,12 @@ class NinjaBackend(CommonBackend):
                     flag_var = "host_cflags" if is_host else "cflags"
                     flag_value = " ".join(self._rarg(f) for f in cflags + extra)
                 elif ext == ".m":
-                    cmflags = self._computed_flag_list(
-                        relobjdir, "HOST_CMFLAGS" if is_host else "CMFLAGS"
-                    )
+                    # CMFLAGS / HOST_CMFLAGS, like CMMFLAGS, ride along
+                    # in `passthru.variables["MOZBUILD_(HOST_)CMFLAGS"]`.
+                    passthru = self._variable_passthru.get(relobjdir)
+                    pv = passthru.variables if passthru else {}
+                    mkey = "MOZBUILD_HOST_CMFLAGS" if is_host else "MOZBUILD_CMFLAGS"
+                    cmflags = list(pv.get(mkey, []))
                     rule_name = "host_cc" if is_host else "cc"
                     flag_var = "host_cflags" if is_host else "cflags"
                     flag_value = " ".join(
@@ -2253,6 +2298,16 @@ class NinjaBackend(CommonBackend):
                     pv = passthru.variables if passthru else {}
                     substs = self.environment.substs
                     asm_program = pv.get("AS") or substs.get("AS", "")
+                    # When cross-compiling Windows from a non-Windows
+                    # host (toolkit/moz.configure:3428-3438 sets WINE
+                    # exactly in that case), MASM (`ml.exe` / `ml64.exe`)
+                    # is a Windows PE binary that the host's `/bin/sh`
+                    # cannot exec directly — `code=126 Exec format error`.
+                    # Mirror `build/midl.py:150-152`: prefix with the
+                    # configured wine when the assembler is a `.exe`.
+                    wine = substs.get("WINE")
+                    if wine and isinstance(asm_program, str) and asm_program.lower().endswith(".exe"):
+                        asm_program = f"{wine} {asm_program}"
                     as_dash_c_flag = pv.get(
                         "AS_DASH_C_FLAG", substs.get("AS_DASH_C_FLAG", "-c")
                     )
@@ -2295,7 +2350,11 @@ class NinjaBackend(CommonBackend):
                     inputs=self._rel_n_path(src_norm),
                     implicit=toolchain_implicit,
                     order_only=order_only,
-                    variables={flag_var: flag_value},
+                    variables={
+                        flag_var: flag_value,
+                        "chdir": self._rel_n_path(objdir),
+                        "src_abs": n_value(mozpath.normsep(src_norm)),
+                    },
                 )
 
     def _emit_linkable_alias(self, writer, basename, output_path):
@@ -2607,6 +2666,34 @@ class NinjaBackend(CommonBackend):
             # $topobjdir, rewrite the relative path to an absolute path
             # and collect it for the implicit-dep list.
             ldflags_raw = list(self._computed_flag_list(lib.relobjdir, "LDFLAGS"))
+            # Non-MSVC shared link goes through `$CXX -shared -o`, so
+            # CXX_LDFLAGS (compiler-driver flags like `-pthread`,
+            # MOZ_HARDENING_CFLAGS, OS_CPPFLAGS) must travel with LDFLAGS.
+            # See _emit_program_statements for the mirror case.
+            if not is_clang_cl:
+                ldflags_raw.extend(
+                    self._computed_flag_list(lib.relobjdir, "CXX_LDFLAGS")
+                )
+            # SONAME on ELF/Solaris targets so consumers' DT_NEEDED
+            # records the canonical lib name instead of the link-time
+            # path. We pass shared libs as full paths (e.g.
+            # `dist/bin/libfoo.so`) at link time; without a SONAME the
+            # linker burns that path into DT_NEEDED, and downstream
+            # tools (canonical case: `toolkit/library/build/dependentlibs.py`)
+            # can't resolve it via libpath lookup. Mirrors `MKSHLIB` in
+            # `build/moz.configure/toolchain.configure:3424-3434`.
+            # Darwin uses dylib install_names instead.
+            substs = self.environment.substs
+            os_target = substs.get("OS_TARGET")
+            target_kernel = substs.get("TARGET_KERNEL")
+            if (
+                not is_clang_cl
+                and lib.soname
+                and target_kernel != "Darwin"
+                and os_target != "Darwin"
+            ):
+                soname_flag = "-soname" if os_target == "NetBSD" else "-h"
+                ldflags_raw.append(f"-Wl,{soname_flag},{lib.soname}")
             symbols_link_arg = getattr(lib, "symbols_link_arg", None)
             if symbols_link_arg:
                 ldflags_raw.append(symbols_link_arg)
@@ -2686,6 +2773,15 @@ class NinjaBackend(CommonBackend):
             if passthru:
                 ldflags.extend(passthru.variables.get("WIN32_EXE_LDFLAGS", []))
             ldflags.extend(self._computed_flag_list(p.relobjdir, "LDFLAGS"))
+            # On non-MSVC the program link goes through `$CXX -o` (the
+            # compiler driver), so it needs the compiler-driver-level
+            # linker flags too: `-pthread` (auto-links libpthread for
+            # zucchini, etc.), MOZ_HARDENING_CFLAGS, OS_CPPFLAGS, etc.
+            # The make backend folds these into COMPUTED_CXX_LDFLAGS and
+            # passes them alongside LDFLAGS. lld-link doesn't accept
+            # them, so this is gated on non-clang-cl.
+            if self.environment.substs.get("CC_TYPE") != "clang-cl":
+                ldflags.extend(self._computed_flag_list(p.relobjdir, "CXX_LDFLAGS"))
             # MOZ_PROGRAM_LDFLAGS (rules.mk:144-163): Mac rpath so a
             # PROGRAM next to its dylibs in dist/bin can resolve
             # @rpath-prefixed install_names. arm-Darwin also needs
@@ -3672,67 +3768,98 @@ class NinjaBackend(CommonBackend):
             "_test_files": "_tests",
             "_ninja_test_files": "_tests",
         }
+        # Group manifests by destination. `_tests`, `_test_files`, and
+        # `_ninja_test_files` all install to `_tests/`. Emitted as separate
+        # `process_install_manifest` edges, each invocation independently
+        # treats files in the shared dir but outside its own manifest as
+        # unaccounted-for and `os.remove`s them, racing the others. The
+        # make backend serializes these via tier ordering; we merge them
+        # into a single combined manifest+edge so the unaccounted-files
+        # logic sees the union.
+        target_groups = {}
         for manifest_name, target_rel in manifest_to_target.items():
-            manifest_path = mozpath.join(manifests_dir, manifest_name)
-            if not os.path.exists(manifest_path):
+            target_groups.setdefault(target_rel, []).append(manifest_name)
+
+        for target_rel, manifest_names in target_groups.items():
+            existing = [
+                n
+                for n in manifest_names
+                if os.path.exists(mozpath.join(manifests_dir, n))
+            ]
+            if not existing:
                 continue
+            group_name = existing[0] if len(existing) == 1 else "+".join(existing)
             install_dir = mozpath.join(self._topobjdir, target_rel)
             track_path = mozpath.join(
                 self._topobjdir,
-                f"install_{manifest_name}.track",
+                f"install_{group_name}.track",
             )
-            self._install_tracks[manifest_name] = track_path
+            # Track path is shared by every manifest_name in the group so
+            # downstream code (manifest_prefixes routing, install track
+            # lookups) resolves correctly regardless of which name is queried.
+            for n in manifest_names:
+                self._install_tracks[n] = track_path
 
-            mf = InstallManifest(path=manifest_path)
-            to_remove = []
-            to_add_link = []
-            to_add_copy = []
-            for dst, entry in list(mf._dests.items()):
-                kind = entry[0]
-                if kind == mf.LINK:
-                    src = mozpath.normsep(entry[1])
-                    if os.path.isdir(src):
-                        to_remove.append(dst)
-                        for path, _ in FileFinder(src).find("**"):
-                            full = mozpath.normsep(mozpath.join(src, path))
-                            if os.path.isfile(full):
-                                to_add_link.append((
-                                    full,
-                                    mozpath.normsep(mozpath.join(dst, path)),
-                                ))
-                elif kind == mf.COPY:
-                    src = mozpath.normsep(entry[1])
-                    if os.path.isdir(src):
-                        to_remove.append(dst)
-                        for path, _ in FileFinder(src).find("**"):
-                            full = mozpath.normsep(mozpath.join(src, path))
-                            if os.path.isfile(full):
-                                to_add_copy.append((
-                                    full,
-                                    mozpath.normsep(mozpath.join(dst, path)),
-                                ))
-                elif kind in (
-                    mf.REQUIRED_EXISTS,
-                    mf.OPTIONAL_EXISTS,
-                    mf.CONTENT,
-                    mf.PREPROCESS,
-                    mf.PATTERN_LINK,
-                    mf.PATTERN_COPY,
-                ):
-                    pass
-                else:
-                    raise Exception(
-                        f"Unknown install manifest entry kind {kind} "
-                        f"for {dst!r} in {manifest_name}"
-                    )
-            for dst in to_remove:
-                del mf._dests[dst]
-            for src, dst in to_add_link:
-                mf.add_link(src, dst)
-            for src, dst in to_add_copy:
-                mf.add_copy(src, dst)
+            mf = InstallManifest()
+            for n in existing:
+                sub = InstallManifest(path=mozpath.join(manifests_dir, n))
+                to_remove = []
+                to_add_link = []
+                to_add_copy = []
+                for dst, entry in list(sub._dests.items()):
+                    kind = entry[0]
+                    if kind == sub.LINK:
+                        src = mozpath.normsep(entry[1])
+                        if os.path.isdir(src):
+                            to_remove.append(dst)
+                            for path, _ in FileFinder(src).find("**"):
+                                full = mozpath.normsep(mozpath.join(src, path))
+                                if os.path.isfile(full):
+                                    to_add_link.append((
+                                        full,
+                                        mozpath.normsep(mozpath.join(dst, path)),
+                                    ))
+                    elif kind == sub.COPY:
+                        src = mozpath.normsep(entry[1])
+                        if os.path.isdir(src):
+                            to_remove.append(dst)
+                            for path, _ in FileFinder(src).find("**"):
+                                full = mozpath.normsep(mozpath.join(src, path))
+                                if os.path.isfile(full):
+                                    to_add_copy.append((
+                                        full,
+                                        mozpath.normsep(mozpath.join(dst, path)),
+                                    ))
+                    elif kind in (
+                        sub.REQUIRED_EXISTS,
+                        sub.OPTIONAL_EXISTS,
+                        sub.CONTENT,
+                        sub.PREPROCESS,
+                        sub.PATTERN_LINK,
+                        sub.PATTERN_COPY,
+                    ):
+                        pass
+                    else:
+                        raise Exception(
+                            f"Unknown install manifest entry kind {kind} "
+                            f"for {dst!r} in {n}"
+                        )
+                for dst in to_remove:
+                    del sub._dests[dst]
+                for src, dst in to_add_link:
+                    sub.add_link(src, dst)
+                for src, dst in to_add_copy:
+                    sub.add_copy(src, dst)
+                # Manually merge: `_tests` and `_test_files` overlap on
+                # entries like `crashtest/crashtest.toml`, so the strict
+                # `__ior__` (which raises on duplicates) is wrong here.
+                # First-seen wins; duplicates point at the same source.
+                mf._source_files |= sub._source_files
+                for dst, entry in sub._dests.items():
+                    if dst not in mf._dests:
+                        mf._dests[dst] = entry
 
-            expanded_path = manifest_path + ".expanded"
+            expanded_path = mozpath.join(manifests_dir, group_name + ".expanded")
             mf.write(path=expanded_path)
 
             sources = []
@@ -3816,6 +3943,15 @@ class NinjaBackend(CommonBackend):
                     declared[0], declared, g.flags or ()
                 ):
                     edge_outputs.add(mozpath.normsep(output))
+        # OBJDIR_PP_FILES preprocess outputs (e.g. dist/bin/.lldbinit from
+        # build/.lldbinit.in) are produced by per-file `pp_install` edges
+        # emitted later in this function. Record their dsts here so that
+        # `_route_input` returns them as direct edge inputs rather than
+        # routing them to an install-manifest track that doesn't actually
+        # build them. Without this, OBJDIR_FILES copies from those dsts
+        # race against the producer at low job counts.
+        for _, dst, _, _ in self._pp_installs:
+            edge_outputs.add(mozpath.normsep(dst))
 
         def _route_input(src):
             if src in edge_outputs:
