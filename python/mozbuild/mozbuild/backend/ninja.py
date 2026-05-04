@@ -632,6 +632,25 @@ class NinjaBackend(CommonBackend):
             if rc != 0:
                 return rc
 
+        # Automation tier targets (`automation/<tier>` and the bare tier
+        # names) are make targets, not ninja targets. Strip them from the
+        # ninja invocation; the post-build dispatch below routes them to
+        # mozmake. Without this strip, ninja would fail unknown-target
+        # for them.
+        automation_target_names = (
+            "package",
+            "package-tests",
+            "package-generated-sources",
+            "buildsymbols",
+            "uploadsymbols",
+            "upload",
+            "check",
+        )
+        targets = [
+            t for t in targets
+            if not (t.startswith("automation/") or t in automation_target_names)
+        ]
+
         output.start_progress()
 
         cmd = [ninja, "-C", config.topobjdir, "--jobserver-pool"]
@@ -656,6 +675,62 @@ class NinjaBackend(CommonBackend):
                 "ninja: interrupted; replaying partial .ninja_log into profile"
             )
         self._record_ninja_log_markers(config, output, ninja_start_wall)
+
+        # Automation-tier dispatch. When `MOZ_AUTOMATION` is set in the
+        # environment, mozharness expects the build step to also produce
+        # package artifacts (`dist/target.*`), symbols, etc. — its
+        # post-build `_get_package_metrics` step (testing/mozharness/
+        # mozharness/mozilla/building/buildbase.py:1067-1073) fails with
+        # `could not determine packageName` if `dist/target.{tar.xz,tar.bz2,
+        # zip,dmg,apk}` is missing. Under the make backend, `client.mk`
+        # routes `mach build` through `automation/build` which depends on
+        # `automation/<tier>` for each enabled `MOZ_AUTOMATION_<TIER>=1`
+        # (see `build/moz-automation.mk:73`). Ninja doesn't know about
+        # those tiers, so we delegate to mozmake for the remainder.
+        # mozmake's `automation/build` target is a no-op when no
+        # `MOZ_AUTOMATION_<TIER>=1` vars are set, so it's safe to invoke
+        # whenever `MOZ_AUTOMATION` is set, regardless of which tiers CI
+        # has enabled for this job.
+        #
+        # Skipped when `what` is non-empty: explicit targets indicate a
+        # developer-driven partial build (e.g. `./mach build firefox`),
+        # not the full automation flow.
+        if rc == 0 and not what and os.environ.get("MOZ_AUTOMATION"):
+            make = config.substs.get("GMAKE") or "mozmake"
+            output.write_line(
+                f"ninja: dispatching automation tiers via {make} automation/build"
+            )
+            rc = _run([
+                make,
+                "-C",
+                config.topobjdir,
+                "-j",
+                str(jobs) if jobs else "1",
+                "automation/build",
+            ])
+
+        # Explicit `automation/<tier>` (or bare tier names like `package`)
+        # passed as targets: run ninja for everything else, then dispatch
+        # the remaining targets through mozmake. Mirrors what `client.mk`
+        # would do under the make backend.
+        if what:
+            automation_targets = [
+                t for t in what
+                if t.startswith("automation/") or t in automation_target_names
+            ]
+            if automation_targets and rc == 0:
+                make = config.substs.get("GMAKE") or "mozmake"
+                output.write_line(
+                    f"ninja: dispatching {' '.join(automation_targets)} via {make}"
+                )
+                rc = _run([
+                    make,
+                    "-C",
+                    config.topobjdir,
+                    "-j",
+                    str(jobs) if jobs else "1",
+                ] + automation_targets)
+
         return rc
 
     def _record_ninja_log_markers(self, config, output, ninja_start_wall):
