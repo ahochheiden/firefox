@@ -226,6 +226,92 @@ def files_per_unified_file(value):
 set_config("FILES_PER_UNIFIED_FILE", files_per_unified_file)
 
 
+# Ninja-only unified-chunk planner. The legacy mode reproduces
+# `UnifiedSources.unified_source_mapping` 1:1; the experimental crossdir
+# mode dissolves currently-small legacy chunks and repacks their original
+# sources into planner-owned cross-directory chunks. Recursive-make
+# behavior is unaffected by these knobs — they're consumed only by
+# `mozbuild.backend.ninja_unified.NinjaUnifiedPlanner`.
+option(
+    "--with-ninja-unified-planner",
+    nargs=1,
+    default="legacy",
+    choices=("legacy", "crossdir"),
+    help="Ninja unified-chunk planner mode (legacy or crossdir)",
+)
+
+
+@depends("--with-ninja-unified-planner")
+def ninja_unified_planner(value):
+    return value[0]
+
+
+set_config("NINJA_UNIFIED_PLANNER", ninja_unified_planner)
+
+
+option(
+    "--with-ninja-unified-pack-min-input-chunk-size",
+    nargs=1,
+    default="1",
+    help="Minimum source count of a legacy chunk eligible for crossdir packing",
+)
+
+
+@depends("--with-ninja-unified-pack-min-input-chunk-size")
+def ninja_unified_pack_min_input(value):
+    n = int(value[0])
+    if n < 1:
+        die("--with-ninja-unified-pack-min-input-chunk-size must be >= 1")
+    return str(n)
+
+
+set_config("NINJA_UNIFIED_PACK_MIN_INPUT", ninja_unified_pack_min_input)
+
+
+option(
+    "--with-ninja-unified-pack-max-input-chunk-size",
+    nargs=1,
+    default="15",
+    help="Maximum source count of a legacy chunk eligible for crossdir packing",
+)
+
+
+@depends(
+    "--with-ninja-unified-pack-max-input-chunk-size",
+    "--with-ninja-unified-pack-min-input-chunk-size",
+)
+def ninja_unified_pack_max_input(value, min_value):
+    n = int(value[0])
+    m = int(min_value[0])
+    if n < m:
+        die(
+            "--with-ninja-unified-pack-max-input-chunk-size must be >= "
+            "--with-ninja-unified-pack-min-input-chunk-size"
+        )
+    return str(n)
+
+
+set_config("NINJA_UNIFIED_PACK_MAX_INPUT", ninja_unified_pack_max_input)
+
+
+option(
+    "--with-ninja-unified-pack-max-output-chunk-size",
+    nargs=1,
+    default="16",
+    help="Maximum source count of a planner-owned crossdir chunk",
+)
+
+
+@depends("--with-ninja-unified-pack-max-output-chunk-size")
+def ninja_unified_pack_max_output(value):
+    n = int(value[0])
+    if n < 1:
+        die("--with-ninja-unified-pack-max-output-chunk-size must be >= 1")
+    return str(n)
+
+
+set_config("NINJA_UNIFIED_PACK_MAX_OUTPUT", ninja_unified_pack_max_output)
+
 include("build/moz.configure/bootstrap.configure")
 
 

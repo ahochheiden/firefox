@@ -17,7 +17,12 @@ from mozbuild.backend.common import CommonBackend
 from mozbuild.backend.ninja_syntax import (
     NinjaWriter,
 )
-from mozbuild.backend.ninja_unified import NinjaUnifiedPlanner
+from mozbuild.backend.ninja_unified import (
+    NinjaUnifiedPlanner,
+    PlannerOptions,
+    THIRD_PARTY_PREFIXES,
+    UnifiedAttribution,
+)
 from mozbuild.backend.ninja_syntax import (
     path as n_path,
 )
@@ -93,11 +98,32 @@ class NinjaBackend(CommonBackend):
         self._sources_by_dir = defaultdict(list)  # relobjdir -> [Sources, ...]
         self._unified_by_dir = defaultdict(list)  # relobjdir -> [UnifiedSources, ...]
         # Planner that materializes UnifiedSources into `UnifiedChunk`
-        # objects. Phase 1: mirrors `unified_source_mapping` 1:1; later
-        # phases regroup chunks based on per-source compile fingerprints
-        # without changing the public surface here. Populated alongside
-        # `_unified_by_dir` so legacy bookkeeping is unaffected.
-        self._unified_planner = NinjaUnifiedPlanner()
+        # objects. Mode is configured at configure-time via
+        # `--with-ninja-unified-planner=legacy|crossdir`; defaults to
+        # legacy (1:1 with `unified_source_mapping`). Crossdir mode runs
+        # after `consume_finished` so it can compute owner_keys (root
+        # linkable identity per source) and per-relobjdir compile
+        # fingerprints; `_unified_by_dir` stays alongside as the legacy
+        # bookkeeping consumer code path until the planner becomes the
+        # single source of truth for compile/link routing.
+        substs = env.substs
+        planner_options = PlannerOptions(
+            mode=substs.get("NINJA_UNIFIED_PLANNER") or "legacy",
+            min_input=int(substs.get("NINJA_UNIFIED_PACK_MIN_INPUT") or "1"),
+            max_input=int(substs.get("NINJA_UNIFIED_PACK_MAX_INPUT") or "8"),
+            max_output=int(substs.get("NINJA_UNIFIED_PACK_MAX_OUTPUT") or "16"),
+            topobjdir=self._topobjdir,
+        )
+        self._unified_planner = NinjaUnifiedPlanner(planner_options)
+        # Populated by `_run_unified_planner` (called once, before emit).
+        # Caches the plan so multiple emit-time consumers (compile,
+        # link, diagnostics) see identical chunk lists.
+        self._unified_plan = None
+        # Crossdir-only state derived from the plan. Both stay empty in
+        # legacy mode so existing emit paths are untouched.
+        self._dissolved_unified_objs = set()  # absolute .obj paths to omit
+        self._linkable_extra_objs = defaultdict(list)  # id(linkable) -> [extra .obj]
+        self._dissolved_unified_files = set()  # (objdir, unified_file) tuples
         self._host_sources_by_dir = defaultdict(list)  # relobjdir -> [HostSources, ...]
         self._static_libs = []
         self._shared_libs = []
@@ -1065,6 +1091,435 @@ class NinjaBackend(CommonBackend):
         return mozpath.join(linkable.objdir, source_path)
 
     # ---------------------------------------------------------------------
+    # Unified planner: attribution, owner resolution, plan
+    # ---------------------------------------------------------------------
+
+    def _run_unified_planner(self):
+        """Compute attribution per registered UnifiedSources, run the
+        planner, and cache its output so emit-time consumers see one
+        stable plan. Legacy mode short-circuits with empty crossdir state
+        so the rest of the backend behaves exactly as before."""
+        if self._unified_planner._options.mode == "legacy":
+            self._unified_plan = self._unified_planner.plan()
+            return
+
+        # Build the linkable owner-resolution state: a reverse map of
+        # `linked_libraries` so we can walk from any intermediate
+        # StaticLibrary up to the root binary (Program / SharedLibrary /
+        # HostProgram / HostSharedLibrary). Owner_key is the frozenset
+        # of root identities; chunks group by it so a crossdir TU never
+        # mixes sources that link into different binaries.
+        self._build_unified_owner_resolution()
+        self._unified_planner.attribute(self._compute_unified_attribution)
+        self._unified_plan = self._unified_planner.plan()
+
+        topobjdir = self._topobjdir
+        for chunk in self._unified_plan.chunks:
+            if chunk.kind != "crossdir":
+                continue
+            for objdir, uname in chunk.dissolved_legacy:
+                self._dissolved_unified_files.add((mozpath.normsep(objdir), uname))
+                # Object path the legacy compile would have produced.
+                # `_get_objs` writes into the linkable's objdir using
+                # the unified filename's stem; we mirror that here.
+                stem = mozpath.splitext(uname)[0]
+                obj_suffix = self.environment.substs.get("OBJ_SUFFIX", "obj")
+                legacy_obj = mozpath.join(objdir, f"{stem}.{obj_suffix}")
+                self._dissolved_unified_objs.add(mozpath.normsep(legacy_obj))
+
+    def _build_unified_owner_resolution(self):
+        """Populate `self._linked_into` (reverse of `linked_libraries`)
+        and the linkable→roots cache used by `_compute_unified_attribution`.
+        """
+        all_linkables = (
+            list(self._static_libs)
+            + list(self._shared_libs)
+            + list(self._rust_libs)
+            + list(self._programs)
+            + list(self._host_libraries)
+            + list(self._host_programs)
+            + list(self._host_shared_libs)
+            + list(self._wasm_libraries)
+        )
+        self._all_linkables = all_linkables
+        linked_into = defaultdict(list)
+        for linkable in all_linkables:
+            for child in getattr(linkable, "linked_libraries", []) or []:
+                linked_into[id(child)].append(linkable)
+        self._linked_into = linked_into
+
+        # Cache: id(lib) -> frozenset of (kind, basename) root identities.
+        self._owner_roots_cache = {}
+
+    def _resolve_owner_roots(self, linkable):
+        """Walk the inverse `linked_libraries` graph to the linkable's
+        root binary or binaries. Cached. Returns frozenset of stable
+        identity tuples; empty frozenset if `linkable` is orphaned."""
+        from mozbuild.frontend.data import (
+            HostProgram,
+            HostSharedLibrary,
+            Program,
+            SharedLibrary,
+        )
+
+        cache = self._owner_roots_cache
+        cached = cache.get(id(linkable))
+        if cached is not None:
+            return cached
+
+        roots: set = set()
+        visited: set = set()
+        stack = [linkable]
+        ROOT_TYPES = (Program, SharedLibrary, HostProgram, HostSharedLibrary)
+        while stack:
+            cur = stack.pop()
+            if id(cur) in visited:
+                continue
+            visited.add(id(cur))
+            if isinstance(cur, ROOT_TYPES):
+                roots.add(self._lib_identity(cur))
+                continue
+            parents = self._linked_into.get(id(cur), [])
+            if not parents:
+                # Orphan: a lib that nothing else links to. Treat it as
+                # its own root so own-link archives still find a home.
+                roots.add(self._lib_identity(cur))
+                continue
+            stack.extend(parents)
+        result = frozenset(roots)
+        cache[id(linkable)] = result
+        return result
+
+    @staticmethod
+    def _lib_identity(lib):
+        """Stable hashable identity for a linkable. Used as part of
+        owner_key. Two linkables with the same identity are link-equivalent
+        from the planner's point of view."""
+        kind = lib.KIND if hasattr(lib, "KIND") else type(lib).__name__
+        basename = (
+            getattr(lib, "basename", None)
+            or getattr(lib, "lib_name", None)
+            or getattr(lib, "program", None)
+            or ""
+        )
+        relobjdir = getattr(lib, "relobjdir", "") or ""
+        return (kind, type(lib).__name__, basename, relobjdir)
+
+    def _immediate_consumers_for(self, obj):
+        """Linkables in obj.relobjdir whose `sources` dict references at
+        least one of obj's unified-mapping rows. Used to find the
+        immediate owner before walking up to the root."""
+        suffix = obj.canonical_suffix
+        unames = {uname for uname, _ in obj.unified_source_mapping}
+        consumers = []
+        for lib in self._all_linkables:
+            if getattr(lib, "relobjdir", None) != obj.relobjdir:
+                continue
+            srcs = getattr(lib, "sources", None)
+            if not srcs:
+                continue
+            files_for_suffix = set(srcs.get(suffix, []) or [])
+            if unames & files_for_suffix:
+                consumers.append(lib)
+        return consumers
+
+    def _compute_unified_attribution(self, obj):
+        """Build the `UnifiedAttribution` for one UnifiedSources object.
+
+        Conservative: any missing piece (no consumer, no flags, etc.)
+        becomes a `None` field on the attribution, which the planner
+        treats as a hard rejection from crossdir packing — falling back
+        to legacy with a recorded reason.
+        """
+        from mozbuild.frontend.data import HostMixin, WasmSources
+
+        relobjdir = obj.relobjdir or ""
+
+        # Kind: target / host / wasm. Decides which compile rule and
+        # which `_computed_flags` keys apply. Crossdir restricts to
+        # target initially.
+        if isinstance(obj, WasmSources):
+            kind = "wasm"
+        elif isinstance(obj, HostMixin):
+            kind = "host"
+        else:
+            kind = "target"
+
+        # Owner key: frozenset of root linkable identities. Empty set
+        # means orphan / no owner; the planner will reject as
+        # `no-owner-key`.
+        consumers = self._immediate_consumers_for(obj)
+        owner_set: set = set()
+        for c in consumers:
+            owner_set |= self._resolve_owner_roots(c)
+        owner_key = frozenset(owner_set) if owner_set else None
+
+        # Compile fingerprint: hashable digest of every input that
+        # influences the compile command. Order matters within each
+        # flag list. Pulled from structured backend state — never from
+        # emitted command strings.
+        compile_fingerprint = self._compute_unified_fingerprint(obj, kind)
+
+        # Scope key: top-level source directory. Conservative bucketing.
+        scope_key = relobjdir.split("/", 1)[0] if relobjdir else None
+
+        # CWD compatibility: rejection reason "cwd-sensitive" applies to
+        # any context where the compile rule's per-edge `cd $chdir`
+        # would change `getcwd()` enough to flip plugin behavior. For
+        # now, treat all non-third-party target-C++ contexts as
+        # cwd-compatible under the topobjdir; flag third-party as None
+        # so the planner rejects them.
+        is_third_party = self._is_third_party_relobjdir(relobjdir)
+        cwd_compat = None if is_third_party else "topobjdir"
+
+        # FILES_PER_UNIFIED_FILE override detection: if the planner
+        # committed to a chunk size <= 1, the directory has explicitly
+        # opted out of unified compilation for those rows. We can't
+        # observe the original FILES_PER_UNIFIED_FILE knob from the
+        # frontend object directly, but `have_unified_mapping=False`
+        # implies it. We also flag suspicious low caps based on the
+        # current mapping's max chunk size as a proxy.
+        has_local_cap = False
+        if obj.unified_source_mapping:
+            max_chunk = max(len(srcs) for _, srcs in obj.unified_source_mapping)
+            if max_chunk < self._unified_planner._options.max_input // 2:
+                has_local_cap = True
+
+        # Per-source flags: any source with PerSourceFlag entries pulls
+        # the whole chunk out of crossdir (conservative). The planner
+        # could in principle fingerprint per-source, but mixing that
+        # with cross-directory packing isn't worth the complexity yet.
+        has_per_source_flags = self._unified_has_per_source_flags(obj)
+
+        return UnifiedAttribution(
+            owner_key=owner_key,
+            compile_fingerprint=compile_fingerprint,
+            scope_key=scope_key,
+            cwd_compatibility=cwd_compat,
+            kind=kind,
+            is_third_party=is_third_party,
+            has_local_cap=has_local_cap,
+            has_per_source_flags=has_per_source_flags,
+        )
+
+    def _compute_unified_fingerprint(self, obj, kind):
+        """Hashable digest of every flag that influences the compile.
+
+        Pulled from backend state (`_computed_flags`, `_defines_by_dir`,
+        `_local_includes_by_dir`, `_variable_passthru`) rather than the
+        eventual command line, so fingerprint equality implies command
+        equality at write time. None when the relobjdir has no flags
+        recorded (crossdir rejects with `no-fingerprint`)."""
+        relobjdir = obj.relobjdir or ""
+        suffix = obj.canonical_suffix
+        # Variable selection mirrors the suffix dispatch in
+        # `_emit_compile_statements`.
+        if suffix in (".cpp", ".cc", ".cxx"):
+            primary_var = "HOST_CXXFLAGS" if kind == "host" else "CXXFLAGS"
+        elif suffix == ".mm":
+            primary_var = "HOST_CXXFLAGS" if kind == "host" else "CXXFLAGS"
+        elif suffix == ".c":
+            primary_var = "HOST_CFLAGS" if kind == "host" else "CFLAGS"
+        elif suffix == ".m":
+            primary_var = "HOST_CFLAGS" if kind == "host" else "CFLAGS"
+        else:
+            return None
+
+        flags = self._computed_flag_list(relobjdir, primary_var)
+        if not flags:
+            return None
+
+        passthru = self._variable_passthru.get(relobjdir)
+        pv = passthru.variables if passthru else {}
+
+        # Defines / local includes contribute to the actual command.
+        defines = []
+        for d in self._defines_by_dir.get(relobjdir, ()):
+            defines.extend(d.get_defines())
+        local_includes = []
+        for li in self._local_includes_by_dir.get(relobjdir, ()):
+            local_includes.append(mozpath.normsep(li.path.full_path))
+
+        cmm = list(pv.get("MOZBUILD_CMMFLAGS", []) or []) if suffix == ".mm" else []
+        cmf = list(pv.get("MOZBUILD_CMFLAGS", []) or []) if suffix == ".m" else []
+
+        return (
+            kind,
+            suffix,
+            tuple(flags),
+            tuple(defines),
+            tuple(local_includes),
+            tuple(cmm),
+            tuple(cmf),
+            self._target_msvc,
+        )
+
+    def _is_third_party_relobjdir(self, relobjdir):
+        for prefix in THIRD_PARTY_PREFIXES:
+            if relobjdir == prefix.rstrip("/") or relobjdir.startswith(prefix):
+                return True
+        return False
+
+    def _unified_has_per_source_flags(self, obj):
+        per_source = self._per_source_flags.get(obj.relobjdir or "", []) or []
+        if not per_source:
+            return False
+        sources = set(mozpath.normsep(f) for f in obj.files)
+        for entry in per_source:
+            if mozpath.normsep(getattr(entry, "path", "")) in sources:
+                return True
+        return False
+
+    def _adjusted_link_objs(self, lib, objs):
+        """Crossdir-aware version of `_expand_libs`'s `objs` output.
+
+        Drops legacy unified .obj paths whose chunks were dissolved into
+        a planner-owned crossdir chunk, and appends planner-owned chunk
+        objects attributed to this linkable (root binary). In legacy
+        mode both maps are empty and the input list is returned
+        unchanged."""
+        if not self._dissolved_unified_objs and not self._linkable_extra_objs:
+            return list(objs)
+        filtered = [
+            o for o in objs
+            if mozpath.normsep(o) not in self._dissolved_unified_objs
+        ]
+        extras = self._linkable_extra_objs.get(id(lib), [])
+        if extras:
+            seen = set(mozpath.normsep(o) for o in filtered)
+            for e in extras:
+                ne = mozpath.normsep(e)
+                if ne in seen:
+                    continue
+                seen.add(ne)
+                filtered.append(ne)
+        return filtered
+
+    def _emit_crossdir_unified_chunks(self, writer):
+        """Write the planner-owned unified .cpp files, emit a compile
+        edge for each, and route the resulting object into every owner
+        linkable's link-input extras list. Legacy mode plans no
+        crossdir chunks, so this is a no-op there."""
+        plan = self._unified_plan
+        if plan is None:
+            return
+        crossdir_chunks = [c for c in plan.chunks if c.kind == "crossdir"]
+        if not crossdir_chunks:
+            return
+
+        writer.newline()
+        writer.comment("------ planner-owned unified chunks (crossdir) ------")
+        writer.newline()
+
+        obj_suffix = self.environment.substs.get("OBJ_SUFFIX", "obj")
+        toolchain_stamp = getattr(self, "_toolchain_stamp_path", None)
+        toolchain_implicit = (
+            [self._rel_n_path(toolchain_stamp)] if toolchain_stamp else None
+        )
+
+        # Pre-resolve identity → linkable list once so each chunk's
+        # owner_key fan-out is O(owners), not O(linkables * chunks).
+        identity_to_libs = defaultdict(list)
+        for lib in self._all_linkables:
+            identity_to_libs[self._lib_identity(lib)].append(lib)
+
+        for chunk in crossdir_chunks:
+            # Write the unified .cpp content. Reuses the CommonBackend
+            # `_write_unified_file` helper so the inline guard checks
+            # (windows.h-poisoning, PL_ARENA_CONST_ALIGN_MASK,
+            # INITGUID) match what the legacy `_write_unified_files`
+            # path produces.
+            self._write_unified_file(
+                chunk.unified_file,
+                chunk.source_filenames,
+                chunk.output_directory,
+                poison_windows_h=False,
+            )
+
+            # Compile flags pulled from a representative record. The
+            # bucket key (and therefore the chunk's compile_fingerprint)
+            # guaranteed every record's flags match, so any record is a
+            # faithful representative.
+            rep_relobjdir = chunk.records[0].relobjdir
+            suffix = chunk.canonical_suffix
+            if suffix in (".cpp", ".cc", ".cxx", ".mm"):
+                rule_name = "cxx"
+                flag_var = "cxxflags"
+                flags = list(self._computed_flag_list(rep_relobjdir, "CXXFLAGS"))
+            elif suffix in (".c", ".m"):
+                rule_name = "cc"
+                flag_var = "cflags"
+                flags = list(self._computed_flag_list(rep_relobjdir, "CFLAGS"))
+            else:
+                writer.comment(
+                    f"crossdir: unsupported suffix {suffix} for {chunk.unified_file}"
+                )
+                continue
+
+            flag_value = " ".join(self._rarg(f) for f in flags)
+            obj_path = mozpath.join(
+                chunk.output_directory,
+                f"{chunk.object_basename}.{obj_suffix}",
+            )
+            order_only = f".ninja-prereqs/{rep_relobjdir}"
+
+            writer.build(
+                self._rel_n_path(obj_path),
+                rule_name,
+                inputs=self._rel_n_path(chunk.unified_source_path),
+                implicit=toolchain_implicit,
+                order_only=order_only,
+                variables={
+                    flag_var: flag_value,
+                    "chdir": self._rel_n_path(rep_relobjdir) or ".",
+                    "src_abs": n_value(mozpath.normsep(chunk.unified_source_path)),
+                },
+            )
+
+            # Attribute the planner-owned object to every root linkable
+            # that owns this chunk. Each such linkable's `_expand_libs`
+            # result will pick up this object via `_adjusted_link_objs`.
+            for ident in chunk.owner_key or frozenset():
+                for lib in identity_to_libs.get(ident, ()):
+                    self._linkable_extra_objs[id(lib)].append(
+                        mozpath.normsep(obj_path)
+                    )
+
+    def _write_unified_planner_diagnostics(self):
+        """Write `.ninja-unified-plan.json` and
+        `.ninja-unified-rejections.json`. Always written so external
+        tooling and CI logs can compare legacy vs crossdir output of
+        the same configure run."""
+        plan = self._unified_plan
+        if plan is None:
+            return
+        plan_path = mozpath.join(self._topobjdir, ".ninja-unified-plan.json")
+        rej_path = mozpath.join(self._topobjdir, ".ninja-unified-rejections.json")
+        with self._write_file(plan_path) as fh:
+            json.dump(
+                {
+                    "mode": self._unified_planner._options.mode,
+                    "min_input": self._unified_planner._options.min_input,
+                    "max_input": self._unified_planner._options.max_input,
+                    "max_output": self._unified_planner._options.max_output,
+                    "entries": plan.plan_diagnostics,
+                },
+                fh,
+                indent=2,
+                sort_keys=True,
+            )
+        with self._write_file(rej_path) as fh:
+            json.dump(
+                {
+                    "mode": self._unified_planner._options.mode,
+                    "entries": plan.rejections,
+                },
+                fh,
+                indent=2,
+                sort_keys=True,
+            )
+
+    # ---------------------------------------------------------------------
     # build.ninja emission
     # ---------------------------------------------------------------------
 
@@ -1072,6 +1527,19 @@ class NinjaBackend(CommonBackend):
         env = self.environment
         substs = env.substs
         self._target_msvc = substs.get("CC_TYPE") == "clang-cl"
+        # Run the unified-chunk planner before any emit: legacy mode is
+        # behavior-equivalent and short-circuits below; crossdir mode
+        # populates `_dissolved_unified_files`/`_dissolved_unified_objs`
+        # (so `_emit_compile_statements` skips legacy compiles those
+        # chunks would have produced) and `_linkable_extra_objs` (so
+        # link emitters route the planner-owned object into the right
+        # owner's link inputs).
+        self._run_unified_planner()
+        # Diagnostics are derived from the plan only — written once,
+        # before emit, so a build that fails downstream still leaves
+        # `.ninja-unified-plan.json` / `.ninja-unified-rejections.json`
+        # on disk for inspection.
+        self._write_unified_planner_diagnostics()
         writer = NinjaWriter(fh)
 
         writer.comment("Auto-generated by NinjaBackend. Do not edit.")
@@ -1645,6 +2113,11 @@ class NinjaBackend(CommonBackend):
 
         # Emit compile build statements.
         self._emit_compile_statements(writer)
+
+        # Crossdir-only: write the planner-owned unified .cpp files and
+        # emit one compile edge per chunk. Legacy mode produced no
+        # crossdir chunks, so this is a no-op there.
+        self._emit_crossdir_unified_chunks(writer)
 
         # Rust libraries are built by delegating to mozmake, which already
         # knows how to invoke cargo with the right env.
@@ -2306,8 +2779,18 @@ class NinjaBackend(CommonBackend):
             # living in objdir. For non-unified Sources/HostSources, inputs
             # are the static_files + generated_files from `files`.
             if is_unified and sobj.have_unified_mapping:
+                # Crossdir mode dissolves selected legacy unified rows
+                # into planner-owned chunks elsewhere; their compile
+                # edges must NOT be emitted here, otherwise we'd
+                # produce two objects covering the same sources and
+                # the link would either error on duplicate symbols
+                # (if both reach the same archive) or pick up stale
+                # objects on incremental rebuilds.
+                normalized_objdir = mozpath.normsep(objdir)
                 inputs = [
-                    mozpath.join(objdir, u) for u, _ in sobj.unified_source_mapping
+                    mozpath.join(objdir, u)
+                    for u, _ in sobj.unified_source_mapping
+                    if (normalized_objdir, u) not in self._dissolved_unified_files
                 ]
             elif is_unified and not sobj.have_unified_mapping:
                 inputs = list(sobj.files)
@@ -2488,6 +2971,7 @@ class NinjaBackend(CommonBackend):
         for lib in candidates:
             out = self._lib_output_path(lib)
             objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            objs = self._adjusted_link_objs(lib, objs)
             all_archive_inputs = list(objs)
             # Static libs from expand that are themselves real archives
             # should still be inputs to this archive? For no_expand_lib
@@ -2731,6 +3215,7 @@ class NinjaBackend(CommonBackend):
                 else None
             )
             objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            objs = self._adjusted_link_objs(lib, objs)
             link_inputs = list(objs)
             for static_lib in static_libs:
                 link_inputs.append(self._lib_output_path(static_lib))
@@ -2841,6 +3326,7 @@ class NinjaBackend(CommonBackend):
         for p in sorted_programs:
             out = p.output_path.full_path
             objs, shared_libs, os_libs, static_libs = self._expand_libs(p)
+            objs = self._adjusted_link_objs(p, objs)
             link_inputs = list(objs)
             for static_lib in static_libs:
                 link_inputs.append(self._lib_output_path(static_lib))
@@ -2915,6 +3401,7 @@ class NinjaBackend(CommonBackend):
         for lib in real_libs:
             out = self._lib_output_path(lib)
             objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            objs = self._adjusted_link_objs(lib, objs)
             all_archive_inputs = list(objs)
             for static_lib in static_libs:
                 all_archive_inputs.append(self._lib_output_path(static_lib))
@@ -2942,6 +3429,7 @@ class NinjaBackend(CommonBackend):
         for p in sorted_progs:
             out = p.output_path.full_path
             objs, shared_libs, os_libs, static_libs = self._expand_libs(p)
+            objs = self._adjusted_link_objs(p, objs)
             link_inputs = list(objs)
             for static_lib in static_libs:
                 link_inputs.append(self._lib_output_path(static_lib))
@@ -2973,6 +3461,7 @@ class NinjaBackend(CommonBackend):
         for lib in sorted_libs:
             out = self._lib_output_path(lib)
             objs, shared_libs, os_libs, static_libs = self._expand_libs(lib)
+            objs = self._adjusted_link_objs(lib, objs)
             link_inputs = list(objs)
             for static_lib in static_libs:
                 link_inputs.append(self._lib_output_path(static_lib))
