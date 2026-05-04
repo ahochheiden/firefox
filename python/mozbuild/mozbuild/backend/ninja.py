@@ -17,6 +17,7 @@ from mozbuild.backend.common import CommonBackend
 from mozbuild.backend.ninja_syntax import (
     NinjaWriter,
 )
+from mozbuild.backend.ninja_unified import NinjaUnifiedPlanner
 from mozbuild.backend.ninja_syntax import (
     path as n_path,
 )
@@ -91,6 +92,12 @@ class NinjaBackend(CommonBackend):
         # Collected objects, keyed by the directory they belong to.
         self._sources_by_dir = defaultdict(list)  # relobjdir -> [Sources, ...]
         self._unified_by_dir = defaultdict(list)  # relobjdir -> [UnifiedSources, ...]
+        # Planner that materializes UnifiedSources into `UnifiedChunk`
+        # objects. Phase 1: mirrors `unified_source_mapping` 1:1; later
+        # phases regroup chunks based on per-source compile fingerprints
+        # without changing the public surface here. Populated alongside
+        # `_unified_by_dir` so legacy bookkeeping is unaffected.
+        self._unified_planner = NinjaUnifiedPlanner()
         self._host_sources_by_dir = defaultdict(list)  # relobjdir -> [HostSources, ...]
         self._static_libs = []
         self._shared_libs = []
@@ -206,6 +213,7 @@ class NinjaBackend(CommonBackend):
         # types like UnifiedSources and would short-circuit this).
         if isinstance(obj, UnifiedSources):
             self._unified_by_dir[relobjdir].append(obj)
+            self._unified_planner.add_unified_sources(obj)
         elif isinstance(obj, Sources):
             self._sources_by_dir[relobjdir].append(obj)
         elif isinstance(obj, HostSources):
