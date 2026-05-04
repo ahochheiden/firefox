@@ -1772,7 +1772,7 @@ bool js::NativeDefineProperty(JSContext* cx, Handle<NativeObject*> obj,
         }
 
         bool same;
-        if (!SameValue(cx, desc.value(), currentValue, &same)) {
+        if (!js::SameValue(cx, desc.value(), currentValue, &same)) {
           return false;
         }
         if (!same) {

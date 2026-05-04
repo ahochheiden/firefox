@@ -2630,7 +2630,7 @@ void MConstant::truncate(TruncateKind kind) {
   MOZ_ASSERT(canTruncate());
 
   // Truncate the double to int, since all uses truncates it.
-  int32_t res = ToInt32(numberToDouble());
+  int32_t res = JS::ToInt32(numberToDouble());
   payload_.asBits = 0;
   payload_.i32 = res;
   setResultType(MIRType::Int32);

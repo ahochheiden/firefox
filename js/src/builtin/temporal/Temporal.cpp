@@ -69,7 +69,7 @@ using namespace js::temporal;
  * GetOption specialization when `type=string`. Default value handling must
  * happen in the caller, so we don't provide the `default` parameter here.
  */
-static bool GetStringOption(JSContext* cx, Handle<JSObject*> options,
+static bool GetStringOption_2(JSContext* cx, Handle<JSObject*> options,
                             Handle<PropertyName*> property,
                             MutableHandle<JSString*> string) {
   // Step 1.
@@ -282,7 +282,7 @@ bool js::temporal::GetTemporalUnitValuedOption(JSContext* cx,
 
   // Step 6.
   Rooted<JSString*> value(cx);
-  if (!GetStringOption(cx, options, ToPropertyName(cx, key), &value)) {
+  if (!GetStringOption_2(cx, options, ToPropertyName(cx, key), &value)) {
     return false;
   }
 
@@ -355,7 +355,7 @@ bool js::temporal::GetRoundingModeOption(JSContext* cx,
                                          TemporalRoundingMode* mode) {
   // Steps 1-2.
   Rooted<JSString*> string(cx);
-  if (!GetStringOption(cx, options, cx->names().roundingMode, &string)) {
+  if (!GetStringOption_2(cx, options, cx->names().roundingMode, &string)) {
     return false;
   }
 
@@ -715,7 +715,7 @@ bool js::temporal::GetTemporalShowCalendarNameOption(JSContext* cx,
                                                      ShowCalendar* result) {
   // Step 1.
   Rooted<JSString*> calendarName(cx);
-  if (!GetStringOption(cx, options, cx->names().calendarName, &calendarName)) {
+  if (!GetStringOption_2(cx, options, cx->names().calendarName, &calendarName)) {
     return false;
   }
 
@@ -916,7 +916,7 @@ bool js::temporal::GetTemporalOverflowOption(JSContext* cx,
                                              TemporalOverflow* result) {
   // Step 1.
   Rooted<JSString*> overflow(cx);
-  if (!GetStringOption(cx, options, cx->names().overflow, &overflow)) {
+  if (!GetStringOption_2(cx, options, cx->names().overflow, &overflow)) {
     return false;
   }
 
@@ -955,7 +955,7 @@ bool js::temporal::GetTemporalDisambiguationOption(
 
   // Step 2.
   Rooted<JSString*> string(cx);
-  if (!GetStringOption(cx, options, cx->names().disambiguation, &string)) {
+  if (!GetStringOption_2(cx, options, cx->names().disambiguation, &string)) {
     return false;
   }
 
@@ -998,7 +998,7 @@ bool js::temporal::GetTemporalOffsetOption(JSContext* cx,
 
   // Step 2.
   Rooted<JSString*> string(cx);
-  if (!GetStringOption(cx, options, cx->names().offset, &string)) {
+  if (!GetStringOption_2(cx, options, cx->names().offset, &string)) {
     return false;
   }
 
@@ -1039,7 +1039,7 @@ bool js::temporal::GetTemporalShowTimeZoneNameOption(JSContext* cx,
                                                      ShowTimeZoneName* result) {
   // Step 1.
   Rooted<JSString*> timeZoneName(cx);
-  if (!GetStringOption(cx, options, cx->names().timeZoneName, &timeZoneName)) {
+  if (!GetStringOption_2(cx, options, cx->names().timeZoneName, &timeZoneName)) {
     return false;
   }
 
@@ -1078,7 +1078,7 @@ bool js::temporal::GetTemporalShowOffsetOption(JSContext* cx,
                                                ShowOffset* result) {
   // Step 1.
   Rooted<JSString*> offset(cx);
-  if (!GetStringOption(cx, options, cx->names().offset, &offset)) {
+  if (!GetStringOption_2(cx, options, cx->names().offset, &offset)) {
     return false;
   }
 
@@ -1140,7 +1140,7 @@ bool js::temporal::GetDirectionOption(JSContext* cx, Handle<JSObject*> options,
                                       Direction* result) {
   // Step 1.
   Rooted<JSString*> direction(cx);
-  if (!GetStringOption(cx, options, cx->names().direction, &direction)) {
+  if (!GetStringOption_2(cx, options, cx->names().direction, &direction)) {
     return false;
   }
 

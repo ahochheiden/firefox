@@ -136,7 +136,7 @@ using namespace mozilla::image;
 using namespace mozilla::ipc;
 using namespace mozilla::layers;
 
-static mozilla::LazyLogModule gFingerprinterDetection("FingerprinterDetection");
+static mozilla::LazyLogModule gFingerprinterDetection_2("FingerprinterDetection");
 
 namespace mozilla::dom {
 
@@ -4575,7 +4575,7 @@ void CanvasRenderingContext2D::FillText(const nsAString& aText, double aX,
                                         ErrorResult& aError) {
   // We try to match the most commonly observed strings used by canvas
   // fingerprinting scripts.
-  MOZ_LOG(gFingerprinterDetection, LogLevel::Verbose,
+  MOZ_LOG(gFingerprinterDetection_2, LogLevel::Verbose,
           ("mFillTextCalls %i FillText: "
            "\"%s\"\n",
            mFillTextCalls, NS_ConvertUTF16toUTF8(aText).get()));

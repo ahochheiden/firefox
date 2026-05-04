@@ -74,6 +74,10 @@ EXPORTS.mozilla.image += [
     "WebRenderImageProvider.h",
 ]
 
+SOURCES += [
+    "DecoderFactory.cpp",
+]
+
 UNIFIED_SOURCES += [
     "AnimationFrameBuffer.cpp",
     "AnimationSurfaceProvider.cpp",
@@ -81,7 +85,6 @@ UNIFIED_SOURCES += [
     "ClippedImage.cpp",
     "DecodedSurfaceProvider.cpp",
     "Decoder.cpp",
-    "DecoderFactory.cpp",
     "DynamicImage.cpp",
     "FetchDecodedImage.cpp",
     "FrameAnimator.cpp",

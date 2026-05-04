@@ -6366,10 +6366,10 @@ bool WarpCacheIRTranspiler::emitCallFunction(
     }
 
     if (flags.getArgFormat() == CallFlags::FunCall) {
-      callInfo_->setInliningResumeMode(ResumeMode::InlinedFunCall);
+      callInfo_->setInliningResumeMode(jit::ResumeMode::InlinedFunCall);
     } else {
       MOZ_ASSERT(flags.getArgFormat() == CallFlags::Standard);
-      callInfo_->setInliningResumeMode(ResumeMode::InlinedStandardCall);
+      callInfo_->setInliningResumeMode(jit::ResumeMode::InlinedStandardCall);
     }
 
     switch (callInfo_->argFormat()) {
@@ -6573,7 +6573,7 @@ bool WarpCacheIRTranspiler::emitCallScriptedProxyGetShared(
 
   MResumePoint* resumePoint =
       MResumePoint::New(alloc(), current, loc_.toRawBytecode(),
-                        ResumeMode::ResumeAfterCheckProxyGetResult);
+                        jit::ResumeMode::ResumeAfterCheckProxyGetResult);
   if (!resumePoint) {
     return false;
   }
@@ -6959,7 +6959,7 @@ bool WarpCacheIRTranspiler::emitCallGetterResult(CallKind kind,
     // CallInfo to use the correct arguments. Code for the inlined getter
     // itself will be generated in WarpBuilder::buildInlinedCall.
     callInfo_->initForGetterCall(getter, receiver);
-    callInfo_->setInliningResumeMode(ResumeMode::InlinedAccessor);
+    callInfo_->setInliningResumeMode(jit::ResumeMode::InlinedAccessor);
 
     // Make sure there's enough room to push the arguments on the stack.
     if (!current->ensureHasSlots(2)) {
@@ -7030,7 +7030,7 @@ bool WarpCacheIRTranspiler::emitCallSetter(CallKind kind,
     // CallInfo to use the correct arguments. Code for the inlined setter
     // itself will be generated in WarpBuilder::buildInlinedCall.
     callInfo_->initForSetterCall(setter, receiver, rhs);
-    callInfo_->setInliningResumeMode(ResumeMode::InlinedAccessor);
+    callInfo_->setInliningResumeMode(jit::ResumeMode::InlinedAccessor);
 
     // Make sure there's enough room to push the arguments on the stack.
     if (!current->ensureHasSlots(3)) {
@@ -7171,7 +7171,7 @@ bool WarpCacheIRTranspiler::emitAssertRecoveredOnBailoutResult(
   add(nop);
 
   auto* resumePoint = MResumePoint::New(
-      alloc(), nop->block(), loc_.toRawBytecode(), ResumeMode::ResumeAfter);
+      alloc(), nop->block(), loc_.toRawBytecode(), jit::ResumeMode::ResumeAfter);
   if (!resumePoint) {
     return false;
   }
@@ -7288,7 +7288,7 @@ bool WarpCacheIRTranspiler::emitCloseIterScriptedResult(ObjOperandId iterId,
   current->push(call);
   MResumePoint* resumePoint =
       MResumePoint::New(alloc(), current, loc_.toRawBytecode(),
-                        ResumeMode::ResumeAfterCheckIsObject);
+                        jit::ResumeMode::ResumeAfterCheckIsObject);
   if (!resumePoint) {
     return false;
   }

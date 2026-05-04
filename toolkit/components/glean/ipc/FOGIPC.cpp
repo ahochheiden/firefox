@@ -109,7 +109,7 @@ struct ProcessEnergyMarker {
 
 namespace mozilla::glean {
 
-static LazyLogModule sLog("fog");
+static LazyLogModule sLog_2("fog");
 
 // Echoes processtools/metrics.yaml's power.wakeups_per_thread
 enum ProcessType {
@@ -470,7 +470,7 @@ void FlushFOGData(std::function<void(ipc::ByteBuf&&)>&& aResolver) {
 void FlushAllChildData(
     std::function<void(nsTArray<ipc::ByteBuf>&&)>&& aResolver) {
   auto timerId = fog_ipc::flush_durations.Start();
-  MOZ_LOG(sLog, LogLevel::Verbose, ("glean::FlushAllChildData: start"));
+  MOZ_LOG(sLog_2, LogLevel::Verbose, ("glean::FlushAllChildData: start"));
 
   nsTArray<ContentParent*> parents;
   ContentParent::GetAll(parents);
@@ -515,7 +515,7 @@ void FlushAllChildData(
 
   if (promises.Length() == 0) {
     // No child processes at the moment. Resolve synchronously.
-    MOZ_LOG(sLog, LogLevel::Verbose,
+    MOZ_LOG(sLog_2, LogLevel::Verbose,
             ("glean::FlushAllChildData: No child processes at the moment."));
     fog_ipc::flush_durations.Cancel(std::move(timerId));
     nsTArray<ipc::ByteBuf> results;
@@ -533,18 +533,18 @@ void FlushAllChildData(
             fog_ipc::flush_durations.StopAndAccumulate(std::move(timerId));
             if (aValue.IsResolve()) {
               MOZ_LOG(
-                  sLog, LogLevel::Verbose,
+                  sLog_2, LogLevel::Verbose,
                   ("glean::FlushAllChildData: AllSettled value is resolved"));
               nsTArray<ipc::ByteBuf> results;
               auto& allValues = aValue.ResolveValue();
               for (auto& value : allValues) {
                 if (value.IsResolve()) {
-                  MOZ_LOG(sLog, LogLevel::Verbose,
+                  MOZ_LOG(sLog_2, LogLevel::Verbose,
                           ("glean::FlushAllChildData: value is resolved, "
                            "appending element to results"));
                   results.AppendElement(std::move(value.ResolveValue()));
                 } else {
-                  MOZ_LOG(sLog, LogLevel::Verbose,
+                  MOZ_LOG(sLog_2, LogLevel::Verbose,
                           ("glean::FlushAllChildData: value is rejected, "
                            "appending 1 to flush rejections"));
                   fog_ipc::flush_rejections.Add(1);
@@ -552,7 +552,7 @@ void FlushAllChildData(
               }
               aResolver(std::move(results));
             } else {
-              MOZ_LOG(sLog, LogLevel::Verbose,
+              MOZ_LOG(sLog_2, LogLevel::Verbose,
                       ("glean::FlushAllChildData: AllSettled value is "
                        "rejected, adding %zu to flush failures count",
                        promiseCount));
@@ -561,7 +561,7 @@ void FlushAllChildData(
               aResolver(std::move(results));
             }
           });
-  MOZ_LOG(sLog, LogLevel::Verbose, ("glean::FlushAllChildData: end"));
+  MOZ_LOG(sLog_2, LogLevel::Verbose, ("glean::FlushAllChildData: end"));
 }
 
 /**

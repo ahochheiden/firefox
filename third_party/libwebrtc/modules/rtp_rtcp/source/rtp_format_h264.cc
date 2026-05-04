@@ -27,9 +27,9 @@
 namespace webrtc {
 namespace {
 
-constexpr size_t kNalHeaderSize = 1;
-constexpr size_t kFuAHeaderSize = 2;
-constexpr size_t kLengthFieldSize = 2;
+constexpr size_t kNalHeaderSize_2 = 1;
+constexpr size_t kFuAHeaderSize_2 = 2;
+constexpr size_t kLengthFieldSize_2 = 2;
 
 }  // namespace
 
@@ -104,7 +104,7 @@ bool RtpPacketizerH264::PacketizeFuA(size_t fragment_index) {
 
   PayloadSizeLimits limits = limits_;
   // Leave room for the FU-A header.
-  limits.max_payload_len -= kFuAHeaderSize;
+  limits.max_payload_len -= kFuAHeaderSize_2;
   // Update single/first/last packet reductions unless it is single/first/last
   // fragment.
   if (input_fragments_.size() != 1) {
@@ -124,8 +124,8 @@ bool RtpPacketizerH264::PacketizeFuA(size_t fragment_index) {
     limits.last_packet_reduction_len = 0;
 
   // Strip out the original header.
-  size_t payload_left = fragment.size() - kNalHeaderSize;
-  int offset = kNalHeaderSize;
+  size_t payload_left = fragment.size() - kNalHeaderSize_2;
+  int offset = kNalHeaderSize_2;
 
   std::vector<int> payload_sizes = SplitAboutEqually(payload_left, limits);
   if (payload_sizes.empty())
@@ -177,12 +177,12 @@ size_t RtpPacketizerH264::PacketizeStapA(size_t fragment_index) {
     payload_size_left -= fragment.size();
     payload_size_left -= fragment_headers_length;
 
-    fragment_headers_length = kLengthFieldSize;
+    fragment_headers_length = kLengthFieldSize_2;
     // If we are going to try to aggregate more fragments into this packet
     // we need to add the STAP-A NALU header and a length field for the first
     // NALU of this packet.
     if (aggregated_fragments == 0)
-      fragment_headers_length += kNalHeaderSize + kLengthFieldSize;
+      fragment_headers_length += kNalHeaderSize_2 + kLengthFieldSize_2;
     ++aggregated_fragments;
 
     // Next fragment.
@@ -246,7 +246,7 @@ bool RtpPacketizerH264::NextPacket(RtpPacketToSend* rtp_packet) {
 void RtpPacketizerH264::NextAggregatePacket(RtpPacketToSend* rtp_packet) {
   // Reserve maximum available payload, set actual payload size later.
   size_t payload_capacity = rtp_packet->FreeCapacity();
-  RTC_CHECK_GE(payload_capacity, kNalHeaderSize);
+  RTC_CHECK_GE(payload_capacity, kNalHeaderSize_2);
   uint8_t* buffer = rtp_packet->AllocatePayload(payload_capacity);
   RTC_DCHECK(buffer);
   PacketUnit* packet = &packets_.front();
@@ -254,14 +254,14 @@ void RtpPacketizerH264::NextAggregatePacket(RtpPacketToSend* rtp_packet) {
   // STAP-A NALU header.
   buffer[0] =
       (packet->header & (kH264FBit | kH264NriMask)) | H264::NaluType::kStapA;
-  size_t index = kNalHeaderSize;
+  size_t index = kNalHeaderSize_2;
   bool is_last_fragment = packet->last_fragment;
   while (packet->aggregated) {
     std::span<const uint8_t> fragment = packet->source_fragment;
-    RTC_CHECK_LE(index + kLengthFieldSize + fragment.size(), payload_capacity);
+    RTC_CHECK_LE(index + kLengthFieldSize_2 + fragment.size(), payload_capacity);
     // Add NAL unit length field.
     ByteWriter<uint16_t>::WriteBigEndian(&buffer[index], fragment.size());
-    index += kLengthFieldSize;
+    index += kLengthFieldSize_2;
     // Add NAL unit.
     memcpy(&buffer[index], fragment.data(), fragment.size());
     index += fragment.size();
@@ -292,10 +292,10 @@ void RtpPacketizerH264::NextFragmentPacket(RtpPacketToSend* rtp_packet) {
   fu_header |= type;
   std::span<const uint8_t> fragment = packet->source_fragment;
   uint8_t* buffer =
-      rtp_packet->AllocatePayload(kFuAHeaderSize + fragment.size());
+      rtp_packet->AllocatePayload(kFuAHeaderSize_2 + fragment.size());
   buffer[0] = fu_indicator;
   buffer[1] = fu_header;
-  memcpy(buffer + kFuAHeaderSize, fragment.data(), fragment.size());
+  memcpy(buffer + kFuAHeaderSize_2, fragment.data(), fragment.size());
   if (packet->last_fragment)
     input_fragments_.pop_front();
   packets_.pop();

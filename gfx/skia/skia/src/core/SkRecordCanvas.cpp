@@ -444,3 +444,5 @@ void SkRecordCanvas::onResetClip() {
 sk_sp<SkSurface> SkRecordCanvas::onNewSurface(const SkImageInfo&, const SkSurfaceProps&) {
     return nullptr;
 }
+
+#undef INHERITED

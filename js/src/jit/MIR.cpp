@@ -2773,6 +2773,8 @@ void MCallBase::addArg(size_t argnum, MDefinition* arg) {
   initOperand(argnum + NumNonArgumentOperands, arg);
 }
 
+namespace js::jit {
+
 static inline bool IsConstant(MDefinition* def, double v) {
   if (!def->isConstant()) {
     return false;
@@ -2796,6 +2798,8 @@ static inline bool IsConstantIntPtr(MDefinition* def, intptr_t v) {
 
   return def->toConstant()->toIntPtr() == v;
 }
+
+}  // namespace js::jit
 
 MDefinition* MBinaryBitwiseInstruction::foldsTo(TempAllocator& alloc) {
   // Identity operations are removed (for int32 only) in foldUnnecessaryBitop.
@@ -4719,7 +4723,7 @@ MDefinition* MTruncateToInt32::foldsTo(TempAllocator& alloc) {
   }
 
   if (input->type() == MIRType::Double && input->isConstant()) {
-    int32_t ret = ToInt32(input->toConstant()->toDouble());
+    int32_t ret = JS::ToInt32(input->toConstant()->toDouble());
     return MConstant::NewInt32(alloc, ret);
   }
 

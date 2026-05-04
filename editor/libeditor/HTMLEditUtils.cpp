@@ -51,6 +51,10 @@
 #include "nsStyleUtil.h"    // for nsStyleUtil
 #include "nsTextFrame.h"    // for nsTextFrame
 
+#ifdef small
+#  undef small
+#endif
+
 namespace mozilla {
 
 using namespace dom;

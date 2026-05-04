@@ -29,9 +29,9 @@
 using namespace skia_private;
 
 #if defined(SK_BUILD_FOR_DEBUGGER)
-    constexpr bool kLenientSkSLDeserialization = true;
+    constexpr bool kLenientSkSLDeserialization_3 = true;
 #else
-    constexpr bool kLenientSkSLDeserialization = false;
+    constexpr bool kLenientSkSLDeserialization_3 = false;
 #endif
 
 void SkRuntimeBlender::flatten(SkWriteBuffer& buffer) const {
@@ -65,7 +65,7 @@ sk_sp<SkFlattenable> SkRuntimeBlender::CreateProc(SkReadBuffer& buffer) {
         buffer.readString(&sksl);
         effect = SkMakeCachedRuntimeEffect(SkRuntimeEffect::MakeForBlender, std::move(sksl));
     }
-    if constexpr (!kLenientSkSLDeserialization) {
+    if constexpr (!kLenientSkSLDeserialization_3) {
         if (!buffer.validate(effect != nullptr)) {
             return nullptr;
         }
@@ -78,7 +78,7 @@ sk_sp<SkFlattenable> SkRuntimeBlender::CreateProc(SkReadBuffer& buffer) {
         return nullptr;
     }
 
-    if constexpr (kLenientSkSLDeserialization) {
+    if constexpr (kLenientSkSLDeserialization_3) {
         if (!effect) {
             SkDebugf("Serialized SkSL failed to compile. Ignoring/dropping SkSL blender.\n");
             return nullptr;

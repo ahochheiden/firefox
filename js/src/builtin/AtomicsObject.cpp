@@ -262,7 +262,7 @@ struct ArrayOps<uint64_t> {
 // 24.4.4 Atomics.compareExchange ( typedArray, index, ... ), steps 1-2.
 // 24.4.9 Atomics.store ( typedArray, index, value ), steps 1-2.
 template <typename Op>
-static bool AtomicAccess(JSContext* cx, HandleValue obj, HandleValue index,
+static bool AtomicAccessOp(JSContext* cx, HandleValue obj, HandleValue index,
                          AccessMode accessMode, Op op) {
   // Step 1.
   Rooted<TypedArrayObject*> unwrappedTypedArray(cx);
@@ -336,7 +336,7 @@ static bool atomics_compareExchange(JSContext* cx, unsigned argc, Value* vp) {
   HandleValue typedArray = args.get(0);
   HandleValue index = args.get(1);
 
-  return AtomicAccess(
+  return AtomicAccessOp(
       cx, typedArray, index, AccessMode::Write,
       [cx, &args](auto ops, Handle<TypedArrayObject*> unwrappedTypedArray,
                   size_t index) {
@@ -373,7 +373,7 @@ static bool atomics_load(JSContext* cx, unsigned argc, Value* vp) {
   HandleValue typedArray = args.get(0);
   HandleValue index = args.get(1);
 
-  return AtomicAccess(
+  return AtomicAccessOp(
       cx, typedArray, index, AccessMode::Read,
       [cx, &args](auto ops, Handle<TypedArrayObject*> unwrappedTypedArray,
                   size_t index) {
@@ -398,7 +398,7 @@ static bool atomics_store(JSContext* cx, unsigned argc, Value* vp) {
   HandleValue typedArray = args.get(0);
   HandleValue index = args.get(1);
 
-  return AtomicAccess(
+  return AtomicAccessOp(
       cx, typedArray, index, AccessMode::Write,
       [cx, &args](auto ops, Handle<TypedArrayObject*> unwrappedTypedArray,
                   size_t index) {
@@ -428,7 +428,7 @@ static bool AtomicReadModifyWrite(JSContext* cx, const CallArgs& args,
   HandleValue typedArray = args.get(0);
   HandleValue index = args.get(1);
 
-  return AtomicAccess(
+  return AtomicAccessOp(
       cx, typedArray, index, AccessMode::Write,
       [cx, &args, op](auto ops, Handle<TypedArrayObject*> unwrappedTypedArray,
                       size_t index) {

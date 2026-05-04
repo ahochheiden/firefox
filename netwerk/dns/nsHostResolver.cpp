@@ -55,6 +55,10 @@
 #  include "mozilla/jni/Utils.h"
 #endif
 
+#ifdef GetAddrInfo
+#  undef GetAddrInfo
+#endif
+
 #define IS_ADDR_TYPE(_type) ((_type) == nsIDNSService::RESOLVE_TYPE_DEFAULT)
 #define IS_OTHER_TYPE(_type) ((_type) != nsIDNSService::RESOLVE_TYPE_DEFAULT)
 

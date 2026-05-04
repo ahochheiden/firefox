@@ -32,7 +32,7 @@
 
 namespace mozilla::dom {
 
-static mozilla::LazyLogModule gFingerprinterDetection("FingerprinterDetection");
+static mozilla::LazyLogModule gFingerprinterDetection_3("FingerprinterDetection");
 
 OffscreenCanvasCloneData::OffscreenCanvasCloneData(
     OffscreenCanvasDisplayHelper* aDisplay, nsAtom* aLang, uint32_t aWidth,
@@ -645,7 +645,7 @@ FontVisibility OffscreenCanvas::GetFontVisibility() const {
 }
 
 void OffscreenCanvas::ReportBlockedFontFamily(const nsCString& aMsg) const {
-  MOZ_LOG(gFingerprinterDetection, mozilla::LogLevel::Info, ("%s", aMsg.get()));
+  MOZ_LOG(gFingerprinterDetection_3, mozilla::LogLevel::Info, ("%s", aMsg.get()));
   if (Maybe<uint64_t> windowID = GetWindowID()) {
     nsContentUtils::ReportToConsoleByWindowID(NS_ConvertUTF8toUTF16(aMsg),
                                               nsIScriptError::warningFlag,

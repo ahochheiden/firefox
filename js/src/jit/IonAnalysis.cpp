@@ -118,7 +118,7 @@ static void EliminateTriviallyDeadResumePointOperands(MIRGraph& graph,
                                                       MResumePoint* rp) {
   // If we will pop the top of the stack immediately after resuming,
   // then don't preserve the top value in the resume point.
-  if (rp->mode() != ResumeMode::ResumeAt) {
+  if (rp->mode() != jit::ResumeMode::ResumeAt) {
     return;
   }
 

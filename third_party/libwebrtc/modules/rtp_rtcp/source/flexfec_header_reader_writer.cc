@@ -26,15 +26,15 @@ namespace webrtc {
 namespace {
 
 // Maximum number of media packets that can be protected in one batch.
-constexpr size_t kMaxMediaPackets = 48;  // Since we are reusing ULPFEC masks.
+constexpr size_t kMaxMediaPackets_2 = 48;  // Since we are reusing ULPFEC masks.
 
 // Maximum number of media packets tracked by FEC decoder.
-// Maintain a sufficiently larger tracking window than `kMaxMediaPackets`
+// Maintain a sufficiently larger tracking window than `kMaxMediaPackets_2`
 // to account for packet reordering in pacer/ network.
-constexpr size_t kMaxTrackedMediaPackets = 4 * kMaxMediaPackets;
+constexpr size_t kMaxTrackedMediaPackets_2 = 4 * kMaxMediaPackets_2;
 
 // Maximum number of FEC packets stored inside ForwardErrorCorrection.
-constexpr size_t kMaxFecPackets = kMaxMediaPackets;
+constexpr size_t kMaxFecPackets_2 = kMaxMediaPackets_2;
 
 // Size (in bytes) of packet masks, given number of K bits set.
 constexpr size_t kFlexfecPacketMaskSizes[] = {2, 6, 14};
@@ -69,7 +69,7 @@ size_t FlexfecHeaderSize(size_t packet_mask_size) {
 }  // namespace
 
 FlexfecHeaderReader::FlexfecHeaderReader()
-    : FecHeaderReader(kMaxTrackedMediaPackets, kMaxFecPackets) {}
+    : FecHeaderReader(kMaxTrackedMediaPackets_2, kMaxFecPackets_2) {}
 
 FlexfecHeaderReader::~FlexfecHeaderReader() = default;
 
@@ -208,7 +208,7 @@ bool FlexfecHeaderReader::ReadFecHeader(
 }
 
 FlexfecHeaderWriter::FlexfecHeaderWriter()
-    : FecHeaderWriter(kMaxMediaPackets, kMaxFecPackets, kHeaderSizes[2]) {}
+    : FecHeaderWriter(kMaxMediaPackets_2, kMaxFecPackets_2, kHeaderSizes[2]) {}
 
 FlexfecHeaderWriter::~FlexfecHeaderWriter() = default;
 

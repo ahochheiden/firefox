@@ -23,8 +23,8 @@
 namespace webrtc {
 namespace {
 
-constexpr size_t kGenericHeaderLength = 1;
-constexpr size_t kExtendedHeaderLength = 2;
+constexpr size_t kGenericHeaderLength_2 = 1;
+constexpr size_t kExtendedHeaderLength_2 = 2;
 
 }  // namespace
 
@@ -86,7 +86,7 @@ bool RtpPacketizerGeneric::NextPacket(RtpPacketToSend* packet) {
 }
 
 void RtpPacketizerGeneric::BuildHeader(const RTPVideoHeader& rtp_video_header) {
-  header_size_ = kGenericHeaderLength;
+  header_size_ = kGenericHeaderLength_2;
   header_[0] = RtpFormatVideoGeneric::kFirstPacketBit;
   if (rtp_video_header.frame_type == VideoFrameType::kVideoFrameKey) {
     header_[0] |= RtpFormatVideoGeneric::kKeyFrameBit;
@@ -99,7 +99,7 @@ void RtpPacketizerGeneric::BuildHeader(const RTPVideoHeader& rtp_video_header) {
     header_[0] |= RtpFormatVideoGeneric::kExtendedHeaderBit;
     header_[1] = (picture_id >> 8) & 0x7F;
     header_[2] = picture_id & 0xFF;
-    header_size_ += kExtendedHeaderLength;
+    header_size_ += kExtendedHeaderLength_2;
   }
 }
 }  // namespace webrtc

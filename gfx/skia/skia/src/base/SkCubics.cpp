@@ -148,7 +148,7 @@ int SkCubics::RootsValidT(double A, double B, double C, double D,
     return foundRoots;
 }
 
-static bool approximately_zero(double x) {
+static bool approximately_zero_2(double x) {
     // This cutoff for our binary search hopefully strikes a good balance between
     // performance and accuracy.
     return std::abs(x) < 0.00000001;
@@ -174,7 +174,7 @@ static int find_extrema_valid_t(double A, double B, double C,
 static double binary_search(double A, double B, double C, double D, double start, double stop) {
     SkASSERT(start <= stop);
     double left = SkCubics::EvalAt(A, B, C, D, start);
-    if (approximately_zero(left)) {
+    if (approximately_zero_2(left)) {
         return start;
     }
     double right = SkCubics::EvalAt(A, B, C, D, stop);
@@ -189,7 +189,7 @@ static double binary_search(double A, double B, double C, double D, double start
     for (int i = 0; i < maxIterations; i++) {
         double step = (start + stop) / 2;
         double curr = SkCubics::EvalAt(A, B, C, D, step);
-        if (approximately_zero(curr)) {
+        if (approximately_zero_2(curr)) {
             return step;
         }
         if ((curr < 0 && left < 0) || (curr > 0 && left > 0)) {
@@ -229,8 +229,8 @@ int SkCubics::BinarySearchRootsValidT(double A, double B, double C, double D,
         double root = binary_search(A, B, C, D, regions[startIndex], regions[startIndex + 1]);
         if (root >= 0) {
             // Check for duplicates
-            if ((foundRoots < 1 || !approximately_zero(solution[0] - root)) &&
-                (foundRoots < 2 || !approximately_zero(solution[1] - root))) {
+            if ((foundRoots < 1 || !approximately_zero_2(solution[0] - root)) &&
+                (foundRoots < 2 || !approximately_zero_2(solution[1] - root))) {
                 solution[foundRoots++] = root;
             }
         }

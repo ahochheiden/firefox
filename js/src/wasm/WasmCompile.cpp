@@ -373,7 +373,7 @@ SharedCompileArgs CompileArgs::buildAndReport(JSContext* cx,
 }
 
 BytecodeSource::BytecodeSource(const uint8_t* begin, size_t length) {
-  BytecodeRange codeRange;
+  wasm::BytecodeRange codeRange;
   if (!StartsCodeSection(begin, begin + length, &codeRange)) {
     env_ = BytecodeSpan(begin, length);
     code_ = BytecodeSpan();
@@ -381,19 +381,19 @@ BytecodeSource::BytecodeSource(const uint8_t* begin, size_t length) {
     return;
   }
 
-  BytecodeRange envRange;
-  BytecodeRange tailRange;
+  wasm::BytecodeRange envRange;
+  wasm::BytecodeRange tailRange;
   if (codeRange.end <= length) {
-    envRange = BytecodeRange(0, codeRange.start);
-    tailRange = BytecodeRange(codeRange.end, length - codeRange.end);
+    envRange = wasm::BytecodeRange(0, codeRange.start);
+    tailRange = wasm::BytecodeRange(codeRange.end, length - codeRange.end);
   } else {
     MOZ_RELEASE_ASSERT(codeRange.start <= length);
     // If the specified code range is larger than the buffer, clamp it to the
     // the buffer size. This buffer will be rejected later.
-    envRange = BytecodeRange(0, codeRange.start);
-    codeRange = BytecodeRange(codeRange.start, length - codeRange.start);
+    envRange = wasm::BytecodeRange(0, codeRange.start);
+    codeRange = wasm::BytecodeRange(codeRange.start, length - codeRange.start);
     MOZ_RELEASE_ASSERT(codeRange.end == length);
-    tailRange = BytecodeRange(length, 0);
+    tailRange = wasm::BytecodeRange(length, 0);
   }
 
   BytecodeSpan module(begin, length);
@@ -904,7 +904,7 @@ void CompilerEnvironment::computeParameters(const ModuleMetadata& moduleMeta) {
 }
 
 template <class DecoderT, class ModuleGeneratorT>
-static bool DecodeFunctionBody(DecoderT& d, ModuleGeneratorT& mg,
+static bool DecodeFunctionBodyForCompile(DecoderT& d, ModuleGeneratorT& mg,
                                uint32_t funcIndex) {
   uint32_t bodySize;
   if (!d.readVarU32(&bodySize)) {
@@ -950,7 +950,7 @@ static bool DecodeCodeSection(const CodeMetadata& codeMeta, DecoderT& d,
   }
 
   for (uint32_t funcDefIndex = 0; funcDefIndex < numFuncDefs; funcDefIndex++) {
-    if (!DecodeFunctionBody(d, mg, codeMeta.numFuncImports + funcDefIndex)) {
+    if (!DecodeFunctionBodyForCompile(d, mg, codeMeta.numFuncImports + funcDefIndex)) {
       return false;
     }
   }
@@ -1088,7 +1088,7 @@ bool wasm::CompilePartialTier2(const Code& code, uint32_t funcIndex,
     return false;
   }
 
-  const BytecodeRange& funcRange = code.codeTailMeta().funcDefRange(funcIndex);
+  const wasm::BytecodeRange& funcRange = code.codeTailMeta().funcDefRange(funcIndex);
   BytecodeSpan funcBytecode = code.codeTailMeta().funcDefBody(funcIndex);
 
   // The following sequence will compile/finish this function, on this thread.
@@ -1140,7 +1140,7 @@ class StreamingDecoder {
     return waitForBytes(size) && d_.readBytes(size, begin);
   }
 
-  bool finishSection(const BytecodeRange& range, const char* name) {
+  bool finishSection(const wasm::BytecodeRange& range, const char* name) {
     return d_.finishSection(range, name);
   }
 };

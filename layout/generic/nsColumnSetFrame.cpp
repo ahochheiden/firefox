@@ -397,7 +397,7 @@ nsColumnSetFrame::ReflowConfig nsColumnSetFrame::ChooseColumnStrategy(
   return config;
 }
 
-static void MarkPrincipalChildrenDirty(nsIFrame* aFrame) {
+static void MarkPrincipalChildrenDirty_2(nsIFrame* aFrame) {
   for (nsIFrame* childFrame : aFrame->PrincipalChildList()) {
     childFrame->MarkSubtreeDirty();
   }
@@ -1131,7 +1131,7 @@ void nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
     aConfig.mColBSize = nextGuess;
 
     aUnboundedLastColumn = false;
-    MarkPrincipalChildrenDirty(this);
+    MarkPrincipalChildrenDirty_2(this);
     aColData =
         ReflowColumns(aDesiredSize, aReflowInput, aStatus, aConfig, false);
 
@@ -1189,7 +1189,7 @@ void nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
     const bool forceUnboundedLastColumn =
         aReflowInput.mParentReflowInput->AvailableBSize() ==
         NS_UNCONSTRAINEDSIZE;
-    MarkPrincipalChildrenDirty(this);
+    MarkPrincipalChildrenDirty_2(this);
     ReflowColumns(aDesiredSize, aReflowInput, aStatus, aConfig,
                   forceUnboundedLastColumn);
   }
@@ -1262,7 +1262,7 @@ void nsColumnSetFrame::Reflow(nsPresContext* aPresContext,
     if (!HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
       // We need to reflow everything when we are in an incremental measuring
       // reflow.
-      MarkPrincipalChildrenDirty(this);
+      MarkPrincipalChildrenDirty_2(this);
     }
 
     ReflowConfig measuringConfig = config;
@@ -1288,7 +1288,7 @@ void nsColumnSetFrame::Reflow(nsPresContext* aPresContext,
     }
 
     // Mark columns dirty for normal reflow below.
-    MarkPrincipalChildrenDirty(this);
+    MarkPrincipalChildrenDirty_2(this);
   }
 
   // If balancing, then we allow the last column to grow to unbounded

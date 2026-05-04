@@ -34,9 +34,9 @@
 #include <utility>
 
 #if defined(SK_BUILD_FOR_DEBUGGER)
-    constexpr bool kLenientSkSLDeserialization = true;
+    constexpr bool kLenientSkSLDeserialization_2 = true;
 #else
-    constexpr bool kLenientSkSLDeserialization = false;
+    constexpr bool kLenientSkSLDeserialization_2 = false;
 #endif
 
 SkRuntimeColorFilter::SkRuntimeColorFilter(sk_sp<SkRuntimeEffect> effect,
@@ -105,7 +105,7 @@ sk_sp<SkFlattenable> SkRuntimeColorFilter::CreateProc(SkReadBuffer& buffer) {
         buffer.readString(&sksl);
         effect = SkMakeCachedRuntimeEffect(SkRuntimeEffect::MakeForColorFilter, std::move(sksl));
     }
-    if constexpr (!kLenientSkSLDeserialization) {
+    if constexpr (!kLenientSkSLDeserialization_2) {
         if (!buffer.validate(effect != nullptr)) {
             return nullptr;
         }
@@ -118,7 +118,7 @@ sk_sp<SkFlattenable> SkRuntimeColorFilter::CreateProc(SkReadBuffer& buffer) {
         return nullptr;
     }
 
-    if constexpr (kLenientSkSLDeserialization) {
+    if constexpr (kLenientSkSLDeserialization_2) {
         if (!effect) {
             SkDebugf("Serialized SkSL failed to compile. Ignoring/dropping SkSL color filter.\n");
             return nullptr;

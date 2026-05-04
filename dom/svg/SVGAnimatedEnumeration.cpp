@@ -44,7 +44,7 @@ class MOZ_RAII AutoChangeEnumNotifier {
 
 constinit static SVGAttrTearoffTable<SVGAnimatedEnumeration,
                                      SVGAnimatedEnumeration::DOMAnimatedEnum>
-    sSVGAnimatedEnumTearoffTable;
+    sSVGAnimatedEnumTearoffTable_2;
 
 const SVGEnumMapping* SVGAnimatedEnumeration::GetMapping(
     SVGElement* aSVGElement) {
@@ -131,17 +131,17 @@ void SVGAnimatedEnumeration::SetAnimValue(uint16_t aValue,
 already_AddRefed<DOMSVGAnimatedEnumeration>
 SVGAnimatedEnumeration::ToDOMAnimatedEnum(SVGElement* aSVGElement) {
   RefPtr<DOMAnimatedEnum> domAnimatedEnum =
-      sSVGAnimatedEnumTearoffTable.GetTearoff(this);
+      sSVGAnimatedEnumTearoffTable_2.GetTearoff(this);
   if (!domAnimatedEnum) {
     domAnimatedEnum = new DOMAnimatedEnum(this, aSVGElement);
-    sSVGAnimatedEnumTearoffTable.AddTearoff(this, domAnimatedEnum);
+    sSVGAnimatedEnumTearoffTable_2.AddTearoff(this, domAnimatedEnum);
   }
 
   return domAnimatedEnum.forget();
 }
 
 SVGAnimatedEnumeration::DOMAnimatedEnum::~DOMAnimatedEnum() {
-  sSVGAnimatedEnumTearoffTable.RemoveTearoff(mVal);
+  sSVGAnimatedEnumTearoffTable_2.RemoveTearoff(mVal);
 }
 
 std::unique_ptr<SMILAttr> SVGAnimatedEnumeration::ToSMILAttr(

@@ -110,7 +110,7 @@ static int32_t ISODaysInYear(int32_t year) {
 /**
  * ISODaysInMonth ( year, month )
  */
-static constexpr int32_t ISODaysInMonth(int32_t year, int32_t month) {
+static constexpr int32_t ISODaysInMonthHelper(int32_t year, int32_t month) {
   MOZ_ASSERT(1 <= month && month <= 12);
 
   constexpr uint8_t daysInMonth[2][13] = {
@@ -125,7 +125,7 @@ static constexpr int32_t ISODaysInMonth(int32_t year, int32_t month) {
  * ISODaysInMonth ( year, month )
  */
 int32_t js::temporal::ISODaysInMonth(int32_t year, int32_t month) {
-  return ::ISODaysInMonth(year, month);
+  return ::ISODaysInMonthHelper(year, month);
 }
 
 /**
@@ -171,7 +171,7 @@ static constexpr auto FirstDayOfMonth(int32_t year) {
   // month, where index 0 is January, and day 0 is January 1.
   std::array<int32_t, 13> days = {};
   for (int32_t month = 1; month <= 12; ++month) {
-    days[month] = days[month - 1] + ::ISODaysInMonth(year, month);
+    days[month] = days[month - 1] + ::ISODaysInMonthHelper(year, month);
   }
   return days;
 }
@@ -1741,7 +1741,7 @@ static ISODate ToISODate(const icu4x::capi::Date* date) {
   MOZ_ASSERT(1 <= isoMonth && isoMonth <= 12);
 
   int32_t isoDay = icu4x::capi::icu4x_IsoDate_day_of_month_mv1(isoDate.get());
-  MOZ_ASSERT(1 <= isoDay && isoDay <= ::ISODaysInMonth(isoYear, isoMonth));
+  MOZ_ASSERT(1 <= isoDay && isoDay <= ::ISODaysInMonthHelper(isoYear, isoMonth));
 
   return {isoYear, isoMonth, isoDay};
 }
@@ -1801,7 +1801,7 @@ static bool RegulateISODate(JSContext* cx, int32_t year, double month,
     int32_t m = int32_t(std::clamp(month, 1.0, 12.0));
 
     // Step 1.b.
-    double daysInMonth = double(::ISODaysInMonth(year, m));
+    double daysInMonth = double(::ISODaysInMonthHelper(year, m));
 
     // Step 1.c.
     int32_t d = int32_t(std::clamp(day, 1.0, daysInMonth));
@@ -2781,7 +2781,7 @@ bool js::temporal::CalendarDaysInMonth(JSContext* cx,
 
   // Step 1.
   if (calendarId == CalendarId::ISO8601) {
-    result.setInt32(::ISODaysInMonth(date.year, date.month));
+    result.setInt32(::ISODaysInMonthHelper(date.year, date.month));
     return true;
   }
 
@@ -3147,7 +3147,7 @@ static ISODate ConstrainISODate(const ISODate& date) {
   int32_t m = std::clamp(month, 1, 12);
 
   // Step 1.b.
-  int32_t daysInMonth = ::ISODaysInMonth(year, m);
+  int32_t daysInMonth = ::ISODaysInMonthHelper(year, m);
 
   // Step 1.c.
   int32_t d = std::clamp(day, 1, daysInMonth);

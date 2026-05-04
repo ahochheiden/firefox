@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <cstdint>
 
-struct SkSFNTHeader {
+struct SkFontStreamSFNTHeader {
     uint32_t    fVersion;
     uint16_t    fNumTables;
     uint16_t    fSearchRange;
@@ -32,7 +32,7 @@ struct SkTTCFHeader {
 };
 
 union SkSharedTTHeader {
-    SkSFNTHeader    fSingle;
+    SkFontStreamSFNTHeader    fSingle;
     SkTTCFHeader    fCollection;
 };
 
@@ -68,7 +68,7 @@ static int count_tables(SkStream* stream, int ttcIndex, size_t* offsetToDir) {
         return 0;
     }
 
-    // by default, SkSFNTHeader is at the start of the stream
+    // by default, SkFontStreamSFNTHeader is at the start of the stream
     size_t offset = 0;
 
     // if we're really a collection, the first 4-bytes will be 'ttcf'
@@ -87,20 +87,20 @@ static int count_tables(SkStream* stream, int ttcIndex, size_t* offsetToDir) {
                 return 0;
             }
         }
-        // this is the offset to the local SkSFNTHeader
+        // this is the offset to the local SkFontStreamSFNTHeader
         offset = SkEndian_SwapBE32((&header->fCollection.fOffset0)[ttcIndex]);
         stream->rewind();
         if (!skip(stream, offset)) {
             return 0;
         }
-        if (!read(stream, header, sizeof(SkSFNTHeader))) {
+        if (!read(stream, header, sizeof(SkFontStreamSFNTHeader))) {
             return 0;
         }
     }
 
     if (offsetToDir) {
         // add the size of the header, so we will point to the DirEntries
-        *offsetToDir = offset + sizeof(SkSFNTHeader);
+        *offsetToDir = offset + sizeof(SkFontStreamSFNTHeader);
     }
     return SkEndian_SwapBE16(header->fSingle.fNumTables);
 }

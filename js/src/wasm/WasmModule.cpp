@@ -260,18 +260,18 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
 
   buildId->infallibleAppend('m');
   buildId->infallibleAppend(
-      wasm::IsHugeMemoryEnabled(AddressType::I32, PageSize::Standard) ? '+'
+      wasm::IsHugeMemoryEnabled(AddressType::I32, wasm::PageSize::Standard) ? '+'
                                                                       : '-');
   buildId->infallibleAppend(
-      wasm::IsHugeMemoryEnabled(AddressType::I64, PageSize::Standard) ? '+'
+      wasm::IsHugeMemoryEnabled(AddressType::I64, wasm::PageSize::Standard) ? '+'
                                                                       : '-');
 
   // We don't expect huge memory to be supported if custom page sizes are used.
 #ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
   MOZ_RELEASE_ASSERT(
-      !wasm::IsHugeMemoryEnabled(AddressType::I32, PageSize::Tiny));
+      !wasm::IsHugeMemoryEnabled(AddressType::I32, wasm::PageSize::Tiny));
   MOZ_RELEASE_ASSERT(
-      !wasm::IsHugeMemoryEnabled(AddressType::I64, PageSize::Tiny));
+      !wasm::IsHugeMemoryEnabled(AddressType::I64, wasm::PageSize::Tiny));
 #endif
 
   return true;
@@ -491,8 +491,8 @@ static bool CheckSharing(JSContext* cx, bool declaredShared, bool isShared) {
 }
 
 #ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
-static bool CheckPageSize(JSContext* cx, PageSize declaredPageSize,
-                          PageSize actualPageSize) {
+static bool CheckPageSize(JSContext* cx, wasm::PageSize declaredPageSize,
+                          wasm::PageSize actualPageSize) {
   if (declaredPageSize != actualPageSize) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_IMP_PAGE_SIZE);

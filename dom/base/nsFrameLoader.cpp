@@ -129,7 +129,6 @@
 #endif  // defined(MOZ_TELEMETRY_REPORTING)
 
 using namespace mozilla;
-using namespace mozilla::hal;
 using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
 using namespace mozilla::ipc;

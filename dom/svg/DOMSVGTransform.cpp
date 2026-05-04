@@ -15,7 +15,7 @@
 #include "nsError.h"
 
 namespace {
-const double kRadPerDegree = 2.0 * M_PI / 360.0;
+const double kRadPerDegree_2 = 2.0 * M_PI / 360.0;
 }  // namespace
 
 namespace mozilla::dom {
@@ -208,7 +208,7 @@ void DOMSVGTransform::SetSkewX(float angle, ErrorResult& aRv) {
     return;
   }
 
-  if (!std::isfinite(tan(angle * kRadPerDegree))) {
+  if (!std::isfinite(tan(angle * kRadPerDegree_2))) {
     aRv.ThrowRangeError<MSG_INVALID_TRANSFORM_ANGLE_ERROR>();
     return;
   }
@@ -229,7 +229,7 @@ void DOMSVGTransform::SetSkewY(float angle, ErrorResult& aRv) {
     return;
   }
 
-  if (!std::isfinite(tan(angle * kRadPerDegree))) {
+  if (!std::isfinite(tan(angle * kRadPerDegree_2))) {
     aRv.ThrowRangeError<MSG_INVALID_TRANSFORM_ANGLE_ERROR>();
     return;
   }

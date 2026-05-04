@@ -117,7 +117,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
 
   jsbytecode* pc_ = nullptr;
   JSOp op_ = JSOp::Nop;
-  mozilla::Maybe<ResumeMode> resumeMode_;
+  mozilla::Maybe<jit::ResumeMode> resumeMode_;
   uint32_t exprStackSlots_ = 0;
   void* prevFramePtr_ = nullptr;
   Maybe<BufferPointer<BaselineFrame>> blFrame_;
@@ -247,10 +247,10 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
     return !catchingException() && iter_.resumeAfter();
   }
 
-  ResumeMode resumeMode() const { return *resumeMode_; }
+  jit::ResumeMode resumeMode() const { return *resumeMode_; }
 
   bool needToSaveCallerArgs() const {
-    return resumeMode() == ResumeMode::InlinedAccessor;
+    return resumeMode() == jit::ResumeMode::InlinedAccessor;
   }
 
   [[nodiscard]] bool enlarge() {
@@ -454,11 +454,11 @@ BaselineStackBuilder::BaselineStackBuilder(JSContext* cx,
 }
 
 bool BaselineStackBuilder::initFrame() {
-  // Get the pc and ResumeMode. If we are handling an exception, resume at the
+  // Get the pc and jit::ResumeMode. If we are handling an exception, resume at the
   // pc of the catch or finally block.
   if (catchingException()) {
     pc_ = excInfo_->resumePC();
-    resumeMode_ = mozilla::Some(ResumeMode::ResumeAt);
+    resumeMode_ = mozilla::Some(jit::ResumeMode::ResumeAt);
   } else {
     pc_ = script_->offsetToPC(iter_.pcOffset());
     resumeMode_ = mozilla::Some(iter_.resumeMode());
@@ -731,20 +731,20 @@ bool BaselineStackBuilder::fixUpCallerArgs(
   // Inlining of SpreadCall-like frames not currently supported.
   MOZ_ASSERT(!IsSpreadOp(op_));
 
-  if (resumeMode() != ResumeMode::InlinedFunCall && !needToSaveCallerArgs()) {
+  if (resumeMode() != jit::ResumeMode::InlinedFunCall && !needToSaveCallerArgs()) {
     return true;
   }
 
   // Calculate how many arguments are consumed by the inlined call.
   // All calls pass |callee| and |this|.
   uint32_t inlinedArgs = 2;
-  if (resumeMode() == ResumeMode::InlinedFunCall) {
+  if (resumeMode() == jit::ResumeMode::InlinedFunCall) {
     // The first argument to an inlined FunCall becomes |this|,
     // if it exists. The rest are passed normally.
     MOZ_ASSERT(IsInvokeOp(op_));
     inlinedArgs += GET_ARGC(pc_) > 0 ? GET_ARGC(pc_) - 1 : 0;
   } else {
-    MOZ_ASSERT(resumeMode() == ResumeMode::InlinedAccessor);
+    MOZ_ASSERT(resumeMode() == jit::ResumeMode::InlinedAccessor);
     MOZ_ASSERT(IsIonInlinableGetterOrSetterOp(op_));
     // Setters are passed one argument. Getters are passed none.
     if (IsSetPropOp(op_)) {
@@ -771,7 +771,7 @@ bool BaselineStackBuilder::fixUpCallerArgs(
   // target directly. When rebuilding the stack, we need to fill in
   // the right number of slots to make it look like the js_native was
   // actually called.
-  if (resumeMode() == ResumeMode::InlinedFunCall) {
+  if (resumeMode() == jit::ResumeMode::InlinedFunCall) {
     // We must transform the stack from |target, this, args| to
     // |js_fun_call, target, this, args|. The value of |js_fun_call|
     // will never be observed, so we push |undefined| for it, followed
@@ -864,7 +864,7 @@ bool BaselineStackBuilder::buildExpressionStack() {
     }
   }
 
-  if (resumeMode() == ResumeMode::ResumeAfterCheckProxyGetResult) {
+  if (resumeMode() == jit::ResumeMode::ResumeAfterCheckProxyGetResult) {
     JitSpew(JitSpew_BaselineBailouts,
             "      Checking that the proxy's get trap result matches "
             "expectations.");
@@ -906,7 +906,7 @@ bool BaselineStackBuilder::buildExpressionStack() {
     return true;
   }
 
-  if (resumeMode() == ResumeMode::ResumeAfterCheckIsObject) {
+  if (resumeMode() == jit::ResumeMode::ResumeAfterCheckIsObject) {
     JitSpew(JitSpew_BaselineBailouts,
             "      Checking that intermediate value is an object");
     Value returnVal;
@@ -1091,7 +1091,7 @@ bool BaselineStackBuilder::buildStubFrame(uint32_t frameSize,
         })) {
       return false;
     }
-  } else if (resumeMode() == ResumeMode::InlinedFunCall && GET_ARGC(pc_) == 0) {
+  } else if (resumeMode() == jit::ResumeMode::InlinedFunCall && GET_ARGC(pc_) == 0) {
     // When calling FunCall with 0 arguments, we push |undefined|
     // for this. See BaselineCacheIRCompiler::pushFunCallArguments.
     MOZ_ASSERT(!constructing);
@@ -1112,10 +1112,10 @@ bool BaselineStackBuilder::buildStubFrame(uint32_t frameSize,
       return false;
     }
   } else {
-    MOZ_ASSERT(resumeMode() == ResumeMode::InlinedStandardCall ||
-               resumeMode() == ResumeMode::InlinedFunCall);
+    MOZ_ASSERT(resumeMode() == jit::ResumeMode::InlinedStandardCall ||
+               resumeMode() == jit::ResumeMode::InlinedFunCall);
     actualArgc = GET_ARGC(pc_);
-    if (resumeMode() == ResumeMode::InlinedFunCall) {
+    if (resumeMode() == jit::ResumeMode::InlinedFunCall) {
       // See BaselineCacheIRCompiler::pushFunCallArguments.
       MOZ_ASSERT(actualArgc > 0);
       actualArgc--;
@@ -1228,7 +1228,7 @@ bool BaselineStackBuilder::envChainSlotCanBeOptimized() {
 }
 
 bool jit::AssertBailoutStackDepth(JSContext* cx, JSScript* script,
-                                  jsbytecode* pc, ResumeMode mode,
+                                  jsbytecode* pc, jit::ResumeMode mode,
                                   uint32_t exprStackSlots) {
   if (IsResumeAfter(mode)) {
     pc = GetNextPc(pc);
@@ -1245,7 +1245,7 @@ bool jit::AssertBailoutStackDepth(JSContext* cx, JSScript* script,
 
   JSOp op = JSOp(*pc);
 
-  if (mode == ResumeMode::InlinedFunCall) {
+  if (mode == jit::ResumeMode::InlinedFunCall) {
     // For inlined fun.call(this, ...); the reconstructed stack depth will
     // include the |this|, but the exprStackSlots won't.
     // Exception: if there are no arguments, the depths do match.
@@ -1258,7 +1258,7 @@ bool jit::AssertBailoutStackDepth(JSContext* cx, JSScript* script,
     return true;
   }
 
-  if (mode == ResumeMode::InlinedAccessor) {
+  if (mode == jit::ResumeMode::InlinedAccessor) {
     // Accessors coming out of ion are inlined via a complete lie perpetrated by
     // the compiler internally. Ion just rearranges the stack, and pretends that
     // it looked like a call all along.

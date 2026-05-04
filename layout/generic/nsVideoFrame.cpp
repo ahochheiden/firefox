@@ -669,7 +669,7 @@ class nsDisplayVideo final : public nsPaintedDisplayItem {
         preTransform * Matrix::Translation(destGFXRect.x, destGFXRect.y);
 
     AutoLockImage autoLock(container);
-    Image* image = autoLock.GetImage(TimeStamp::Now());
+    layers::Image* image = autoLock.GetImage(TimeStamp::Now());
     if (!image) {
       return;
     }

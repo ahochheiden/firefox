@@ -1140,7 +1140,7 @@ void WasmModuleObject::finalize(JS::GCContext* gcx, JSObject* obj) {
     obj->zone()->decJitMemory(codeMemory);
   }
   gcx->release(obj, &module, module.gcMallocBytesExcludingCode(),
-               MemoryUse::WasmModule);
+               js::MemoryUse::WasmModule);
 }
 
 struct KindNames {
@@ -1578,7 +1578,7 @@ WasmModuleObject* WasmModuleObject::create(JSContext* cx, const Module& module,
   // doesn't change for the life of the WasmModuleObject. The size is counted
   // once per WasmModuleObject referencing a Module.
   InitReservedSlot(obj, MODULE_SLOT, const_cast<Module*>(&module),
-                   module.gcMallocBytesExcludingCode(), MemoryUse::WasmModule);
+                   module.gcMallocBytesExcludingCode(), js::MemoryUse::WasmModule);
   module.AddRef();
 
   // Bug 1569888: We account for the first tier here; the second tier, if
@@ -1893,16 +1893,16 @@ class WasmInstanceObject::UnspecifiedScopeMap {
 void WasmInstanceObject::finalize(JS::GCContext* gcx, JSObject* obj) {
   WasmInstanceObject& instance = obj->as<WasmInstanceObject>();
   gcx->delete_(obj, &instance.scopes().asWasmFunctionScopeMap(),
-               MemoryUse::WasmInstanceScopes);
+               js::MemoryUse::WasmInstanceScopes);
   gcx->delete_(obj, &instance.indirectGlobals(),
-               MemoryUse::WasmInstanceGlobals);
+               js::MemoryUse::WasmInstanceGlobals);
   if (!instance.isNewborn()) {
     if (instance.instance().debugEnabled()) {
       instance.instance().debug().finalize(gcx);
     }
     Instance::destroy(&instance.instance());
     gcx->removeCellMemory(obj, sizeof(Instance),
-                          MemoryUse::WasmInstanceInstance);
+                          js::MemoryUse::WasmInstanceInstance);
   }
 }
 
@@ -1975,10 +1975,10 @@ WasmInstanceObject* WasmInstanceObject::create(
     MOZ_ASSERT(obj->isTenured(), "assumed by WasmTableObject write barriers");
 
     InitReservedSlot(obj, SCOPES_SLOT, scopes.release(),
-                     MemoryUse::WasmInstanceScopes);
+                     js::MemoryUse::WasmInstanceScopes);
 
     InitReservedSlot(obj, GLOBALS_SLOT, indirectGlobalObjs.release(),
-                     MemoryUse::WasmInstanceGlobals);
+                     js::MemoryUse::WasmInstanceGlobals);
 
     obj->initReservedSlot(INSTANCE_SCOPE_SLOT, UndefinedValue());
 
@@ -1994,7 +1994,7 @@ WasmInstanceObject* WasmInstanceObject::create(
     }
 
     InitReservedSlot(obj, INSTANCE_SLOT, instance,
-                     MemoryUse::WasmInstanceInstance);
+                     js::MemoryUse::WasmInstanceInstance);
     MOZ_ASSERT(!obj->isNewborn());
   }
 
@@ -2223,7 +2223,7 @@ const ClassSpec WasmMemoryObject::classSpec_ = {
 void WasmMemoryObject::finalize(JS::GCContext* gcx, JSObject* obj) {
   WasmMemoryObject& memory = obj->as<WasmMemoryObject>();
   if (memory.hasObservers()) {
-    gcx->delete_(obj, &memory.observers(), MemoryUse::WasmMemoryObservers);
+    gcx->delete_(obj, &memory.observers(), js::MemoryUse::WasmMemoryObservers);
   }
 }
 
@@ -2680,7 +2680,7 @@ WasmMemoryObject::InstanceSet* WasmMemoryObject::getOrCreateObservers(
     }
 
     InitReservedSlot(this, OBSERVERS_SLOT, observers.release(),
-                     MemoryUse::WasmMemoryObservers);
+                     js::MemoryUse::WasmMemoryObservers);
   }
 
   return &observers();
@@ -2893,7 +2893,7 @@ void WasmTableObject::finalize(JS::GCContext* gcx, JSObject* obj) {
   WasmTableObject& tableObj = obj->as<WasmTableObject>();
   if (!tableObj.isNewborn()) {
     auto& table = tableObj.table();
-    gcx->release(obj, &table, table.gcMallocBytes(), MemoryUse::WasmTableTable);
+    gcx->release(obj, &table, table.gcMallocBytes(), js::MemoryUse::WasmTableTable);
   }
 }
 
@@ -2937,7 +2937,7 @@ WasmTableObject* WasmTableObject::create(JSContext* cx, const TableType& type,
 
   size_t size = table->gcMallocBytes();
   InitReservedSlot(obj, TABLE_SLOT, table.forget().take(), size,
-                   MemoryUse::WasmTableTable);
+                   js::MemoryUse::WasmTableTable);
 
   MOZ_ASSERT(!obj->isNewborn());
   return obj;
@@ -3332,7 +3332,7 @@ void WasmGlobalObject::finalize(JS::GCContext* gcx, JSObject* obj) {
     // Release the strong reference to the type definitions this global could
     // be referencing.
     global->type().Release();
-    gcx->delete_(obj, &global->mutableVal(), MemoryUse::WasmGlobalCell);
+    gcx->delete_(obj, &global->mutableVal(), js::MemoryUse::WasmGlobalCell);
   }
 }
 
@@ -3354,7 +3354,7 @@ WasmGlobalObject* WasmGlobalObject::create(JSContext* cx, HandleVal value,
     return nullptr;
   }
   obj->initReservedSlot(MUTABLE_SLOT, JS::BooleanValue(isMutable));
-  InitReservedSlot(obj, VAL_SLOT, val, MemoryUse::WasmGlobalCell);
+  InitReservedSlot(obj, VAL_SLOT, val, js::MemoryUse::WasmGlobalCell);
 
   // It's simpler to initialize the cell after the object has been created,
   // to avoid needing to root the cell before the object creation.
@@ -3787,7 +3787,7 @@ void WasmExceptionObject::finalize(JS::GCContext* gcx, JSObject* obj) {
     return;
   }
   gcx->free_(obj, exnObj.typedMem(), exnObj.tagType()->tagSize(),
-             MemoryUse::WasmExceptionData);
+             js::MemoryUse::WasmExceptionData);
   exnObj.tagType()->Release();
 }
 
@@ -3969,7 +3969,7 @@ WasmExceptionObject* WasmExceptionObject::create(JSContext* cx,
   tagType->AddRef();
   obj->initFixedSlot(TYPE_SLOT, PrivateValue((void*)tagType));
   InitReservedSlot(obj, DATA_SLOT, data, tagType->tagSize(),
-                   MemoryUse::WasmExceptionData);
+                   js::MemoryUse::WasmExceptionData);
   obj->initFixedSlot(STACK_SLOT, ObjectOrNullValue(stack));
 
   MOZ_ASSERT(!obj->isNewborn());
@@ -4955,7 +4955,7 @@ class CompileStreamTask : public PromiseHelperTask, public JS::StreamConsumer {
 
   // Immutable after Env state:
   MutableBytes envBytes_;
-  BytecodeRange codeSection_;
+  wasm::BytecodeRange codeSection_;
 
   // The code section vector is resized once during the Env state and filled
   // in chunk by chunk during the Code state, updating the end-pointer after
@@ -5255,7 +5255,7 @@ class ResolveResponseClosure : public NativeObject {
   static void finalize(JS::GCContext* gcx, JSObject* obj) {
     auto& closure = obj->as<ResolveResponseClosure>();
     gcx->release(obj, &closure.compileArgs(),
-                 MemoryUse::WasmResolveResponseClosure);
+                 js::MemoryUse::WasmResolveResponseClosure);
   }
 
  public:
@@ -5275,7 +5275,7 @@ class ResolveResponseClosure : public NativeObject {
 
     args.AddRef();
     InitReservedSlot(obj, COMPILE_ARGS_SLOT, const_cast<CompileArgs*>(&args),
-                     MemoryUse::WasmResolveResponseClosure);
+                     js::MemoryUse::WasmResolveResponseClosure);
     obj->setReservedSlot(PROMISE_OBJ_SLOT, ObjectValue(*promise));
     obj->setReservedSlot(INSTANTIATE_SLOT, BooleanValue(instantiate));
     obj->setReservedSlot(IMPORT_OBJ_SLOT, ObjectOrNullValue(importObj));

@@ -27,6 +27,9 @@
 // We only need the `windows.h` header, but this file can get unified built
 // with WasmSignalHandlers.cpp, which requires `winternal.h` to be included
 // before the `windows.h` header, and so we must include it here for that case.
+#  ifndef CONST
+#    define CONST const
+#  endif
 #  include <winternl.h>  // must include before util/WindowsWrapper.h's `#undef`s
 
 #  include "util/WindowsWrapper.h"

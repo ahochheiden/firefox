@@ -273,7 +273,7 @@ bool SkAnalyticEdge::update(SkFixed last_y) {
 */
 #define MAX_COEFF_SHIFT     6
 
-static inline SkFDot6 cheap_distance(SkFDot6 dx, SkFDot6 dy)
+static inline SkFDot6 cheap_distance_2(SkFDot6 dx, SkFDot6 dy)
 {
     dx = SkAbs32(dx);
     dy = SkAbs32(dy);
@@ -286,9 +286,9 @@ static inline SkFDot6 cheap_distance(SkFDot6 dx, SkFDot6 dy)
     return dx;
 }
 
-static inline int diff_to_shift(SkFDot6 dx, SkFDot6 dy, int shiftAA) {
+static inline int diff_to_shift_2(SkFDot6 dx, SkFDot6 dy, int shiftAA) {
     // cheap calc of distance from center of p0-p2 to the center of the curve
-    SkFDot6 dist = cheap_distance(dx, dy);
+    SkFDot6 dist = cheap_distance_2(dx, dy);
 
     // shift down dist (it is currently in dot6)
     // down by 3 should give us 1/8 pixel accuracy (assuming our dist is accurate...)
@@ -314,7 +314,7 @@ static inline int diff_to_shift(SkFDot6 dx, SkFDot6 dy, int shiftAA) {
     or pt >> 8 for antialiasing. This is implemented as pt >> (10 - shift).
 */
 
-static inline SkFixed SkFDot6ToFixedDiv2(SkFDot6 value) {
+static inline SkFixed SkFDot6ToFixedDiv2_2(SkFDot6 value) {
     // we want to return SkFDot6ToFixed(value >> 1), but we don't want to throw
     // away data in value, so just perform a modify up-shift
     return SkLeftShift(value, 16 - 6 - 1);
@@ -367,7 +367,7 @@ bool SkAnalyticQuadraticEdge::setQuadraticWithoutUpdate(const SkPoint pts[3], in
         // This is a little confusing:
         // before this line, shift is the scale up factor for AA;
         // after this line, shift is the fCurveShift.
-        shift = diff_to_shift(dx, dy, shift);
+        shift = diff_to_shift_2(dx, dy, shift);
         SkASSERT(shift >= 0);
     }
     // need at least 1 subdivision for our bias trick
@@ -402,14 +402,14 @@ bool SkAnalyticQuadraticEdge::setQuadraticWithoutUpdate(const SkPoint pts[3], in
 
     fCurveShift = SkToU8(shift - 1);
 
-    SkFixed A = SkFDot6ToFixedDiv2(x0 - x1 - x1 + x2);  // 1/2 the real value
+    SkFixed A = SkFDot6ToFixedDiv2_2(x0 - x1 - x1 + x2);  // 1/2 the real value
     SkFixed B = SkFDot6ToFixed(x1 - x0);                // 1/2 the real value
 
     fQx     = SkFDot6ToFixed(x0);
     fQDx    = B + (A >> shift);     // biased by shift
     fQDDx   = A >> (shift - 1);     // biased by shift
 
-    A = SkFDot6ToFixedDiv2(y0 - y1 - y1 + y2);  // 1/2 the real value
+    A = SkFDot6ToFixedDiv2_2(y0 - y1 - y1 + y2);  // 1/2 the real value
     B = SkFDot6ToFixed(y1 - y0);                // 1/2 the real value
 
     fQy     = SkFDot6ToFixed(y0);
@@ -533,7 +533,7 @@ bool SkAnalyticCubicEdge::setCubic(const SkPoint pts[4]) {
     return this->updateCubic();
 }
 
-static inline int SkFDot6UpShift(SkFDot6 x, int upShift) {
+static inline int SkFDot6UpShift_2(SkFDot6 x, int upShift) {
     SkASSERT((SkLeftShift(x, upShift) >> upShift) == x);
     return SkLeftShift(x, upShift);
 }
@@ -546,7 +546,7 @@ static inline int SkFDot6UpShift(SkFDot6 x, int upShift) {
 
     use 16/512 to approximate 1/27
 */
-static SkFDot6 cubic_delta_from_line(SkFDot6 a, SkFDot6 b, SkFDot6 c, SkFDot6 d)
+static SkFDot6 cubic_delta_from_line_2(SkFDot6 a, SkFDot6 b, SkFDot6 c, SkFDot6 d)
 {
     // since our parameters may be negative, we don't use << to avoid ASAN warnings
     SkFDot6 oneThird = (a*8 - b*15 + 6*c + d) * 19 >> 9;
@@ -604,10 +604,10 @@ bool SkAnalyticCubicEdge::setCubicWithoutUpdate(const SkPoint pts[4], int shift)
         // Can't use (center of curve - center of baseline), since center-of-curve
         // need not be the max delta from the baseline (it could even be coincident)
         // so we try just looking at the two off-curve points
-        SkFDot6 dx = cubic_delta_from_line(x0, x1, x2, x3);
-        SkFDot6 dy = cubic_delta_from_line(y0, y1, y2, y3);
+        SkFDot6 dx = cubic_delta_from_line_2(x0, x1, x2, x3);
+        SkFDot6 dy = cubic_delta_from_line_2(y0, y1, y2, y3);
         // add 1 (by observation)
-        shift = diff_to_shift(dx, dy, 2) + 1;
+        shift = diff_to_shift_2(dx, dy, 2) + 1;
     }
     // need at least 1 subdivision for our bias trick
     SkASSERT(shift > 0);
@@ -632,18 +632,18 @@ bool SkAnalyticCubicEdge::setCubicWithoutUpdate(const SkPoint pts[4], int shift)
     fCurveShift = SkToU8(shift);
     fCubicDShift = SkToU8(downShift);
 
-    SkFixed B = SkFDot6UpShift(3 * (x1 - x0), upShift);
-    SkFixed C = SkFDot6UpShift(3 * (x0 - x1 - x1 + x2), upShift);
-    SkFixed D = SkFDot6UpShift(x3 + 3 * (x1 - x2) - x0, upShift);
+    SkFixed B = SkFDot6UpShift_2(3 * (x1 - x0), upShift);
+    SkFixed C = SkFDot6UpShift_2(3 * (x0 - x1 - x1 + x2), upShift);
+    SkFixed D = SkFDot6UpShift_2(x3 + 3 * (x1 - x2) - x0, upShift);
 
     fCx     = SkFDot6ToFixed(x0);
     fCDx    = B + (C >> shift) + (D >> 2*shift);    // biased by shift
     fCDDx   = 2*C + (3*D >> (shift - 1));           // biased by 2*shift
     fCDDDx  = 3*D >> (shift - 1);                   // biased by 2*shift
 
-    B = SkFDot6UpShift(3 * (y1 - y0), upShift);
-    C = SkFDot6UpShift(3 * (y0 - y1 - y1 + y2), upShift);
-    D = SkFDot6UpShift(y3 + 3 * (y1 - y2) - y0, upShift);
+    B = SkFDot6UpShift_2(3 * (y1 - y0), upShift);
+    C = SkFDot6UpShift_2(3 * (y0 - y1 - y1 + y2), upShift);
+    D = SkFDot6UpShift_2(y3 + 3 * (y1 - y2) - y0, upShift);
 
     fCy     = SkFDot6ToFixed(y0);
     fCDy    = B + (C >> shift) + (D >> 2*shift);    // biased by shift

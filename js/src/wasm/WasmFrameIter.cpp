@@ -1553,7 +1553,7 @@ void wasm::GenerateJitEntryEpilogue(MacroAssembler& masm,
 /*****************************************************************************/
 // ProfilingFrameIterator
 
-ProfilingFrameIterator::ProfilingFrameIterator()
+wasm::ProfilingFrameIterator::ProfilingFrameIterator()
     : code_(nullptr),
       codeRange_(nullptr),
       category_(Category::Other),
@@ -1565,7 +1565,7 @@ ProfilingFrameIterator::ProfilingFrameIterator()
   MOZ_ASSERT(done());
 }
 
-ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation)
+wasm::ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation)
     : code_(nullptr),
       codeRange_(nullptr),
       category_(Category::Other),
@@ -1577,7 +1577,7 @@ ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation)
   initFromExitFP(activation.wasmExitFP());
 }
 
-ProfilingFrameIterator::ProfilingFrameIterator(const Frame* fp)
+wasm::ProfilingFrameIterator::ProfilingFrameIterator(const Frame* fp)
     : code_(nullptr),
       codeRange_(nullptr),
       category_(Category::Other),
@@ -1618,7 +1618,7 @@ static inline void AssertMatchesCallSite(void* callerPC, uint8_t* callerFP) {
 #endif
 }
 
-void ProfilingFrameIterator::initFromExitFP(const Frame* fp) {
+void wasm::ProfilingFrameIterator::initFromExitFP(const Frame* fp) {
   MOZ_ASSERT(fp);
   stackAddress_ = (void*)fp;
   endStackAddress_ = stackAddress_;
@@ -2082,7 +2082,7 @@ bool js::wasm::StartUnwinding(const RegisterState& registers,
   return true;
 }
 
-ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation,
+wasm::ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation,
                                                const RegisterState& state)
     : code_(nullptr),
       codeRange_(nullptr),
@@ -2131,7 +2131,7 @@ ProfilingFrameIterator::ProfilingFrameIterator(const JitActivation& activation,
   MOZ_ASSERT(!done());
 }
 
-void ProfilingFrameIterator::operator++() {
+void wasm::ProfilingFrameIterator::operator++() {
   MOZ_ASSERT(!done());
   MOZ_ASSERT(!unwoundJitCallerFP_);
 
@@ -2488,7 +2488,7 @@ const char* wasm::ThunkedNativeToDescription(SymbolicAddress func) {
   return "?";
 }
 
-const char* ProfilingFrameIterator::label() const {
+const char* wasm::ProfilingFrameIterator::label() const {
   MOZ_ASSERT(!done());
 
   // Use the same string for both time inside and under so that the two
@@ -2560,7 +2560,7 @@ const char* ProfilingFrameIterator::label() const {
   MOZ_CRASH("bad code range kind");
 }
 
-ProfilingFrameIterator::Category ProfilingFrameIterator::category() const {
+wasm::ProfilingFrameIterator::Category wasm::ProfilingFrameIterator::category() const {
   MOZ_ASSERT(!done());
   return category_;
 }

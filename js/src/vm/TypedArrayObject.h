@@ -108,6 +108,13 @@ class TypedArrayObject : public ArrayBufferViewObject {
   template <AllowGC allowGC>
   bool getElement(JSContext* cx, size_t index,
                   typename MaybeRooted<Value, allowGC>::MutableHandleType val);
+
+  template <>
+  bool getElement<CanGC>(JSContext* cx, size_t index, MutableHandleValue val);
+  template <>
+  bool getElement<NoGC>(JSContext* cx, size_t index,
+                        typename MaybeRooted<Value, NoGC>::MutableHandleType vp);
+
   bool getElementPure(size_t index, Value* vp);
 
   /*

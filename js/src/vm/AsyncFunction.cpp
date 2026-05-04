@@ -279,7 +279,7 @@ AsyncFunctionGeneratorObject* AsyncFunctionGeneratorObject::create(
   return obj;
 }
 
-JSFunction* NewHandler(JSContext* cx, Native handler,
+JSFunction* NewHandler_2(JSContext* cx, Native handler,
                        JS::Handle<JSObject*> target) {
   cx->check(target);
 
@@ -343,13 +343,13 @@ AsyncFunctionGeneratorObject* AsyncFunctionGeneratorObject::create(
   obj->initFixedSlot(PROMISE_SLOT, ObjectValue(*resultPromise));
 
   RootedObject onFulfilled(
-      cx, NewHandler(cx, AsyncModuleExecutionFulfilledHandler, module));
+      cx, NewHandler_2(cx, AsyncModuleExecutionFulfilledHandler, module));
   if (!onFulfilled) {
     return nullptr;
   }
 
   RootedObject onRejected(
-      cx, NewHandler(cx, AsyncModuleExecutionRejectedHandler, module));
+      cx, NewHandler_2(cx, AsyncModuleExecutionRejectedHandler, module));
   if (!onRejected) {
     return nullptr;
   }

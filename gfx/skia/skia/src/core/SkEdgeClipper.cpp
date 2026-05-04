@@ -69,7 +69,7 @@ bool SkEdgeClipper::clipLine(SkPoint p0, SkPoint p1, const SkRect& clip) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-static bool chopMonoQuadAt(SkScalar c0, SkScalar c1, SkScalar c2,
+static bool chopMonoQuadAt_2(SkScalar c0, SkScalar c1, SkScalar c2,
                            SkScalar target, SkScalar* t) {
     /* Solve F(t) = y where F(t) := [0](1-t)^2 + 2[1]t(1-t) + [2]t^2
      *  We solve for t, using quadratic equation, hence we have to rearrange
@@ -88,12 +88,12 @@ static bool chopMonoQuadAt(SkScalar c0, SkScalar c1, SkScalar c2,
     return false;
 }
 
-static bool chopMonoQuadAtY(SkPoint pts[3], SkScalar y, SkScalar* t) {
-    return chopMonoQuadAt(pts[0].fY, pts[1].fY, pts[2].fY, y, t);
+static bool chopMonoQuadAt_2Y(SkPoint pts[3], SkScalar y, SkScalar* t) {
+    return chopMonoQuadAt_2(pts[0].fY, pts[1].fY, pts[2].fY, y, t);
 }
 
-static bool chopMonoQuadAtX(SkPoint pts[3], SkScalar x, SkScalar* t) {
-    return chopMonoQuadAt(pts[0].fX, pts[1].fX, pts[2].fX, x, t);
+static bool chopMonoQuadAt_2X(SkPoint pts[3], SkScalar x, SkScalar* t) {
+    return chopMonoQuadAt_2(pts[0].fX, pts[1].fX, pts[2].fX, x, t);
 }
 
 // Modify pts[] in place so that it is clipped in Y to the clip rect
@@ -103,7 +103,7 @@ static void chop_quad_in_Y(SkPoint pts[3], const SkRect& clip) {
 
     // are we partially above
     if (pts[0].fY < clip.fTop) {
-        if (chopMonoQuadAtY(pts, clip.fTop, &t)) {
+        if (chopMonoQuadAt_2Y(pts, clip.fTop, &t)) {
             // take the 2nd chopped quad
             SkChopQuadAt(pts, tmp, t);
             // clamp to clean up imprecise numerics in the chop
@@ -113,7 +113,7 @@ static void chop_quad_in_Y(SkPoint pts[3], const SkRect& clip) {
             pts[0] = tmp[2];
             pts[1] = tmp[3];
         } else {
-            // if chopMonoQuadAtY failed, then we may have hit inexact numerics
+            // if chopMonoQuadAt_2Y failed, then we may have hit inexact numerics
             // so we just clamp against the top
             for (int i = 0; i < 3; i++) {
                 if (pts[i].fY < clip.fTop) {
@@ -125,7 +125,7 @@ static void chop_quad_in_Y(SkPoint pts[3], const SkRect& clip) {
 
     // are we partially below
     if (pts[2].fY > clip.fBottom) {
-        if (chopMonoQuadAtY(pts, clip.fBottom, &t)) {
+        if (chopMonoQuadAt_2Y(pts, clip.fBottom, &t)) {
             SkChopQuadAt(pts, tmp, t);
             // clamp to clean up imprecise numerics in the chop
             clamp_le(tmp[1].fY, clip.fBottom);
@@ -134,7 +134,7 @@ static void chop_quad_in_Y(SkPoint pts[3], const SkRect& clip) {
             pts[1] = tmp[1];
             pts[2] = tmp[2];
         } else {
-            // if chopMonoQuadAtY failed, then we may have hit inexact numerics
+            // if chopMonoQuadAt_2Y failed, then we may have hit inexact numerics
             // so we just clamp against the bottom
             for (int i = 0; i < 3; i++) {
                 if (pts[i].fY > clip.fBottom) {
@@ -184,7 +184,7 @@ void SkEdgeClipper::clipMonoQuad(const SkPoint srcPts[3], const SkRect& clip) {
 
     // are we partially to the left
     if (pts[0].fX < clip.fLeft) {
-        if (chopMonoQuadAtX(pts, clip.fLeft, &t)) {
+        if (chopMonoQuadAt_2X(pts, clip.fLeft, &t)) {
             SkChopQuadAt(pts, tmp, t);
             this->appendVLine(clip.fLeft, tmp[0].fY, tmp[2].fY, reverse);
             // clamp to clean up imprecise numerics in the chop
@@ -194,7 +194,7 @@ void SkEdgeClipper::clipMonoQuad(const SkPoint srcPts[3], const SkRect& clip) {
             pts[0] = tmp[2];
             pts[1] = tmp[3];
         } else {
-            // if chopMonoQuadAtY failed, then we may have hit inexact numerics
+            // if chopMonoQuadAt_2Y failed, then we may have hit inexact numerics
             // so we just clamp against the left
             this->appendVLine(clip.fLeft, pts[0].fY, pts[2].fY, reverse);
             return;
@@ -203,7 +203,7 @@ void SkEdgeClipper::clipMonoQuad(const SkPoint srcPts[3], const SkRect& clip) {
 
     // are we partially to the right
     if (pts[2].fX > clip.fRight) {
-        if (chopMonoQuadAtX(pts, clip.fRight, &t)) {
+        if (chopMonoQuadAt_2X(pts, clip.fRight, &t)) {
             SkChopQuadAt(pts, tmp, t);
             // clamp to clean up imprecise numerics in the chop
             clamp_le(tmp[1].fX, clip.fRight);
@@ -212,7 +212,7 @@ void SkEdgeClipper::clipMonoQuad(const SkPoint srcPts[3], const SkRect& clip) {
             this->appendQuad(tmp, reverse);
             this->appendVLine(clip.fRight, tmp[2].fY, tmp[4].fY, reverse);
         } else {
-            // if chopMonoQuadAtY failed, then we may have hit inexact numerics
+            // if chopMonoQuadAt_2Y failed, then we may have hit inexact numerics
             // so we just clamp against the right
             pts[1].fX = std::min(pts[1].fX, clip.fRight);
             pts[2].fX = std::min(pts[2].fX, clip.fRight);

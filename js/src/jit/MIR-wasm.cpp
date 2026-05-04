@@ -54,11 +54,11 @@ MDefinition* MWasmTruncateToInt32::foldsTo(TempAllocator& alloc) {
     }
 
     if (!isUnsigned() && d <= double(INT32_MAX) && d >= double(INT32_MIN)) {
-      return MConstant::NewInt32(alloc, ToInt32(d));
+      return MConstant::NewInt32(alloc, JS::ToInt32(d));
     }
 
     if (isUnsigned() && d <= double(UINT32_MAX) && d >= 0) {
-      return MConstant::NewInt32(alloc, ToInt32(d));
+      return MConstant::NewInt32(alloc, JS::ToInt32(d));
     }
   }
 
@@ -69,11 +69,11 @@ MDefinition* MWasmTruncateToInt32::foldsTo(TempAllocator& alloc) {
     }
 
     if (!isUnsigned() && f <= double(INT32_MAX) && f >= double(INT32_MIN)) {
-      return MConstant::NewInt32(alloc, ToInt32(f));
+      return MConstant::NewInt32(alloc, JS::ToInt32(f));
     }
 
     if (isUnsigned() && f <= double(UINT32_MAX) && f >= 0) {
-      return MConstant::NewInt32(alloc, ToInt32(f));
+      return MConstant::NewInt32(alloc, JS::ToInt32(f));
     }
   }
 

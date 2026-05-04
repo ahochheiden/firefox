@@ -28,9 +28,9 @@ namespace webrtc {
 
 namespace {
 constexpr float kEpsilon = 1e-3f;
-constexpr float kX2BandEnergyThreshold = 44015068.0f;
-constexpr int kBlocksToHoldErle = 100;
-constexpr int kPointsToAccumulate = 6;
+constexpr float kX2BandEnergyThreshold_2 = 44015068.0f;
+constexpr int kBlocksToHoldErle_2 = 100;
+constexpr int kPointsToAccumulate_2 = 6;
 }  // namespace
 
 FullBandErleEstimator::FullBandErleEstimator(
@@ -68,13 +68,13 @@ void FullBandErleEstimator::Update(
     if (converged_filters[ch]) {
       // Computes the fullband ERLE.
       const float X2_sum = std::accumulate(X2.begin(), X2.end(), 0.0f);
-      if (X2_sum > kX2BandEnergyThreshold * X2.size()) {
+      if (X2_sum > kX2BandEnergyThreshold_2 * X2.size()) {
         const float Y2_sum =
             std::accumulate(Y2[ch].begin(), Y2[ch].end(), 0.0f);
         const float E2_sum =
             std::accumulate(E2[ch].begin(), E2[ch].end(), 0.0f);
         if (instantaneous_erle_[ch].Update(Y2_sum, E2_sum)) {
-          hold_counters_instantaneous_erle_[ch] = kBlocksToHoldErle;
+          hold_counters_instantaneous_erle_[ch] = kBlocksToHoldErle_2;
           erle_time_domain_log2_[ch] +=
               0.05f * ((instantaneous_erle_[ch].GetInstErleLog2().value()) -
                        erle_time_domain_log2_[ch]);
@@ -120,7 +120,7 @@ bool FullBandErleEstimator::ErleInstantaneous::Update(const float Y2_sum,
   E2_acum_ += E2_sum;
   Y2_acum_ += Y2_sum;
   num_points_++;
-  if (num_points_ == kPointsToAccumulate) {
+  if (num_points_ == kPointsToAccumulate_2) {
     if (E2_acum_ > 0.f) {
       update_estimates = true;
       erle_log2_ = FastApproxLog2f(Y2_acum_ / E2_acum_ + kEpsilon);

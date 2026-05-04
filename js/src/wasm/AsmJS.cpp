@@ -2219,7 +2219,7 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
       codeSectionSize += func.bytes().length();
     }
 
-    codeMeta_->codeSectionRange = Some(BytecodeRange(0, codeSectionSize));
+    codeMeta_->codeSectionRange = Some(wasm::BytecodeRange(0, codeSectionSize));
 
     // asm.js does not have any wasm bytecode to save; view-source is
     // provided through the ScriptSource.

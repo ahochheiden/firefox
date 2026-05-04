@@ -86,7 +86,7 @@ bool TypedArrayObject::convertValue(JSContext* cx, HandleValue v,
   switch (type()) {
     case Scalar::BigInt64:
     case Scalar::BigUint64: {
-      BigInt* bi = ToBigInt(cx, v);
+      BigInt* bi = js::ToBigInt(cx, v);
       if (!bi) {
         return false;
       }

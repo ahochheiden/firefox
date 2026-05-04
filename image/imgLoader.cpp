@@ -31,6 +31,9 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/SharedSubResourceCache.h"
 #include "mozilla/dom/CacheExpirationTime.h"
+#ifdef boolean
+#  undef boolean
+#endif
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/FetchPriority.h"
 #include "mozilla/dom/nsMixedContentBlocker.h"

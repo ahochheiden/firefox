@@ -1778,6 +1778,11 @@ using PropertyNameVector = JS::GCVector<PropertyName*>;
 template <typename CharT>
 void CopyChars(CharT* dest, const JSLinearString& str);
 
+template <>
+void CopyChars(char16_t* dest, const JSLinearString& str);
+template <>
+void CopyChars(Latin1Char* dest, const JSLinearString& str);
+
 static inline UniqueChars StringToNewUTF8CharsZ(JSContext* cx, JSString& str) {
   JS::AutoCheckCannotGC nogc;
 

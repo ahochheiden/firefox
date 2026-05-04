@@ -5,7 +5,7 @@
 #ifndef SSLTokensCache_h_
 #define SSLTokensCache_h_
 
-#include "CertVerifier.h"  // For EVStatus
+#include "CertVerifier.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Span.h"
 #include "mozilla/StaticMutex.h"

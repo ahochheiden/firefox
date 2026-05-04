@@ -321,7 +321,7 @@ class RootCompiler {
 
   // The current stack of bytecode offsets of the caller functions of the
   // function currently being inlined.
-  BytecodeOffsetVector inlinedCallerOffsets_;
+  wasm::BytecodeOffsetVector inlinedCallerOffsets_;
   InlinedCallerOffsetIndex inlinedCallerOffsetsIndex_;
 
   // Compilation statistics for this function.
@@ -398,7 +398,7 @@ class RootCompiler {
   // function's compile info alive for the outermost function's
   // compilation.
   [[nodiscard]] CompileInfo* startInlineCall(
-      uint32_t callerFuncIndex, BytecodeOffset callerOffset,
+      uint32_t callerFuncIndex, wasm::BytecodeOffset callerOffset,
       uint32_t calleeFuncIndex, uint32_t numLocals, size_t inlineeBytecodeSize,
       InliningHeuristics::CallKind callKind);
   void finishInlineCall();
@@ -557,7 +557,7 @@ class FunctionCompiler {
   uint32_t inliningDepth() const { return inliningDepth_; }
 
   MBasicBlock* getCurBlock() const { return curBlock_; }
-  BytecodeOffset bytecodeOffset() const { return iter_.bytecodeOffset(); }
+  wasm::BytecodeOffset bytecodeOffset() const { return iter_.bytecodeOffset(); }
   CallSiteDesc callSiteDesc(CallSiteKind kind) {
     return CallSiteDesc(bytecodeOffset().offset(),
                         rootCompiler_.inlinedCallerOffsetsIndex(), kind);
@@ -1555,8 +1555,8 @@ class FunctionCompiler {
   // the offset rather than vice versa is that a small offset can be ignored
   // by both explicit bounds checking and bounds check elimination.
   void foldConstantPointer(MemoryAccessDesc* access, MDefinition** base) {
-    PageSize pageSize = codeMeta().memories[access->memoryIndex()].pageSize();
-    if (pageSize != PageSize::Standard) {
+    wasm::PageSize pageSize = codeMeta().memories[access->memoryIndex()].pageSize();
+    if (pageSize != wasm::PageSize::Standard) {
       return;
     }
 
@@ -1598,7 +1598,7 @@ class FunctionCompiler {
 
   MWasmLoadInstance* needBoundsCheck(uint32_t memoryIndex) {
     MOZ_RELEASE_ASSERT(codeMeta().memories[memoryIndex].pageSize() ==
-                       PageSize::Standard);
+                       wasm::PageSize::Standard);
 #ifdef JS_64BIT
     // For 32-bit base pointers:
     //
@@ -6544,7 +6544,7 @@ bool FunctionCompiler::emitInlineCall(const FuncType& funcType,
                                       const DefVector& args,
                                       DefVector* results) {
   UniqueChars error;
-  const BytecodeRange& funcRange = codeTailMeta()->funcDefRange(funcIndex);
+  const wasm::BytecodeRange& funcRange = codeTailMeta()->funcDefRange(funcIndex);
   BytecodeSpan funcBytecode = codeTailMeta()->funcDefBody(funcIndex);
   FuncCompileInput func(funcIndex, funcRange.start, funcBytecode.data(),
                         funcBytecode.data() + funcBytecode.size(),
@@ -11382,7 +11382,7 @@ bool RootCompiler::generate() {
 }
 
 CompileInfo* RootCompiler::startInlineCall(
-    uint32_t callerFuncIndex, BytecodeOffset callerOffset,
+    uint32_t callerFuncIndex, wasm::BytecodeOffset callerOffset,
     uint32_t calleeFuncIndex, uint32_t numLocals, size_t inlineeBytecodeSize,
     InliningHeuristics::CallKind callKind) {
   if (callKind == InliningHeuristics::CallKind::Direct) {

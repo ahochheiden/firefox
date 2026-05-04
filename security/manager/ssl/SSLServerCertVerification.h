@@ -9,7 +9,7 @@
 #include "CommonSocketControl.h"
 #include "ScopedNSSTypes.h"
 #include "mozilla/Maybe.h"
-#include "mozpkix/pkix.h"
+#include "mozpkix/pkixtypes.h"
 #include "nsITransportSecurityInfo.h"
 #include "nsIX509Cert.h"
 #include "nsTArray.h"
@@ -18,8 +18,6 @@
 #include "prio.h"
 #include "seccomon.h"
 #include "secoidt.h"
-
-using namespace mozilla::pkix;
 
 namespace mozilla {
 namespace psm {
@@ -107,7 +105,7 @@ class SSLServerCertVerificationJob : public Runnable {
                             Maybe<nsTArray<uint8_t>>& stapledOCSPResponse,
                             Maybe<nsTArray<uint8_t>>& sctsFromTLSExtension,
                             Maybe<DelegatedCredentialInfo>& dcInfo,
-                            uint32_t providerFlags, Time time,
+                            uint32_t providerFlags, mozilla::pkix::Time time,
                             uint32_t certVerifierFlags,
                             BaseSSLServerCertVerificationResult* aResultTask);
 
@@ -122,7 +120,7 @@ class SSLServerCertVerificationJob : public Runnable {
                                Maybe<nsTArray<uint8_t>>& stapledOCSPResponse,
                                Maybe<nsTArray<uint8_t>>& sctsFromTLSExtension,
                                Maybe<DelegatedCredentialInfo>& dcInfo,
-                               uint32_t providerFlags, Time time,
+                               uint32_t providerFlags, mozilla::pkix::Time time,
                                uint32_t certVerifierFlags,
                                BaseSSLServerCertVerificationResult* aResultTask)
       : Runnable("psm::SSLServerCertVerificationJob"),
@@ -148,7 +146,7 @@ class SSLServerCertVerificationJob : public Runnable {
   OriginAttributes mOriginAttributes;
   const uint32_t mProviderFlags;
   const uint32_t mCertVerifierFlags;
-  const Time mTime;
+  const mozilla::pkix::Time mTime;
   Maybe<nsTArray<uint8_t>> mStapledOCSPResponse;
   Maybe<nsTArray<uint8_t>> mSCTsFromTLSExtension;
   Maybe<DelegatedCredentialInfo> mDCInfo;

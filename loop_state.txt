@@ -1,0 +1,48 @@
+iter=1 file=netwerk/dns/nsHostResolver.cpp fix=#undef GetAddrInfo after includes (windows.h macro leak)
+iter=2 file=netwerk/protocol/http/BackgroundChannelRegistrar.cpp fix=rename gSingleton->gSingleton_2 (conflict with EarlyHintRegistrar.cpp)
+iter=2 file=netwerk/protocol/http/moz.build fix=move HttpWinUtils.cpp to SOURCES (TrustLevel ambiguity from COM headers)
+iter=2 file=netwerk/protocol/http/WebTransportCertificateVerifier.h fix=forward-declare mozilla::pkix::Result instead of including pkixtypes.h (TrustLevel ambiguity)
+iter=2 file=toolkit/components/glean/ipc/FOGIPC.h fix=qualify ipc::ByteBuf as mozilla::ipc::ByteBuf (glean::ipc namespace collision)
+iter=2 file=dom/base/nsFrameLoader.cpp fix=remove dead 'using namespace mozilla::hal' (ScreenOrientation ambiguity in nsScreen.cpp)
+iter=2 file=dom/canvas/WebGLShaderValidator.cpp fix=qualify MallocSizeOf as mozilla::MallocSizeOf
+iter=2 file=dom/canvas/CanvasRenderingContext2D.cpp fix=rename gFingerprinterDetection->gFingerprinterDetection_2
+iter=2 file=dom/canvas/OffscreenCanvas.cpp fix=rename gFingerprinterDetection->gFingerprinterDetection_3
+iter=3 file=gfx/cairo/cairo/src/cairo-botor-scan-converter.c fix=macro-rename quorem/floored_muldivrem/edge (conflict with cairo-mono-scan-converter.c)
+iter=3 file=gfx/skia/skia/src/effects/colorfilters/SkRuntimeColorFilter.cpp fix=rename kLenientSkSLDeserialization->_2 (conflict with SkRuntimeShader.cpp)
+iter=3 file=gfx/skia/skia/src/core/SkAnalyticEdge.cpp fix=rename cheap_distance/diff_to_shift/SkFDot6ToFixedDiv2/SkFDot6UpShift/cubic_delta_from_line->_2 (conflict with SkEdge.cpp)
+iter=4 file=netwerk/base/SSLTokensCache.h fix=forward-declare mozilla::psm::EVStatus instead of including CertVerifier.h (SSLTokensCache->CertVerifier->pkixtypes->TrustLevel chain)
+iter=5 file=security/manager/ssl/SSLServerCertVerification.h fix=remove file-scope 'using namespace mozilla::pkix' and #include CertVerifier.h (root cause of TrustLevel ambiguity), qualify DelegatedCredentialInfo/Time
+iter=6 file=security/manager/ssl/SSLServerCertVerification.h fix=remove file-scope 'using namespace mozilla::pkix' (root cause), revert wrong DelegatedCredentialInfo qualification, qualify Time as mozilla::pkix::Time
+iter=6 file=third_party/libwebrtc/modules/desktop_capture/win/cursor.cc fix=rename kBytesPerPixel->kBytesPerPixel_2 (conflict with differ_block.h)
+iter=8 file=gfx/cairo/cairo/src/cairo-botor-scan-converter.c fix=add macro-rename for edge_compare_for_y_against_x (conflict with cairo-path-in-fill.c)
+iter=8 file=security/manager/ssl/SiteIntegrityService.cpp fix=rename GetStorageKey->GetStorageKey_2 (conflict with nsSiteSecurityService.cpp)
+iter=9 file=gfx/cairo/cairo/src/moz.build fix=FILES_PER_UNIFIED_FILE=16 (88-file external C library with intentional static name reuse)
+iter=9 file=security/manager/ssl/SiteIntegrityService.cpp fix=revert accidental GetStorageKeyFromURI rename
+iter=9 file=third_party/libwebrtc/modules/audio_processing/aec3/fullband_erle_estimator.cc fix=rename kX2BandEnergyThreshold/kBlocksToHoldErle/kPointsToAccumulate ->_2
+iter=9 file=third_party/libwebrtc/modules/rtp_rtcp/source/flexfec_header_reader_writer.cc fix=rename kMaxMediaPackets/kMaxTrackedMediaPackets/kMaxFecPackets ->_2
+iter=9 file=third_party/libwebrtc/modules/rtp_rtcp/source/rtp_packetizer_av1.cc fix=rename kObuSizePresentBit/ObuHasExtension/ObuHasSize ->_2
+iter=9 file=third_party/libwebrtc/modules/rtp_rtcp/source/rtp_format_video_generic.cc fix=rename kGenericHeaderLength/kExtendedHeaderLength ->_2
+iter=9 file=third_party/libwebrtc/modules/rtp_rtcp/source/rtp_format_h264.cc fix=rename kNalHeaderSize/kFuAHeaderSize/kLengthFieldSize ->_2
+iter=10 file=dom/media/MediaMIMETypes.cpp fix=rename StartsWith->StartsWith_2 (conflict with VideoUtils.cpp in crossdir dom TU)
+iter=9(revised) file=python/mozbuild/mozbuild/frontend/data.py fix=cap FILES_PER_UNIFIED_FILE at 16 for THIRD_PARTY_PREFIXES dirs (third_party/, media/lib, gfx/cairo, gfx/skia) to avoid large legacy TUs
+iter=9(revised) file=gfx/cairo/cairo/src/moz.build fix=revert manual FILES_PER_UNIFIED_FILE=16 (now handled by data.py)
+iter=11 file=dom/webgpu/Buffer.h fix=qualify ipc::SharedMemoryMapping as mozilla::ipc:: (mozilla::dom::ipc namespace leak)
+iter=11 file=dom/svg/SVGAnimatedEnumeration.cpp fix=rename sSVGAnimatedEnumTearoffTable->_2 (conflict with SVGAnimatedOrient.cpp)
+iter=12 file=dom/svg/DOMSVGTransform.cpp fix=rename kRadPerDegree->kRadPerDegree_2 (conflict with SVGTransform.cpp)
+iter=12 file=dom/svg/SVGViewElement.cpp fix=qualify SVG_ZOOMANDPAN constants with SVGViewElement_Binding:: (ambiguous with SVGSVGElementBinding)
+iter=12 file=editor/libeditor/HTMLEditHelpers.cpp fix=#undef small (rpcndr.h macro polluting nsGkAtoms::small)
+iter=12 file=editor/libeditor/HTMLEditUtils.cpp fix=#undef small (rpcndr.h macro polluting nsGkAtoms::small)
+iter=13 file=image/imgLoader.cpp fix=#undef boolean before ContentParent.h include (jmorecfg.h int boolean vs rpcndr.h unsigned char boolean conflict)
+iter=14 file=image/moz.build fix=move DecoderFactory.cpp to SOURCES (JPEG boolean vs Windows COM boolean conflict)
+iter=14 file=layout/generic/nsColumnSetFrame.cpp fix=rename MarkPrincipalChildrenDirty->_2 (conflict with nsPageSequenceFrame.cpp)
+iter=14 file=layout/generic/nsVideoFrame.cpp fix=qualify Image* as layers::Image* (mozilla::layers::Image vs mozilla::image::Image ambiguity)
+iter=14 file=layout/style/nsAnimationManager.cpp fix=qualify Animation as dom::Animation (mozilla::dom::Animation vs mozilla::layers::Animation ambiguity)
+iter=15 file=netwerk/base/SSLTokensCache.h fix=revert forward-decl; CertVerifier.h is safe now without the using-namespace pkix
+iter=15 file=netwerk/base/nsIOService.cpp fix=rename gCallbackPrefs->gCallbackPrefs_2 (conflict with nsSocketTransportService2.cpp)
+iter=15 file=toolkit/components/glean/ipc/FOGIPC.cpp fix=rename sLog->sLog_2 (conflict with JOG.cpp)
+BUILD SUCCESS - iteration 16
+iter=17 file=gfx/skia/skia/src/core/SkM44.cpp fix=#undef near/far (Windows macros polluting function params)
+iter=17 file=gfx/skia/skia/src/core/SkEdgeClipper.cpp fix=rename chopMonoQuadAt->_2 (conflict with SkQuadClipper.cpp)
+iter=17 file=gfx/skia/skia/src/core/SkRasterPipeline.cpp fix=rename 'using Op' to 'using RasterOp' (conflict with Op() in SkPathOps.h)
+iter=17 file=gfx/skia/skia/src/base/SkCubics.cpp fix=rename approximately_zero->_2 (conflict with SkPathOpsTypes.h)
+iter=17 file=gfx/skia/skia/src/core/SkFontStream.cpp fix=rename local SkSFNTHeader->SkFontStreamSFNTHeader (conflict with SkSFNTHeader.h)

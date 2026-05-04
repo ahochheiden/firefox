@@ -99,7 +99,7 @@ static nsresult GetHost(nsIURI* aURI, nsACString& outResult) {
   return NS_OK;
 }
 
-static void GetStorageKey(const nsACString& aHostname,
+static void GetStorageKey_2(const nsACString& aHostname,
                           const OriginAttributes& aOriginAttributes,
                           nsAutoCString& outStorageKey) {
   outStorageKey = aHostname;
@@ -127,7 +127,7 @@ nsresult SiteIntegrityService::GetStorageKeyFromURI(
   }
 
   nsAutoCString storageKey;
-  GetStorageKey(host, aOriginAttributes, storageKey);
+  GetStorageKey_2(host, aOriginAttributes, storageKey);
   outStorageKey.Assign(storageKey);
 
   *outStorageType = aOriginAttributes.IsPrivateBrowsing()

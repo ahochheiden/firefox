@@ -31,7 +31,7 @@ static gc::AllocKind GetProxyGCObjectKind(const JSClass* clasp,
 
   uint32_t nslots = 0;
   if (withInlineValues) {
-    nslots = detail::ProxyValueArray::allocCount(nreserved);
+    nslots = js::detail::ProxyValueArray::allocCount(nreserved);
   }
 
   MOZ_ASSERT(nslots <= NativeObject::MAX_FIXED_SLOTS);
@@ -52,7 +52,7 @@ void ProxyObject::init(const BaseProxyHandler* handler, HandleValue priv,
                        JSContext* cx) {
   setInlineValueArray();
 
-  detail::ProxyValueArray* values = detail::GetProxyDataLayout(this)->values();
+  js::detail::ProxyValueArray* values = js::detail::GetProxyDataLayout(this)->values();
   values->init(numReservedSlots());
 
   data.handler = handler;

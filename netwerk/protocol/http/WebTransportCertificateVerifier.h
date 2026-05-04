@@ -7,7 +7,9 @@
 
 #include "nsTArray.h"
 #include "nsIWebTransport.h"
-#include "nss/mozpkix/pkixtypes.h"
+namespace mozilla::pkix {
+enum class Result : int;
+}
 
 namespace mozilla::net {
 // This is a special version for serverCertificateHashes introduced with

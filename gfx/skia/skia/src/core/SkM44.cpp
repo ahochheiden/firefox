@@ -340,10 +340,10 @@ SkM44 SkM44::LookAt(const SkV3& eye, const SkV3& center, const SkV3& up) {
     return m;
 }
 
-SkM44 SkM44::Perspective(float near, float far, float angle) {
-    SkASSERT(far > near);
+SkM44 SkM44::Perspective(float nearPlane, float farPlane, float angle) {
+    SkASSERT(farPlane > nearPlane);
 
-    float denomInv = sk_ieee_float_divide(1, far - near);
+    float denomInv = sk_ieee_float_divide(1, farPlane - nearPlane);
     float halfAngle = angle * 0.5f;
     SkASSERT(halfAngle != 0);
     float cot = sk_ieee_float_divide(1, std::tan(halfAngle));
@@ -351,8 +351,8 @@ SkM44 SkM44::Perspective(float near, float far, float angle) {
     SkM44 m;
     m.setRC(0, 0, cot);
     m.setRC(1, 1, cot);
-    m.setRC(2, 2, (far + near) * denomInv);
-    m.setRC(2, 3, 2 * far * near * denomInv);
+    m.setRC(2, 2, (farPlane + nearPlane) * denomInv);
+    m.setRC(2, 3, 2 * farPlane * nearPlane * denomInv);
     m.setRC(3, 2, -1);
     return m;
 }

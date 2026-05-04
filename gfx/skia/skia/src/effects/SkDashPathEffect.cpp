@@ -56,7 +56,7 @@ bool SkDashImpl::onFilterPath(SkPathBuilder* builder, const SkPath& src, SkStrok
                                       fPhase);
 }
 
-static void outset_for_stroke(SkRect* rect, const SkStrokeRec& rec) {
+static void outset_for_stroke_2(SkRect* rect, const SkStrokeRec& rec) {
     SkScalar radius = SkScalarHalf(rec.getWidth());
     if (0 == radius) {
         radius = SK_Scalar1;    // hairlines
@@ -86,7 +86,7 @@ static bool cull_line(SkPoint* pts, const SkStrokeRec& rec,
     }
 
     SkRect bounds = *cullRect;
-    outset_for_stroke(&bounds, rec);
+    outset_for_stroke_2(&bounds, rec);
 
     // cullRect is in device space while pts are in the local coordinate system
     // defined by the ctm. We want our answer in the local coordinate system.

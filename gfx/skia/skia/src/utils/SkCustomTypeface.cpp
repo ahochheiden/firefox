@@ -52,7 +52,7 @@ class SkArenaAlloc;
 class SkDescriptor;
 
 namespace {
-static inline const constexpr bool kSkShowTextBlitCoverage = false;
+static inline const constexpr bool kSkShowTextBlitCoverage_2 = false;
 }
 
 static SkFontMetrics scale_fontmetrics(const SkFontMetrics& src, float sx, float sy) {
@@ -301,7 +301,7 @@ protected:
         auto canvas = SkCanvas::MakeRasterDirectN32(glyph.width(), glyph.height(),
                                                     static_cast<SkPMColor*>(imageBuffer),
                                                     glyph.rowBytes());
-        if constexpr (kSkShowTextBlitCoverage) {
+        if constexpr (kSkShowTextBlitCoverage_2) {
             canvas->clear(0x33FF0000);
         } else {
             canvas->clear(SK_ColorTRANSPARENT);
@@ -338,7 +338,7 @@ protected:
             }
 
             void onDraw(SkCanvas* canvas) override {
-                if constexpr (kSkShowTextBlitCoverage) {
+                if constexpr (kSkShowTextBlitCoverage_2) {
                     SkPaint paint;
                     paint.setColor(0x3300FF00);
                     paint.setStyle(SkPaint::kFill_Style);

@@ -347,6 +347,13 @@ class SourceText final {
   void operator=(const SourceText&) = delete;
 };
 
+template <>
+bool SourceText<char16_t>::initMaybeBorrowed(JSContext* cx,
+                                              AutoStableStringChars& linearChars);
+template <>
+bool SourceText<char16_t>::initMaybeBorrowed(JS::FrontendContext* fc,
+                                              AutoStableStringChars& linearChars);
+
 }  // namespace JS
 
 #endif /* js_SourceText_h */

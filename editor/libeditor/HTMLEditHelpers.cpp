@@ -15,6 +15,10 @@
 #include "nsINode.h"
 #include "nsRange.h"
 
+#ifdef small
+#  undef small
+#endif
+
 class nsISupports;
 
 namespace mozilla {

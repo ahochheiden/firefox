@@ -1171,6 +1171,18 @@ class UnifiedSources(BaseSources):
 
         unified_build = context.config.substs.get("ENABLE_UNIFIED_BUILD", False)
         default = int(context.config.substs.get("FILES_PER_UNIFIED_FILE", 16))
+        _THIRD_PARTY_SRC_PREFIXES = (
+            "third_party/",
+            "media/lib",
+            "gfx/cairo",
+            "gfx/skia",
+        )
+        relsrcdir = context.relsrcdir or ""
+        if any(
+            relsrcdir == p.rstrip("/") or relsrcdir.startswith(p)
+            for p in _THIRD_PARTY_SRC_PREFIXES
+        ):
+            default = min(default, 16)
         files_per_unified_file = (
             context.get("FILES_PER_UNIFIED_FILE", default) if unified_build else 1
         )

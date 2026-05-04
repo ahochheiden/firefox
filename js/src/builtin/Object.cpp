@@ -50,7 +50,8 @@
 using namespace js;
 
 using mozilla::Maybe;
-using mozilla::Range;
+template <typename T>
+using MozRange = mozilla::Range<T>;
 using mozilla::RangedPtr;
 
 static PlainObject* CreateThis(JSContext* cx, HandleObject newTarget) {
@@ -215,7 +216,7 @@ static void ConsumeSpaces(RangedPtr<const CharT>& s, RangedPtr<const CharT> e) {
  * between '(function $name' and ')'.
  */
 template <typename CharT>
-static bool ArgsAndBodySubstring(Range<const CharT> chars, size_t* outOffset,
+static bool ArgsAndBodySubstring(MozRange<const CharT> chars, size_t* outOffset,
                                  size_t* outLen) {
   const RangedPtr<const CharT> start = chars.begin();
   RangedPtr<const CharT> s = start;

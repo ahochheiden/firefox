@@ -222,7 +222,7 @@ nsIOService::nsIOService()
       mLastConnectivityChange(PR_IntervalNow()),
       mLastNetworkLinkChange(PR_IntervalNow()) {}
 
-static const char* gCallbackPrefs[] = {
+static const char* gCallbackPrefs_2[] = {
     PORT_PREF_PREFIX,
     MANAGE_OFFLINE_STATUS_PREF,
     NECKO_BUFFER_CACHE_COUNT_PREF,
@@ -237,7 +237,7 @@ static const char* gCallbackPrefs[] = {
     nullptr,
 };
 
-static const char* gCallbackPrefsForSocketProcess[] = {
+static const char* gCallbackPrefs_2ForSocketProcess[] = {
     WEBRTC_PREF_PREFIX,
     NETWORK_DNS_PREF,
     "media.webrtc.enable_pq_hybrid_kex",
@@ -297,7 +297,7 @@ nsresult nsIOService::Init() {
 
   // Further modifications to the port list come from prefs
   Preferences::RegisterPrefixCallbacks(nsIOService::PrefsChanged,
-                                       gCallbackPrefs, this);
+                                       gCallbackPrefs_2, this);
   PrefsChanged();
 
   mSocketProcessTopicBlockedList.Insert(
@@ -621,7 +621,7 @@ nsresult nsIOService::LaunchSocketProcess() {
 
   Preferences::RegisterPrefixCallbacks(
       nsIOService::NotifySocketProcessPrefsChanged,
-      gCallbackPrefsForSocketProcess, this);
+      gCallbackPrefs_2ForSocketProcess, this);
 
   // The subprocess is launched asynchronously, so we wait for a callback to
   // acquire the IPDL actor.
@@ -646,7 +646,7 @@ void nsIOService::DestroySocketProcess() {
 
   Preferences::UnregisterPrefixCallbacks(
       nsIOService::NotifySocketProcessPrefsChanged,
-      gCallbackPrefsForSocketProcess, this);
+      gCallbackPrefs_2ForSocketProcess, this);
 
   mSocketProcess->Shutdown();
   mSocketProcess = nullptr;

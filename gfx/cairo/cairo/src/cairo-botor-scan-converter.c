@@ -49,6 +49,11 @@
 
 #include <setjmp.h>
 
+#define quorem quorem_2
+#define floored_muldivrem floored_muldivrem_2
+#define edge edge_2
+#define edge_compare_for_y_against_x edge_compare_for_y_against_x_2
+
 #define STEP_X CAIRO_FIXED_ONE
 #define STEP_Y CAIRO_FIXED_ONE
 #define UNROLL3(x) x x x
@@ -2200,3 +2205,8 @@ _cairo_botor_scan_converter_init (cairo_botor_scan_converter_t *self,
 
     self->num_edges = 0;
 }
+
+#undef quorem
+#undef floored_muldivrem
+#undef edge
+#undef edge_compare_for_y_against_x

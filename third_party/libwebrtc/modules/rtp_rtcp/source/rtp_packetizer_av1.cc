@@ -30,7 +30,7 @@ constexpr int kAggregationHeaderSize = 1;
 // when there are 3 or less OBU (fragments) in a packet, size of the last one
 // can be omited.
 constexpr int kMaxNumObusToOmitSize = 3;
-constexpr uint8_t kObuSizePresentBit = 0b0'0000'010;
+constexpr uint8_t kObuSizePresentBit_2 = 0b0'0000'010;
 constexpr int kObuTypeSequenceHeader = 1;
 constexpr int kObuTypeTemporalDelimiter = 2;
 constexpr int kObuTypeTileList = 8;
@@ -42,12 +42,12 @@ constexpr size_t kBytesOverheadEvenDistribution = 1;
 // make "even distribution" of packet sizes worthwhile.
 constexpr size_t kMinBytesSavedPerPacketWithEvenDistribution = 10;
 
-bool ObuHasExtension(uint8_t obu_header) {
+bool ObuHasExtension_2(uint8_t obu_header) {
   return obu_header & 0b0'0000'100;
 }
 
-bool ObuHasSize(uint8_t obu_header) {
-  return obu_header & kObuSizePresentBit;
+bool ObuHasSize_2(uint8_t obu_header) {
+  return obu_header & kObuSizePresentBit_2;
 }
 
 int ObuType(uint8_t obu_header) {
@@ -87,7 +87,7 @@ std::vector<RtpPacketizerAv1::Obu> RtpPacketizerAv1::ParseObus(
     Obu obu;
     payload_reader.ReadUInt8(&obu.header);
     obu.size = 1;
-    if (ObuHasExtension(obu.header)) {
+    if (ObuHasExtension_2(obu.header)) {
       if (payload_reader.Length() == 0) {
         RTC_DLOG(LS_ERROR) << "Malformed AV1 input: expected extension_header, "
                               "no more bytes in the buffer. Offset: "
@@ -97,7 +97,7 @@ std::vector<RtpPacketizerAv1::Obu> RtpPacketizerAv1::ParseObus(
       payload_reader.ReadUInt8(&obu.extension_header);
       ++obu.size;
     }
-    if (!ObuHasSize(obu.header)) {
+    if (!ObuHasSize_2(obu.header)) {
       obu.payload =
           std::span(reinterpret_cast<const uint8_t*>(payload_reader.Data()),
                     payload_reader.Length());
@@ -406,13 +406,13 @@ bool RtpPacketizerAv1::NextPacket(RtpPacketToSend* packet) {
     size_t fragment_size = obu.size - obu_offset;
     write_at += WriteLeb128(fragment_size, write_at);
     if (obu_offset == 0) {
-      *write_at++ = obu.header & ~kObuSizePresentBit;
+      *write_at++ = obu.header & ~kObuSizePresentBit_2;
     }
-    if (obu_offset <= 1 && ObuHasExtension(obu.header)) {
+    if (obu_offset <= 1 && ObuHasExtension_2(obu.header)) {
       *write_at++ = obu.extension_header;
     }
     int payload_offset =
-        std::max(0, obu_offset - (ObuHasExtension(obu.header) ? 2 : 1));
+        std::max(0, obu_offset - (ObuHasExtension_2(obu.header) ? 2 : 1));
     size_t payload_size = obu.payload.size() - payload_offset;
     if (!obu.payload.empty() && payload_size > 0) {
       memcpy(write_at, obu.payload.data() + payload_offset, payload_size);
@@ -430,10 +430,10 @@ bool RtpPacketizerAv1::NextPacket(RtpPacketToSend* packet) {
     write_at += WriteLeb128(fragment_size, write_at);
   }
   if (obu_offset == 0 && fragment_size > 0) {
-    *write_at++ = last_obu.header & ~kObuSizePresentBit;
+    *write_at++ = last_obu.header & ~kObuSizePresentBit_2;
     --fragment_size;
   }
-  if (obu_offset <= 1 && ObuHasExtension(last_obu.header) &&
+  if (obu_offset <= 1 && ObuHasExtension_2(last_obu.header) &&
       fragment_size > 0) {
     *write_at++ = last_obu.extension_header;
     --fragment_size;
@@ -441,7 +441,7 @@ bool RtpPacketizerAv1::NextPacket(RtpPacketToSend* packet) {
   RTC_DCHECK_EQ(write_at - rtp_payload + fragment_size,
                 kAggregationHeaderSize + next_packet.packet_size);
   int payload_offset =
-      std::max(0, obu_offset - (ObuHasExtension(last_obu.header) ? 2 : 1));
+      std::max(0, obu_offset - (ObuHasExtension_2(last_obu.header) ? 2 : 1));
   memcpy(write_at, last_obu.payload.data() + payload_offset, fragment_size);
   write_at += fragment_size;
 
