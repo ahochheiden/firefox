@@ -269,23 +269,11 @@ class NinjaUnifiedPlanner:
 
         for obj, attribution in self._inputs:
             for legacy_idx, (uname, srcs) in enumerate(obj.unified_source_mapping):
-                size = len(srcs)
-                # Size gate: only chunks within [min_input, max_input] are
-                # eligible. Outside the range stays legacy with a recorded
-                # reason so diagnostics show why.
-                if size < opts.min_input:
-                    kept_legacy.append((obj, legacy_idx, uname, list(srcs), attribution))
-                    rejections.append(
-                        _reject_entry(uname, obj.objdir, srcs, "chunk-too-small")
-                    )
-                    continue
-                if size > opts.max_input:
-                    kept_legacy.append((obj, legacy_idx, uname, list(srcs), attribution))
-                    rejections.append(
-                        _reject_entry(uname, obj.objdir, srcs, "chunk-too-large")
-                    )
-                    continue
-
+                # HACK: size gates disabled for testing fingerprint-only
+                # bucketing. Every legacy chunk that survives the
+                # remaining eligibility checks gets dissolved, regardless
+                # of original size, so anything with a matching
+                # fingerprint can co-bucket.
                 # Per-UnifiedSources eligibility checks. If any apply, the
                 # whole legacy chunk stays — we don't dissolve it.
                 whole_chunk_reject = self._whole_chunk_rejection(obj, attribution)
@@ -296,16 +284,12 @@ class NinjaUnifiedPlanner:
                     )
                     continue
 
-                # Per-source eligibility. Generated sources are conservative
-                # rejects in this initial crossdir; if any source in the
-                # chunk is generated, keep the whole chunk legacy.
-                generated = set(getattr(obj, "generated_files", ()) or ())
-                if any(s in generated for s in srcs):
-                    kept_legacy.append((obj, legacy_idx, uname, list(srcs), attribution))
-                    rejections.append(
-                        _reject_entry(uname, obj.objdir, srcs, "generated")
-                    )
-                    continue
+                # HACK: generated-source rejection dropped. Legacy
+                # `UnifiedSources` already includes `generated_files` in
+                # `unified_source_mapping` and they end up `#include`'d
+                # in the unified TU just like static ones, so packing
+                # them into a crossdir TU is no different from what
+                # legacy already does.
 
                 # Eligible. Each source becomes a candidate.
                 for s in srcs:
@@ -362,29 +346,15 @@ class NinjaUnifiedPlanner:
             return "no-owner-key"
         if attribution.compile_fingerprint is None:
             return "no-fingerprint"
-        # scope_key is informational now (used to choose an output
-        # subdir for legibility). It no longer narrows bucketing, so
-        # missing scope_key is no longer a rejection reason.
-        if attribution.is_third_party:
-            return "third-party"
-        if attribution.has_local_cap:
-            return "local-cap"
+        # HACK: is_third_party / has_local_cap / cwd-sensitive / third-party
+        # prefix backup all dropped — for testing-only "fingerprint is the
+        # only thing that matters" we lean on the legacy unified-build
+        # mechanism's own scope (which already accepts third-party and
+        # capped directories within their own context). per-source-flags
+        # stays as a rejection because mixing per-source flag overrides
+        # across a packed TU would change command shape.
         if attribution.has_per_source_flags:
             return "per-source-flags"
-        # CWD compatibility: require an explicit token. Sources flagged as
-        # CWD-sensitive (e.g. third-party plugin checks that key on getcwd)
-        # are rejected; conservatively require everything to claim a class.
-        if attribution.cwd_compatibility is None:
-            return "cwd-sensitive"
-        # Conservative third-party path check on relobjdir as a backup to
-        # the explicit `is_third_party` flag — catches anything the caller
-        # hasn't tagged but lives under a known vendor tree.
-        relobjdir = obj.relobjdir or ""
-        if any(
-            relobjdir == p.rstrip("/") or relobjdir.startswith(p)
-            for p in THIRD_PARTY_PREFIXES
-        ):
-            return "third-party"
         return None
 
     def _pack_bucket(self, bucket_key, members):
@@ -417,35 +387,23 @@ class NinjaUnifiedPlanner:
             else "all"
         )
 
-        # Single-candidate buckets: nothing to gain by packing into a
-        # planner-owned single-source TU. Spec defers this; reject as
-        # `bucket-too-small` and let it fall back to legacy.
-        if len(members_sorted) < 2:
-            rejections = [
-                _reject_entry(c[2], c[0].objdir, [c[3]], "bucket-too-small")
-                for c in members_sorted
-            ]
-            # Caller still needs to keep the original legacy chunks for
-            # these singletons. We reconstruct that by emitting the
-            # original legacy rows (deduped by (objdir, uname)).
-            kept = self._reconstruct_legacy_for(members_sorted)
-            return kept, rejections
+        # HACK: bucket-too-small filter disabled. Every bucket — even a
+        # single-candidate one — produces a chunk. Combined with the
+        # max_output cap removal below, this means fingerprint is the
+        # only thing that determines chunking.
 
         chunks: List[UnifiedChunk] = []
         rejections: List[dict] = []
 
-        # Walk sorted candidates, packing into chunks of up to max_output.
-        index = 0
+        # HACK: max_output cap disabled. Whole bucket → one chunk.
         chunk_idx = 0
         scope_dir = scope_key
         out_dir = mozpath.join(opts.topobjdir, "ninja-unified", scope_dir)
-        # Stable file stem: include bucket hash to guarantee uniqueness
-        # across distinct buckets within the same scope, and a serial
-        # index across chunks within the bucket. Keep the basename short
-        # for Windows path-length headroom.
         suffix_letter = suffix.lstrip(".") or "cpp"
-        while index < len(members_sorted):
-            slice_ = members_sorted[index : index + opts.max_output]
+        # Iterate once with the entire bucket as the slice.
+        index = 0
+        slices = [members_sorted]
+        for slice_ in slices:
             index += len(slice_)
 
             stem = f"UnifiedNinja_{suffix_letter}_{scope_dir.replace('/', '_')}_{bucket_hash[:8]}_{chunk_idx}"
