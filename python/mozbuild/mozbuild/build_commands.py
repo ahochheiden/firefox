@@ -191,7 +191,7 @@ def build(
 
     original_log_level = command_context.log_manager.terminal_handler.level
     try:
-        if is_running_under_coding_agent():
+        if False and is_running_under_coding_agent():
             command_context.log(
                 logging.WARNING,
                 "build",
