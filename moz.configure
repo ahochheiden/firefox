@@ -101,6 +101,17 @@ set_config("ENABLE_TESTS", enable_tests)
 set_define("ENABLE_TESTS", enable_tests)
 
 
+option(
+    "--disable-legacy-l10n",
+    env="MOZ_USE_LEGACY_L10N",
+    default=True,
+    help="{Enable|Disable} the legacy (recursive-make) l10n driver",
+)
+
+
+set_config("MOZ_USE_LEGACY_L10N", True, when="--disable-legacy-l10n")
+
+
 @depends(enable_tests)
 def gtest_has_rtti(value):
     if value:
