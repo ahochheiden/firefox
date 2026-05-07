@@ -17,14 +17,22 @@ include $(topsrcdir)/config/rules.mk
 
 l10n-%: AB_CD=$*
 l10n-%:
+ifndef MOZ_USE_LEGACY_L10N
+	$(call py_action,l10n_stage,--locale=$* --manifest=$(DEPTH)/l10n-manifest.json --merge-tree=$(BASE_MERGE)/$* --dest=$(DIST)/xpi-stage/locale-$* --topsrcdir=$(topsrcdir) --topobjdir=$(DEPTH))
+else
 	$(NSINSTALL) -D $(DIST)/install
 	@$(MAKE) -C $(DEPTH)/toolkit/locales l10n-$*
 	@$(MAKE) l10n AB_CD=$* XPI_NAME=locale-$* PREF_DIR=defaults/pref
 	@$(MAKE) -C $(DEPTH)/$(MOZ_BRANDING_DIRECTORY)/locales AB_CD=$* XPI_NAME=locale-$*
+endif
 
 # Tailored target to just add the chrome processing for multi-locale builds
 chrome-%: AB_CD=$*
 chrome-%:
+ifndef MOZ_USE_LEGACY_L10N
+	$(call py_action,l10n_stage,--locale=$* --manifest=$(DEPTH)/l10n-manifest.json --merge-tree=$(BASE_MERGE)/$* --dest=$(DIST)/bin --topsrcdir=$(topsrcdir) --topobjdir=$(DEPTH) --mode=chrome)
+else
 	@$(MAKE) chrome AB_CD=$*
 	@$(MAKE) -C $(DEPTH)/$(MOZ_BRANDING_DIRECTORY)/locales chrome AB_CD=$*
 	$(call INSTALL_L10N_COVERAGE,$(FINAL_TARGET))
+endif

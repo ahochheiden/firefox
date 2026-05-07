@@ -1500,7 +1500,11 @@ class BuildDriver(MozbuildObject):
                     if make_dir is None and make_target is None:
                         return 1
 
-                    if config.is_artifact_build and target.startswith("installers-"):
+                    if (
+                        config.is_artifact_build
+                        and target.startswith("installers-")
+                        and config.substs.get("MOZ_USE_LEGACY_L10N")
+                    ):
                         # See https://bugzilla.mozilla.org/show_bug.cgi?id=1387485
                         self.log(
                             logging.ERROR,
