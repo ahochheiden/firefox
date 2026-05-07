@@ -41,6 +41,7 @@ from mozbuild.frontend.data import (
     WasmSources,
 )
 from mozbuild.frontend.emitter import TreeMetadataEmitter
+from mozbuild.frontend.l10n_manifest import L10nManifestContext
 from mozbuild.frontend.reader import (
     BuildReader,
     BuildReaderError,
@@ -87,7 +88,9 @@ class TestEmitterBasic(unittest.TestCase):
 
         filtered = []
         for obj in objs:
-            if filter_common and isinstance(obj, DirectoryTraversal):
+            if filter_common and isinstance(
+                obj, (DirectoryTraversal, L10nManifestContext)
+            ):
                 continue
 
             filtered.append(obj)
