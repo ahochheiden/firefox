@@ -13,11 +13,12 @@ Invoked in make via $(call py_action,l10n_stage,...).
 
 import argparse
 import fnmatch
+import importlib.util
 import shutil
 import sys
 from glob import glob
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 import mozpack.path as mozpath
 
@@ -25,9 +26,11 @@ from mozbuild.frontend.l10n_manifest import (
     L10nManifest,
     L10nManifestContextData,
     LocalizedFileGroup,
+    LocalizedGenScript,
     load_l10n_manifest,
 )
 from mozbuild.preprocessor import Preprocessor
+from mozbuild.util import FileAvoidWrite
 
 
 def stage_locale(
@@ -82,10 +85,17 @@ class StageState:
 def _stage_context(state: StageState, context: L10nManifestContextData) -> None:
     """Stage one L10nManifestContextData into state.dest.
 
-    LOCALIZED_FILES and LOCALIZED_PP_FILES are langpack-only. Chrome
-    mode skips them so multi-locale builds only stage chrome content.
+    LOCALIZED_GENERATED_FILES scripts plus LOCALIZED_FILES and
+    LOCALIZED_PP_FILES entries are langpack-only. Within langpack
+    mode, gen scripts run first so that subsequent LOCALIZED_FILES /
+    LOCALIZED_PP_FILES entries can resolve their objdir-relative
+    !output references to the generated outputs.
     """
     if state.mode == "langpack":
+        # LOCALIZED_GENERATED_FILES must run before LOCALIZED_FILES so their
+        # objdir-relative !output references resolve.
+        for gen in context.localized_generated_files:
+            _run_localized_generated(state, context, gen)
         for group in context.localized_files:
             _stage_file_group(state, context, group, preprocess=False)
         for group in context.localized_pp_files:
@@ -101,9 +111,11 @@ def _stage_file_group(
     """Stage one LOCALIZED_FILES or LOCALIZED_PP_FILES group.
 
     Sources may be en-US/... (resolves via the merge tree),
-    /path/locales/en-US/... (topsrcdir-rooted, merge tree), or a glob
-    pattern. preprocess=True runs each entry through the preprocessor
-    with LOCALE_PP_DEFINES resolved for the current locale.
+    /path/locales/en-US/... (topsrcdir-rooted, merge tree), !output
+    (objdir-relative, typically a LOCALIZED_GENERATED_FILES output),
+    or a glob pattern. preprocess=True runs each entry through the
+    preprocessor with LOCALE_PP_DEFINES resolved for the current
+    locale.
     """
     install_target = mozpath.normpath(
         mozpath.join(context.install_subdir, group.subpath)
@@ -117,7 +129,18 @@ def _stage_file_group(
             state, context, src_template, install_target
         ):
             dest_path = mozpath.join(state.dest, dest_rel)
+            # !output references can resolve to the same path the gen
+            # step already wrote (when the LOCALIZED_FILES re-route
+            # doesn't move the output to a different subpath). Skip
+            # the redundant copy.
+            if mozpath.normpath(src) == mozpath.normpath(dest_path):
+                continue
             _stage_entry(src, dest_path, preprocess, defines)
+            # !output re-routes: the gen step writes to its default
+            # install dir. Once we've copied it to the re-route
+            # destination, drop the original.
+            if src_template.startswith("!"):
+                Path(src).unlink(missing_ok=True)
 
 
 def _resolve_localized_sources(
@@ -133,19 +156,24 @@ def _resolve_localized_sources(
     context (mirroring EXPAND_LOCALE_SRCDIR). Glob patterns expand
     against whichever resolved location.
     """
+    if src_template.startswith("!"):
+        # LOCALIZED_GENERATED_FILES outputs landed at the gen step's
+        # default install dir (context.install_subdir) before the
+        # LOCALIZED_FILES re-route. Source the file from there.
+        gen_output = src_template[1:]
+        src_abs = mozpath.join(
+            state.dest, context.install_subdir, mozpath.basename(gen_output)
+        )
+        dest_rel = mozpath.join(install_target, mozpath.basename(gen_output))
+        if Path(src_abs).exists():
+            yield src_abs, dest_rel
+        return
+
     if src_template.startswith("en-US/"):
         rest = src_template[len("en-US/") :]
         src_abs = mozpath.join(_locale_source_root(state, context.relsrcdir), rest)
     elif "/locales/en-US/" in src_template:
-        if src_template.startswith("/"):
-            rel = src_template.lstrip("/")
-        else:
-            rel = mozpath.join(context.relsrcdir, src_template)
-        if state.locale == "en-US":
-            src_abs = mozpath.join(state.topsrcdir or "", rel)
-        else:
-            before, rest = rel.split("/locales/en-US/", 1)
-            src_abs = mozpath.join(state.merge_tree, before, rest)
+        src_abs = _resolve_locales_marker_path(state, context.relsrcdir, src_template)
     else:
         src_abs = mozpath.join(
             _locale_source_root(state, context.relsrcdir), src_template
@@ -187,6 +215,21 @@ def _locale_source_root(state: StageState, relsrcdir: str) -> str:
     return mozpath.join(state.merge_tree, _merge_subdir_for(relsrcdir))
 
 
+def _resolve_locales_marker_path(state: StageState, relsrcdir: str, path: str) -> str:
+    """Resolve a path containing a /locales/en-US/ marker. en-US reads
+    from topsrcdir directly. Other locales split at the marker and read
+    from the merge tree.
+    """
+    if path.startswith("/"):
+        rel = path.lstrip("/")
+    else:
+        rel = mozpath.join(relsrcdir, path)
+    if state.locale == "en-US":
+        return mozpath.join(state.topsrcdir or "", rel)
+    before, rest = rel.split("/locales/en-US/", 1)
+    return mozpath.join(state.merge_tree, before, rest)
+
+
 def _resolve_locale_defines(
     state: StageState, context: L10nManifestContextData
 ) -> dict[str, object]:
@@ -219,6 +262,99 @@ def _preprocess_to(src: str, dest: str, defines: dict[str, object]) -> None:
 
 def _copy_to(src: str, dest: str) -> None:
     shutil.copyfile(src, dest)
+
+
+def _run_localized_generated(
+    state: StageState,
+    context: L10nManifestContextData,
+    gen: LocalizedGenScript,
+) -> None:
+    """Invoke a LOCALIZED_GENERATED_FILES script for the current locale
+    and write its outputs into the staging tree.
+
+    Outputs may contain {AB_CD} / {AB_rCD} placeholders. Inputs with an
+    en-US/ prefix or /locales/en-US/ segment resolve through the merge
+    tree. Other inputs resolve against topsrcdir.
+    """
+    substs = {"AB_CD": state.locale, "AB_rCD": _ab_rcd(state.locale)}
+    resolved_outputs = []
+    for output in gen.outputs:
+        try:
+            resolved_outputs.append(output.format(**substs))
+        except KeyError as e:
+            raise ValueError(
+                f"{e.args[0]} not in {sorted(substs)} is not a valid "
+                f"substitution in {output}"
+            )
+
+    resolved_inputs = []
+    for inp in gen.inputs:
+        if inp.startswith("en-US/"):
+            rest = inp[len("en-US/") :]
+            resolved_inputs.append(
+                mozpath.join(_locale_source_root(state, context.relsrcdir), rest)
+            )
+        elif "/locales/en-US/" in inp:
+            resolved_inputs.append(
+                _resolve_locales_marker_path(state, context.relsrcdir, inp)
+            )
+        elif inp.startswith("/"):
+            resolved_inputs.append(mozpath.join(state.topsrcdir or "", inp.lstrip("/")))
+        else:
+            # Bare paths come from topsrcdir, not the merge tree.
+            resolved_inputs.append(
+                mozpath.join(state.topsrcdir or "", context.relsrcdir, inp)
+            )
+
+    out_dir = mozpath.join(state.dest, context.install_subdir)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_paths = [mozpath.join(out_dir, mozpath.basename(o)) for o in resolved_outputs]
+
+    if not gen.force and all(Path(p).exists() for p in out_paths):
+        return
+
+    main_fn = _load_script(gen.script, gen.method)
+
+    primary_output = out_paths[0]
+    try:
+        with FileAvoidWrite(primary_output, readmode="rb") as output:
+            try:
+                ret = main_fn(output, *resolved_inputs, locale=state.locale)
+            except Exception:
+                output.avoid_writing_to_file()
+                raise
+    except Exception:
+        Path(primary_output).unlink(missing_ok=True)
+        raise
+    if ret and not isinstance(ret, set):
+        raise RuntimeError(
+            f"LOCALIZED_GENERATED_FILES script {gen.script}:{gen.method} "
+            f"returned {ret} for locale {state.locale}"
+        )
+
+
+def _load_script(script_path: str, method_name: str) -> Callable:
+    spec = importlib.util.spec_from_file_location(
+        "_localized_generated_script", script_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, method_name)
+
+
+def _ab_rcd(locale: str) -> str:
+    """AB_rCD form used in Android resource directory names.
+
+    Empty for en-US, -iw for he, -in for id, otherwise the locale with
+    - replaced by -r (so zh-TW -> -zh-rTW, fr -> -fr).
+    """
+    if locale == "en-US":
+        return ""
+    if locale == "he":
+        return "-iw"
+    if locale == "id":
+        return "-in"
+    return "-" + locale.replace("-", "-r")
 
 
 def _has_wildcard(path: str) -> bool:
