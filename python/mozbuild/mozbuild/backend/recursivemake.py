@@ -1515,6 +1515,11 @@ class RecursiveMakeBackend(MakeBackend):
             backend_file.write("LIB_IS_C_ONLY := 1\n")
         if libdef.output_category:
             self._process_non_default_target(libdef, shared_lib, backend_file)
+        if self.environment.substs.get("OS_ARCH") == "WINNT" and libdef.installed:
+            backend_file.write("IMPORT_LIB_FILES := $(IMPORT_LIBRARY)\n")
+            backend_file.write("IMPORT_LIB_DEST := $(DIST)/lib\n")
+            backend_file.write("IMPORT_LIB_TARGET := target\n")
+            backend_file.write("INSTALL_TARGETS += IMPORT_LIB\n")
 
     def _process_static_library(self, libdef, backend_file):
         backend_file.write_once("LIBRARY_NAME := %s\n" % libdef.basename)
@@ -1522,6 +1527,11 @@ class RecursiveMakeBackend(MakeBackend):
         backend_file.write("REAL_LIBRARY := %s\n" % libdef.lib_name)
         if libdef.no_expand_lib:
             backend_file.write("NO_EXPAND_LIBS := 1\n")
+        if libdef.no_expand_lib and libdef._context.get("DIST_INSTALL"):
+            backend_file.write("STATIC_LIB_FILES := $(REAL_LIBRARY)\n")
+            backend_file.write("STATIC_LIB_DEST := $(DIST)/lib\n")
+            backend_file.write("STATIC_LIB_TARGET := target\n")
+            backend_file.write("INSTALL_TARGETS += STATIC_LIB\n")
 
     def _process_sandboxed_wasm_library(self, libdef, backend_file):
         backend_file.write("WASM_ARCHIVE := %s\n" % libdef.basename)

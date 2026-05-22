@@ -146,6 +146,7 @@ if CONFIG["GCC_USE_GNU_LD"]:
 GYP_DIRS += ["nss"]
 GYP_DIRS["nss"].input = "nss/nss.gyp"
 GYP_DIRS["nss"].variables = gyp_vars
+GYP_DIRS["nss"].install_static_libs = ["mozpkix"]
 
 sandbox_vars = {
     # NSS explicitly exports its public symbols
