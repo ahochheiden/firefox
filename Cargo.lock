@@ -4615,6 +4615,7 @@ dependencies = [
  "nimbus-sdk",
  "places",
  "push",
+ "rc_crypto",
  "relay",
  "remote_settings",
  "rust-log-forwarder",
@@ -5677,6 +5678,9 @@ dependencies = [
 [[package]]
 name = "nss_build_common"
 version = "0.1.0"
+dependencies = [
+ "mozbuild",
+]
 
 [[package]]
 name = "nss_sys"
