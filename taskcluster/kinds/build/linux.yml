@@ -20,6 +20,7 @@ linux64/opt:
         max-run-time: 7200
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
+            MOZ_ENABLE_NINJA_BACKEND: "1"
             # bug 1690154 - enable full symbols on all branches, but only
             # upload them on the official set. In conjunction with
             # `enable-full-crashsymbols`.
@@ -50,6 +51,7 @@ linux64/opt:
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
             - onnxruntime-x86_64-linux-gnu
+            - linux64-ninja-fork
 
 linux64-x11/opt:
     description: "Linux64 Opt (X11-only)"
