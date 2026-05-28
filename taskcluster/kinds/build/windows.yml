@@ -381,6 +381,7 @@ win64/opt:
         max-run-time: 7200
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
+            MOZ_ENABLE_NINJA_BACKEND: "1"
     mozconfig:
         platform: win64
     run:
@@ -414,6 +415,7 @@ win64/opt:
             - dxc-x86_64-pc-windows-msvc
             - onnxruntime-x86_64-windows-msvc
             - winappsdk-x86_64-pc-windows-msvc
+            - linux64-ninja-fork
 
 win64-appservices/opt:
     description: "Win64 Opt with an in-tree app-services"
