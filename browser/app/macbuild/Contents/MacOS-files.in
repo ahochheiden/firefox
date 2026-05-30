@@ -3,22 +3,22 @@
 ; to the .app/Contents/MacOS directory.
 #endif
 #filter substitution
-/*.app/***
-/certutil
+*.app
+certutil
 #if defined(MOZ_GECKODRIVER)
-/geckodriver
+geckodriver
 #endif
-/gtest/***
-/http3server
+gtest
+http3server
 #if defined(MOZ_ASAN) || defined(MOZ_TSAN) || defined(FUZZING)
-/llvm-symbolizer
+llvm-symbolizer
 #endif
 #if defined(MOZ_CRASHREPORTER)
-/crashhelper
+crashhelper
 #endif
-/nmhproxy
-/pingsender
-/pk12util
-/ssltunnel
-/xpcshell
-/XUL
+nmhproxy
+pingsender
+pk12util
+ssltunnel
+xpcshell
+XUL

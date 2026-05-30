@@ -119,6 +119,7 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
             CONFIG["MOZ_PKCS11_PROCESS_BUNDLEID"],
             CONFIG["MOZ_PKCS11_PROCESS_BUNDLENAME"],
         ))
+    child = CONFIG["MOZ_CHILD_PROCESS_NAME"]
     for bundle, executable, bundleid, app_name in mac_bundles:
         GeneratedFile(
             f"{bundle}.Info.plist",
@@ -144,6 +145,13 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
                 "utf-16",
                 f"-DAPP_NAME={app_name}",
             ],
+        )
+        MacOSBundle(
+            f"!/{FINAL_TARGET}/{bundle}.app",
+            skeleton="macbuild/Contents",
+            info_plist=f"!{bundle}.Info.plist",
+            strings=f"!{bundle}.InfoPlist.strings",
+            binaries=[(f"!/{FINAL_TARGET}/{child}", executable)],
         )
 
 

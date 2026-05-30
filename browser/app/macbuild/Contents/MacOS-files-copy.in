@@ -8,4 +8,4 @@
 # absolute resolved paths which breaks this assumption if symlinks are used
 # because the symlink targets are in different directories. Hence the need for
 # them to be copied to the same directory.
-/*.dylib
+*.dylib
