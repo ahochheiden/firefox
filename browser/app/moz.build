@@ -12,8 +12,6 @@ with Files("module.ver"):
 with Files("splash.rc"):
     BUG_COMPONENT = ("Core", "Widget: Win32")
 
-with Files("macversion.py"):
-    BUG_COMPONENT = ("Core", "Widget: Cocoa")
 with Files("macbuild/**"):
     BUG_COMPONENT = ("Core", "Widget: Cocoa")
 
@@ -22,6 +20,8 @@ with Files("moz.build"):
 with Files("Makefile.in"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 with Files("generate_channel_prefs.py"):
+    BUG_COMPONENT = ("Firefox Build System", "General")
+with Files("generate_info_plist.py"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 
 with Files("profile/channel-prefs.js"):
@@ -38,6 +38,29 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] != "cocoa":
         inputs=["profile/channel-prefs.js"],
     )
     FINAL_TARGET_FILES.defaults.pref += ["!channel-prefs.js"]
+
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
+    GeneratedFile(
+        "Info.plist",
+        script="generate_info_plist.py",
+        inputs=["macbuild/Contents/Info.plist.in"],
+        extra_deps=["!/buildid.h"],
+    )
+    mac_app_name = CONFIG["MOZ_APP_DISPLAYNAME"]
+    if CONFIG["MOZ_DEBUG"]:
+        mac_app_name += "Debug"
+    GeneratedFile(
+        "InfoPlist.strings",
+        script="/python/mozbuild/mozbuild/action/preprocessor.py",
+        entry_point="generate",
+        inputs=["macbuild/Contents/Resources/English.lproj/InfoPlist.strings.in"],
+        flags=[
+            "-Fsubstitution",
+            "--output-encoding",
+            "utf-16",
+            f"-DMAC_APP_NAME={mac_app_name}",
+        ],
+    )
 
 if CONFIG["MOZ_MACBUNDLE_NAME"]:
     DIRS += ["macbuild/Contents"]

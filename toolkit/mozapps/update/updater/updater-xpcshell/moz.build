@@ -13,3 +13,19 @@ else:
 updater_rel_path = "../"
 DEFINES["TEST_UPDATER"] = True
 include("../updater-common.build")
+
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
+    GeneratedFile(
+        "InfoPlist.strings",
+        script="/python/mozbuild/mozbuild/action/preprocessor.py",
+        entry_point="generate",
+        inputs=[
+            "/toolkit/mozapps/update/updater/macbuild/Contents/Resources/English.lproj/InfoPlist.strings.in"
+        ],
+        flags=[
+            "-Fsubstitution",
+            "--output-encoding",
+            "utf-16",
+            f"-DAPP_NAME={CONFIG['MOZ_APP_DISPLAYNAME']}",
+        ],
+    )
