@@ -1,6 +1,8 @@
 [DEFAULT]
 subsuite = "mozbuild"
 
+["action/test_assemble_macos_bundle.py"]
+
 ["action/test_buildlist.py"]
 
 ["action/test_html_fragment_preprocessor.py"]

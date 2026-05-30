@@ -53,6 +53,7 @@ from .data import (
     LocalInclude,
     LocalizedFiles,
     LocalizedPreprocessedFiles,
+    MacOSBundle,
     MozSrcFiles,
     ObjdirFiles,
     ObjdirPreprocessedFiles,
@@ -1659,6 +1660,9 @@ class TreeMetadataEmitter(LoggingMixin):
 
         if jsshell_files := context.get("JS_SHELL_ARCHIVE_FILES", []):
             yield JsShellArchive(context, jsshell_files)
+
+        for bundle in context.get("MACOS_BUNDLES", []):
+            yield MacOSBundle(context, bundle)
 
         rust_tests = context.get("RUST_TESTS", [])
         if rust_tests:
