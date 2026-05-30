@@ -663,6 +663,48 @@ class TestRecursiveMakeBackend(BackendTester):
         self.maxDiff = None
         self.assertEqual(lines, expected)
 
+    def test_objdir_files_rename(self):
+        """Ensure OBJDIR_FILES and FINAL_TARGET_FILES objdir entries install
+        via a single mode-preserving action over a manifest, renaming when a
+        (source, target_basename) tuple is given."""
+        env = self._consume("objdir-files-rename", RecursiveMakeBackend)
+
+        backend_path = mozpath.join(env.topobjdir, "backend.mk")
+        backend = open(backend_path).read()
+        # Each (dir, tier) group installs with one stamped rule that runs the
+        # install action over a manifest, preserving mode.
+        self.assertIn("misc:: _tests_foo.objdir-install.stamp\n", backend)
+        self.assertIn(
+            "$(call py_action,install_objdir_file,"
+            "_tests_foo.objdir-install.manifest)\n",
+            backend,
+        )
+        self.assertIn("misc:: dist_bin_misc.objdir-install.stamp\n", backend)
+        self.assertIn(
+            "$(call py_action,install_objdir_file,"
+            "dist_bin_misc.objdir-install.manifest)\n",
+            backend,
+        )
+
+        # Each manifest maps a source to its destination, renaming the tuple
+        # entries (OBJDIR_FILES and FINAL_TARGET_FILES alike) and keeping the
+        # plain entry's basename.
+        def read_manifest(name):
+            with open(mozpath.join(env.topobjdir, name)) as fh:
+                return dict(line.rstrip("\n").split("\t") for line in fh)
+
+        objdir_map = read_manifest("_tests_foo.objdir-install.manifest")
+        renamed = [d for s, d in objdir_map.items() if s.endswith("/bar")]
+        plain = [d for s, d in objdir_map.items() if s.endswith("/baz")]
+        self.assertTrue(renamed and renamed[0].endswith("_tests/foo/renamed"))
+        self.assertTrue(plain and plain[0].endswith("_tests/foo/baz"))
+
+        final_map = read_manifest("dist_bin_misc.objdir-install.manifest")
+        renamed_final = [d for s, d in final_map.items() if s.endswith("/qux")]
+        self.assertTrue(
+            renamed_final and renamed_final[0].endswith("dist/bin/renamed-final")
+        )
+
     def test_resources(self):
         """Ensure RESOURCE_FILES is handled properly."""
         env = self._consume("resources", RecursiveMakeBackend)

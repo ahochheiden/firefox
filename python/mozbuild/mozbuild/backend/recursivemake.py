@@ -20,7 +20,6 @@ from mozbuild.frontend.context import (
     AbsolutePath,
     ObjDirPath,
     Path,
-    RenamedSourcePath,
     SourcePath,
 )
 
@@ -1671,6 +1670,31 @@ class RecursiveMakeBackend(MakeBackend):
         backend_file.write("%s_TARGET := %s\n" % (install_target, tier))
         backend_file.write("INSTALL_TARGETS += %s\n" % install_target)
 
+    def _add_objdir_install_targets(self, backend_file, tier, pairs, group_key):
+        # Install a group of objdir files with a single rule that preserves
+        # their mode (e.g. the executable bit) and can install them under a
+        # different name. The rule runs one mode-preserving action over a
+        # manifest, rather than the legacy make/nsinstall path (which forces a
+        # fixed mode and can't rename) or one action invocation per file.
+        # `pairs` is a list of (Path, objdir-relative destination). The manifest
+        # is written here rather than passed on the command line, which could go
+        # over the maximum argument length on Windows.
+        if not pairs:
+            return
+        self._no_skip[tier].add(backend_file.relobjdir)
+        objdir = mozpath.join(self.environment.topobjdir, backend_file.relobjdir)
+        manifest = f"{group_key}.objdir-install.manifest"
+        stamp = f"{group_key}.objdir-install.stamp"
+        with self._write_file(mozpath.join(objdir, manifest)) as fh:
+            for f, dest_rel in pairs:
+                dest = mozpath.join(self.environment.topobjdir, dest_rel)
+                fh.write(f"{f.full_path}\t{dest}\n")
+        sources = " ".join(self._pretty_path(f, backend_file) for f, _ in pairs)
+        backend_file.write(f"{tier}:: {stamp}\n")
+        backend_file.write(f"{stamp}: {sources} {manifest}\n")
+        backend_file.write(f"\t$(call py_action,install_objdir_file,{manifest})\n")
+        backend_file.write("\t@$(TOUCH) $@\n")
+
     def _process_final_target_files(self, obj, files, backend_file):
         target = obj.install_target
         path = mozpath.basedir(
@@ -1696,10 +1720,10 @@ class RecursiveMakeBackend(MakeBackend):
             # those in with objdir headers that will be installed during export.
             # (See bug 1642882 for details.)
             objdir_files = []
+            renamed_objdir_files = []
             absolute_files = []
 
             for f in subfiles:
-                assert not isinstance(f, RenamedSourcePath)
                 dest_dir = mozpath.join(reltarget, subpath)
                 dest_file = mozpath.join(dest_dir, f.target_basename)
                 if not isinstance(f, ObjDirPath):
@@ -1731,17 +1755,52 @@ class RecursiveMakeBackend(MakeBackend):
                         absolute_files.append(f.full_path)
                     else:
                         install_manifest.add_link(f.full_path, dest_file)
+                elif f.target_basename != mozpath.basename(f.full_path):
+                    renamed_objdir_files.append(f)
                 else:
                     install_manifest.add_optional_exists(dest_file)
-                    objdir_files.append(self._pretty_path(f, backend_file))
+                    objdir_files.append(f)
             install_location = "$(DEPTH)/%s" % mozpath.join(target, subpath)
-            if objdir_files:
-                tier = "export" if obj.install_target == "dist/include" else "misc"
-                # We cannot generate multilocale.txt during misc at the moment.
-                if objdir_files[0] == "multilocale.txt":
-                    tier = "libs"
-                self._add_install_target(
-                    backend_file, target_var, tier, install_location, objdir_files
+            if obj.install_target == "dist/include":
+                if objdir_files:
+                    # Generated headers install in bulk during export because they
+                    # are regular files for which the fixed install mode is fine.
+                    self._add_install_target(
+                        backend_file,
+                        target_var,
+                        "export",
+                        install_location,
+                        [self._pretty_path(f, backend_file) for f in objdir_files],
+                    )
+                # A renamed generated header still needs the mode-preserving copy.
+                self._add_objdir_install_targets(
+                    backend_file,
+                    "export",
+                    [
+                        (f, mozpath.join(target, subpath, f.target_basename))
+                        for f in renamed_objdir_files
+                    ],
+                    f"{target_var}_export",
+                )
+            else:
+                # Other built files (e.g. binaries) are copied with a rule that
+                # preserves their mode, so an executable keeps its +x bit. The
+                # rename is just a different destination name, so renamed and
+                # non-renamed files install the same way.
+                libs_pairs = []
+                misc_pairs = []
+                for f in objdir_files + renamed_objdir_files:
+                    dest_rel = mozpath.join(target, subpath, f.target_basename)
+                    # We cannot generate multilocale.txt during misc at the moment.
+                    if f.target_basename == "multilocale.txt":
+                        libs_pairs.append((f, dest_rel))
+                    else:
+                        misc_pairs.append((f, dest_rel))
+                self._add_objdir_install_targets(
+                    backend_file, "libs", libs_pairs, f"{target_var}_libs"
+                )
+                self._add_objdir_install_targets(
+                    backend_file, "misc", misc_pairs, f"{target_var}_misc"
                 )
             if absolute_files:
                 # Unfortunately, we can't use _add_install_target because on
@@ -1866,15 +1925,11 @@ class RecursiveMakeBackend(MakeBackend):
         # We can't use an install manifest for the root of the objdir, since it
         # would delete all the other files that get put there by the build
         # system.
-        for i, (path, file_list) in enumerate(files.walk()):
-            self._no_skip["misc"].add(backend_file.relobjdir)
-            for f in file_list:
-                backend_file.write(
-                    "OBJDIR_%d_FILES += %s\n" % (i, self._pretty_path(f, backend_file))
-                )
-            backend_file.write("OBJDIR_%d_DEST := $(topobjdir)/%s\n" % (i, path))
-            backend_file.write("OBJDIR_%d_TARGET := misc\n" % i)
-            backend_file.write("INSTALL_TARGETS += OBJDIR_%d\n" % i)
+        for path, file_list in files.walk():
+            pairs = [(f, mozpath.join(path, f.target_basename)) for f in file_list]
+            self._add_objdir_install_targets(
+                backend_file, "misc", pairs, (path.replace("/", "_") or "objdir")
+            )
 
     def _process_chrome_manifest_entry(self, obj, backend_file):
         fragment = Makefile()
