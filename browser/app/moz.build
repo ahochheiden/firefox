@@ -31,6 +31,9 @@ with Files("profile/firefox.js"):
 
 DIRS += ["distribution"]
 
+# Neither channel-prefs.js nor firefox.exe want to end up in dist/bin/browser.
+DIST_SUBDIR = ""
+
 if CONFIG["MOZ_WIDGET_TOOLKIT"] != "cocoa":
     GeneratedFile(
         "channel-prefs.js",
@@ -108,6 +111,14 @@ if CONFIG["MOZ_NO_PIE_COMPAT"]:
 else:
     GeckoProgram(CONFIG["MOZ_APP_NAME"], linkage=browser_linkage)
 
+    if CONFIG["OS_ARCH"] != "WINNT" and CONFIG["COMPILE_ENVIRONMENT"]:
+        FINAL_TARGET_FILES += [
+            (
+                f"!/{FINAL_TARGET}/" + CONFIG["MOZ_APP_NAME"] + CONFIG["BIN_SUFFIX"],
+                CONFIG["MOZ_APP_NAME"] + "-bin" + CONFIG["BIN_SUFFIX"],
+            )
+        ]
+
 # Compile the application data (which changes every build due to the build ID)
 # in a separate tiny file so that nsBrowserApp.cpp doesn't need to be
 # recompiled on every no-op build.
@@ -115,9 +126,6 @@ SOURCES += [
     "ApplicationData.cpp",
     "nsBrowserApp.cpp",
 ]
-
-# Neither channel-prefs.js nor firefox.exe want to end up in dist/bin/browser.
-DIST_SUBDIR = ""
 
 LOCAL_INCLUDES += [
     "!/build",
