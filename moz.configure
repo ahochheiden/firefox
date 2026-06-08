@@ -519,7 +519,7 @@ check_prog("NINJA", ("ninja",), bootstrap="ninja/bin", when=ninja_backend)
 
 option(
     "--enable-ninja-experimental-explicit-rustc-edges",
-    default=False,
+    default=True,
     help="Emit explicit per-crate rustc edges (driven by cargo --unit-graph) "
     "instead of monolithic cargo edges in the Ninja backend",
 )
