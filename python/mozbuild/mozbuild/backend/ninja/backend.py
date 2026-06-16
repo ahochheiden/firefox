@@ -172,6 +172,9 @@ class NinjaBackend(
         # mirroring make's `syms::` target (rules.mk:654).
         self._post_link_stamps = {}
         self._syms_stamps = []
+        # Networking-check stamps for rust staticlibs (proxy-bypass guard),
+        # folded into the `binaries` phony so they run on a default build.
+        self._rust_netcheck_stamps = []
         # Per-directory ComputedFlags. The emitter yields TWO ComputedFlags
         # objects per context — one from COMPILE_FLAGS (keys like CXXFLAGS,
         # CFLAGS, CXX_LDFLAGS, C_LDFLAGS) and one from LINK_FLAGS (key
@@ -1726,6 +1729,8 @@ class NinjaBackend(
                 category_outputs[cat].extend(targets)
             else:
                 binary_outputs.extend(targets)
+
+        binary_outputs += [self._rel_n_path(s) for s in self._rust_netcheck_stamps]
 
         install_outputs = [
             self._rel_n_path(track)

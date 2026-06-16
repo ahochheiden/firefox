@@ -864,6 +864,17 @@ def compose_rustc(spec, substs, current_env, topsrcdir, topobjdir, bs=None):
         host = not spec.get("platform")
         linker = _compute_cargo_target_linker_path(substs, topsrcdir, host=host)
         argv += ["-C", f"linker={linker}"]
+        # windows-gnu (mingw-clang): rustc passes -nodefaultlibs, so restore the
+        # default libraries for clang to add clang_rt etc.
+        if (
+            not host
+            and "bin" in spec.get("crate_types", [])
+            and substs.get("OS_ARCH") == "WINNT"
+            and substs.get("CC_TYPE") == "clang"
+        ):
+            argv += ["-C", "default-linker-libraries=yes"]
+        for la in spec.get("link_args") or []:
+            argv += ["-C", f"link-arg={la}"]
         # cargo[-host]-linker.bat runs `%PYTHON3% <wrapper> <args>`; with PYTHON3
         # unset the wrapper re-resolves to itself via PATHEXT and spins forever.
         # The wrapper's python also reads MOZ_CLANG_NEWER_THAN_RUSTC_LLVM.

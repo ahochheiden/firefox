@@ -13,6 +13,8 @@ import mozpack.path as mozpath
 from mozfile import json
 
 from mozbuild.backend.cargo_build_defs import cargo_extra_outputs
+from mozbuild.backend.ninja_syntax import path as n_path
+from mozbuild.backend.ninja_syntax import value as n_value
 
 
 class RustMixin:
@@ -61,6 +63,114 @@ class RustMixin:
         if gkrust and gkrust != exclude_output:
             return [gkrust]
         return []
+
+    def _rust_networking_check_enabled(self):
+        """Whether to run the rust-staticlib networking check, mirroring the
+        gates around it: Linux release builds where the lib gets -Clto but not
+        cross-language LTO, excluding sanitizer/coverage/fuzzer/profile-generate
+        configs."""
+        s = self.environment.substs
+        if s.get("OS_ARCH") != "Linux":
+            return False
+        if s.get("MOZ_LTO_RUST_CROSS") or s.get("MOZ_PROFILE_GENERATE"):
+            return False
+        if s.get("DEVELOPER_OPTIONS") or s.get("MOZ_DEBUG_RUST"):
+            return False
+        if s.get("MOZ_ASAN") or s.get("MOZ_TSAN") or s.get("MOZ_UBSAN"):
+            return False
+        if s.get("MOZ_CODE_COVERAGE") or s.get("LIBFUZZER") or s.get("AFLFUZZ"):
+            return False
+        return True
+
+    def _emit_rust_networking_check(self, writer, lib, output_path):
+        """Check that the rust staticlib imports no networking functions, to
+        reduce the chance of proxy bypasses from rust code. Gated like the make
+        build, and skipped for gkrust_gtest (which never gets -Clto)."""
+        if not self._rust_networking_check_enabled():
+            return
+        if "gkrust_gtest" in lib.lib_name:
+            return
+        out = mozpath.normsep(output_path)
+        stamp = out + ".netcheck"
+        self._emit_run_edge(
+            writer,
+            stamp,
+            [
+                {
+                    "module": "mozbuild.action.check_binary",
+                    "args": ["--networking", out],
+                },
+                {"module": "mozbuild.action.toolchain_stamp", "args": [stamp, out]},
+            ],
+            f"CHECK-NETWORKING {self._rel_n_path(out)}",
+            inputs=[self._rel_n_path(out)],
+        )
+        self._rust_netcheck_stamps.append(stamp)
+
+    def _emit_rust_program_module_res(self, writer, obj):
+        """Windows target RustPrograms embed a module version resource. Emit the
+        module.rc -> module.res edges (reusing the gen_rc/compile_rc rules) and
+        return the .res path, or None when not applicable. The crate compile
+        links it via `-C link-arg`."""
+        substs = self.environment.substs
+        if substs.get("OS_ARCH") != "WINNT" or obj.KIND != "target":
+            return None
+        objdir = mozpath.normsep(obj.objdir)
+        srcdir = mozpath.normsep(obj.srcdir)
+        rc_path = mozpath.join(objdir, "module.rc")
+        res_path = mozpath.join(objdir, "module.res")
+        dist_include = mozpath.join(self._topobjdir, "dist/include")
+
+        passthru = self._variable_passthru.get(obj.relobjdir)
+        rcinclude = passthru.variables.get("RCINCLUDE") if passthru else None
+
+        def _resolve(p):
+            if p.startswith("/"):
+                return mozpath.normsep(mozpath.join(self._topsrcdir, p[1:]))
+            return mozpath.normsep(mozpath.join(srcdir, p))
+
+        rcinclude_arg = ""
+        gen_inputs = None
+        if rcinclude:
+            inc = _resolve(rcinclude)
+            gen_inputs = [self._rel_n_path(inc)]
+            rcinclude_arg = f"--include {n_value(inc)}"
+        writer.build(
+            self._rel_n_path(rc_path),
+            "gen_rc",
+            inputs=gen_inputs,
+            variables={
+                "srcdir": n_path(srcdir),
+                "binary": "",
+                "rcinclude_arg": rcinclude_arg,
+            },
+        )
+
+        defines_args = []
+        for d in self._defines_by_dir.get(obj.relobjdir, ()):
+            defines_args.extend(d.get_defines())
+        includes_args = [f"-I{srcdir}", f"-I{objdir}"]
+        includes_args.extend(
+            f"-I{mozpath.normsep(li.path.full_path)}"
+            for li in self._local_includes_by_dir.get(obj.relobjdir, ())
+        )
+        includes_args.append(f"-I{dist_include}")
+        rc_order_only = [
+            ".ninja-headers-base-exports",
+            ".ninja-headers-base-core",
+            ".ninja-headers-base-generated",
+        ]
+        writer.build(
+            self._rel_n_path(res_path),
+            "compile_rc",
+            inputs=[self._rel_n_path(rc_path)],
+            order_only=rc_order_only,
+            variables={
+                "defines": " ".join(self._rarg(f) for f in defines_args),
+                "includes": " ".join(self._rarg(f) for f in includes_args),
+            },
+        )
+        return res_path
 
     def _cargo_spec_dict(self, lib, output_path):
         return {
@@ -146,6 +256,7 @@ class RustMixin:
                 },
             )
             self._emit_linkable_alias(writer, lib.basename, out)
+            self._emit_rust_networking_check(writer, lib, out)
             # Key by the same form ninja records in `.ninja_log`: the
             # topobjdir-relative path that was written on the build
             # edge (via `_rel_n_path`), so `_classify_ninja_edge`
@@ -223,6 +334,7 @@ class RustMixin:
                 edge_is_gkrust_gtest=cargo_spec["is_gkrust_gtest"],
             )
             self._emit_linkable_alias(writer, lib.basename, out)
+            self._emit_rust_networking_check(writer, lib, out)
             self._rust_lib_outputs[self._rel_n_path(out)] = mozpath.splitext(
                 mozpath.basename(out)
             )[0]
@@ -302,6 +414,7 @@ class RustMixin:
         root_link_deps=None,
         edge_is_ltoable=False,
         edge_is_gkrust_gtest=False,
+        root_link_args=None,
     ):
         emitted = getattr(self, "_explicit_rust_emitted", None)
         if emitted is None:
@@ -342,6 +455,7 @@ class RustMixin:
                     root_link_deps,
                     edge_is_ltoable,
                     edge_is_gkrust_gtest,
+                    root_link_args,
                 )
 
     def _emit_crate_rustc(
@@ -358,6 +472,7 @@ class RustMixin:
         root_link_deps=None,
         edge_is_ltoable=False,
         edge_is_gkrust_gtest=False,
+        root_link_args=None,
     ):
         unit = units[i]
         externs = []
@@ -452,6 +567,8 @@ class RustMixin:
             spec["output_file"] = mozpath.normsep(output)
             spec["is_library_root"] = edge_is_ltoable
             spec["is_gkrust_gtest"] = edge_is_gkrust_gtest
+            if root_link_args:
+                spec["link_args"] = root_link_args
             # This edge's own LDFLAGS (the cargo path's per-edge computed_ldflags
             # rather than the global fallback).
             if edge_ldflags:
@@ -803,13 +920,6 @@ class RustMixin:
             ),
         }
 
-    def _write_cargo_program_spec(self, path, obj, kind):
-        """Write a cargo build spec for a RustProgram or HostRustProgram."""
-        with self._write_file(path) as fh:
-            json.dump(
-                self._cargo_program_spec_dict(obj, kind), fh, indent=2, sort_keys=True
-            )
-
     def _emit_explicit_rust_program_edges(self, writer, programs):
         self._prefetch_rust_graphs()
         deps_dir = mozpath.join(self._topobjdir, "rust-edges", "deps")
@@ -817,6 +927,12 @@ class RustMixin:
             out = mozpath.normsep(obj.location)
             kind = "program" if obj.KIND == "target" else "host-program"
             cargo_spec = self._cargo_program_spec_dict(obj, kind)
+            res = self._emit_rust_program_module_res(writer, obj)
+            link_deps = self._program_link_deps(obj)
+            link_args = None
+            if res:
+                link_deps = link_deps + [self._rel_n_path(res)]
+                link_args = [mozpath.normsep(res)]
             self._emit_unit_graph(
                 writer,
                 self._rust_graphs[obj],
@@ -824,8 +940,9 @@ class RustMixin:
                 deps_dir,
                 edge_env=self._edge_build_env(cargo_spec),
                 edge_ldflags=cargo_spec.get("computed_ldflags"),
-                root_link_deps=self._program_link_deps(obj),
+                root_link_deps=link_deps,
                 edge_is_ltoable=False,
+                root_link_args=link_args,
             )
             if obj.installed:
                 self._emit_linkable_alias(
@@ -855,7 +972,15 @@ class RustMixin:
             depfile = mozpath.splitext(out)[0] + ".d"
             spec_path = mozpath.join(obj.objdir, ".cargo-program-spec.json")
             kind = "program" if obj.KIND == "target" else "host-program"
-            self._write_cargo_program_spec(spec_path, obj, kind)
+            res = self._emit_rust_program_module_res(writer, obj)
+            spec_dict = self._cargo_program_spec_dict(obj, kind)
+            if res:
+                spec_dict["extra_rustcflags"] = [
+                    "-C",
+                    f"link-arg={mozpath.normsep(res)}",
+                ]
+            with self._write_file(spec_path) as fh:
+                json.dump(spec_dict, fh, indent=2, sort_keys=True)
             # cargo invokes the linker which pulls in `USE_LIBS`
             # outputs (and any `EXTRA_LINK_DEPS`). Mirror what
             # `_emit_program_statements` does for non-rust programs so
@@ -865,6 +990,8 @@ class RustMixin:
             # `_compile_graph` for `RustProgram` (recursivemake.py).
             _, shared_libs, _, static_libs = self._expand_libs(obj)
             implicit_deps = [self._rel_n_path(spec_path)]
+            if res:
+                implicit_deps.append(self._rel_n_path(res))
             for static_lib in static_libs:
                 implicit_deps.append(
                     self._rel_n_path(self._lib_output_path(static_lib))

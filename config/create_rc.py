@@ -230,7 +230,10 @@ def generate_module_rc():
 
     parser = ArgumentParser()
     parser.add_argument(
-        "binary", help="Binary for which the resource file is generated"
+        "binary",
+        nargs="?",
+        default="",
+        help="Binary for which the resource file is generated",
     )
     parser.add_argument("--include", help="Included resources")
     parser.add_argument("--dep-file", help="Path to the dependency file")
