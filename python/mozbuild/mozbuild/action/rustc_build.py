@@ -38,17 +38,23 @@ def _rewrite_depfile(dpath, target, topsrcdir):
     prerequisites. rustc emits multiple output targets and records prereqs
     relative to its cwd (topsrcdir); collapse to the single target ninja expects
     and make the prereqs absolute so ninja resolves them from its own build root."""
+    from io import StringIO
+
     from mozbuild.makeutil import Rule, read_dep_makefile
 
     if not Path(dpath).exists():
         return
     deps = set()
     with Path(dpath).open(encoding="utf-8") as fh:
-        for rule in read_dep_makefile(fh):
-            for dep in rule.dependencies():
-                if not os.path.isabs(dep):
-                    dep = os.path.join(topsrcdir, dep)
-                deps.add(dep.replace("\\", "/"))
+        # Drop rustc's `# env-dep:KEY=VALUE` comment lines (e.g. OUT_DIR); the
+        # dep reader doesn't skip comments, so they would parse into bogus
+        # `KEY=VALUE` prerequisites that ninja can't stat.
+        text = "".join(ln for ln in fh if not ln.lstrip().startswith("#"))
+    for rule in read_dep_makefile(StringIO(text)):
+        for dep in rule.dependencies():
+            if not os.path.isabs(dep):
+                dep = os.path.join(topsrcdir, dep)
+            deps.add(dep.replace("\\", "/"))
     deps.discard(target)
     with Path(dpath).open("w", encoding="utf-8", newline="\n") as fh:
         Rule([target]).add_dependencies(sorted(deps)).dump(fh)
