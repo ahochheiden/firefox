@@ -78,3 +78,5 @@ vendoring:
     - taskcluster/**
     # hacks which only make sense in app-services.
     - monorepo-hacks/**
+    # moz.build files only matter to the mozilla-central build, so we maintain them here rather than vendoring from upstream.
+    - "**/moz.build"
