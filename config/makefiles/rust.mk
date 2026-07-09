@@ -597,7 +597,27 @@ rust_test_features_flag := --features '$(addsuffix $(COMMA),$(RUST_TEST_FEATURES
 # Don't stop at the first failure. We want to list all failures together.
 rust_test_flag := --no-fail-fast
 
+# Test executables need their shared library dependencies from dist/bin at
+# run time. Linux and macOS set an rpath (run-time search path). Windows has
+# no rpath and searches the exe's own directory, so stage the libraries next
+# to the test binaries instead.
+ifeq ($(OS_TARGET),WINNT)
+# Cargo writes the test binaries under the profile directory selected in
+# cargo_build_flags above.
+ifneq (,$(findstring megazord,$(RUST_LIBRARY_FILE)))
+rust_test_profile_dir := $(if $(MOZ_DEBUG_RUST),dev-megazord,release-megazord)
+else
+rust_test_profile_dir := $(if $(MOZ_DEBUG_RUST),debug,release)
+endif
+rust_test_bindir := $(CARGO_TARGET_DIR)/$(RUST_TARGET)/$(rust_test_profile_dir)/deps
+stage_test_libs = mkdir -p $(rust_test_bindir) && cp $(ABS_DIST)/bin/*$(DLL_SUFFIX) $(rust_test_bindir)/
+else
+force-cargo-test-run: RUSTFLAGS += -C link-arg=-Wl,-rpath,$(ABS_DIST)/bin
+stage_test_libs = :
+endif
+
 force-cargo-test-run:
+	$(stage_test_libs)
 	$(call RUN_CARGO,test $(cargo_target_flag) $(rust_test_flag) $(rust_test_options) $(rust_test_features_flag))
 
 endif # RUST_TESTS

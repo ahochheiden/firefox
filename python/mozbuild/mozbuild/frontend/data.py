@@ -614,11 +614,14 @@ class HostRustProgram(BaseRustProgram):
     OUTPUT_CATEGORY_VAR = "HOST_RUST_PROGRAM_OUTPUT_CATEGORY"
 
 
-class RustTests(ContextDerived):
+class RustTests(Linkable):
+    """Context derived container object for Rust test targets."""
+
+    KIND = "target"
     __slots__ = ("names", "features", "output_category")
 
     def __init__(self, context, names, features):
-        ContextDerived.__init__(self, context)
+        Linkable.__init__(self, context)
         self.names = names
         self.features = features
         self.output_category = "rusttests"

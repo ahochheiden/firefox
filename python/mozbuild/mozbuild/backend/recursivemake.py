@@ -592,6 +592,7 @@ class RecursiveMakeBackend(MakeBackend):
 
         elif isinstance(obj, RustTests):
             self._process_rust_tests(obj, backend_file)
+            self._add_rust_build_order_deps(obj)
 
         elif isinstance(obj, LegacyRunTests):
             self._process_legacy_run_tests(obj, backend_file)
@@ -1555,6 +1556,15 @@ class RecursiveMakeBackend(MakeBackend):
         if target_name == "wasm":
             target_name = "target"
         return f"{obj.relobjdir}/{target_name}"
+
+    def _add_rust_build_order_deps(self, obj):
+        # Cargo handles the actual linking for Rust libraries and tests, so we
+        # don't go through _process_linked_libraries. We still need their
+        # USE_LIBS built first, so add them as build-order dependencies.
+        build_target = self._build_target_for_obj(obj)
+        for lib in obj.linked_libraries:
+            if not isinstance(lib, ExternalLibrary):
+                self._compile_graph[build_target].add(self._build_target_for_obj(lib))
 
     def _process_linked_libraries(self, obj, backend_file):
         objs, shared_libs, os_libs, static_libs = self._expand_libs(obj)
