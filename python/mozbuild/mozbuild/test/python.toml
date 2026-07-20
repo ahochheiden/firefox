@@ -9,6 +9,8 @@ subsuite = "mozbuild"
 
 ["action/test_langpack_manifest.py"]
 
+["action/test_nsis_stage.py"]
+
 ["action/test_node.py"]
 
 ["action/test_process_install_manifest.py"]
