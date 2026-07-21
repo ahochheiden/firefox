@@ -816,7 +816,18 @@ def need_upx(target):
     return target.os == "WINNT" and target.cpu != "aarch64"
 
 
-check_prog("UPX", ("upx",), allow_missing=True, bootstrap="upx/bin", when=need_upx)
+upx = check_prog(
+    "UPX", ("upx",), allow_missing=True, bootstrap="upx/bin", when=need_upx
+)
+
+
+@depends(upx, "MOZ_AUTOMATION", when=need_upx)
+def nsis_use_upx(upx, moz_automation):
+    if upx or moz_automation:
+        return True
+
+
+set_config("NSIS_USE_UPX", nsis_use_upx)
 
 
 check_prog(
