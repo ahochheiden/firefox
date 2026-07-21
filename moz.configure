@@ -112,6 +112,17 @@ option(
 set_config("MOZ_USE_LEGACY_L10N", True, when="--disable-legacy-l10n")
 
 
+option(
+    "--disable-legacy-installer",
+    env="MOZ_USE_LEGACY_INSTALLER",
+    default=True,
+    help="Disable the legacy (recursive-make) Windows installer build",
+)
+
+
+set_config("MOZ_USE_LEGACY_INSTALLER", True, when="--disable-legacy-installer")
+
+
 @depends(enable_tests)
 def gtest_has_rtti(value):
     if value:
