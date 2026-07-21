@@ -40,10 +40,26 @@ install_deps:
 	  $(srcdir)/nsis/extensionsLocale.nsh $(CONFIG_DIR)/extensionsLocale.nsh
 	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/,$(NSIS_CUSTOM_UI)) $(CONFIG_DIR)
 
+stage_installer:
+	$(call py_action,nsis_stage installer,$(NSIS_STAGE_ARGS) \
+	$(addprefix --install=,$(addprefix $(MOZILLA_DIR)/other-licenses/nsis/,$(NSIS_CUSTOM_UI))) \
+	--single-file nsisstrings.properties nsisstrings.nlf \
+	--convert-utf8 $(srcdir)/nsis/extensionsLocale.nsh $(CONFIG_DIR)/extensionsLocale.nsh)
+
 $(CONFIG_DIR)/setup.exe::
+ifdef MOZ_USE_LEGACY_INSTALLER
 	$(RM) -r $(CONFIG_DIR)
 	$(MKDIR) $(CONFIG_DIR)
 	$(MAKE) install_deps
+else
+	$(MAKE) stage_installer
+	$(call py_action,nsis_build setup.exe,--config-dir=$(CONFIG_DIR) --nsi=installer.nsi \
+	--makensis=$(MAKENSISU) $(addprefix --makensis-flag=,$(MAKENSISU_FLAGS)))
+ifdef MOZ_STUB_INSTALLER
+	$(call py_action,nsis_build setup-stub.exe,--config-dir=$(CONFIG_DIR) --nsi=stub.nsi \
+	--makensis=$(MAKENSISU) $(addprefix --makensis-flag=,$(MAKENSISU_FLAGS)))
+endif
+endif
 
 include $(topsrcdir)/config/rules.mk
 include $(topsrcdir)/toolkit/mozapps/installer/windows/nsis/makensis.mk

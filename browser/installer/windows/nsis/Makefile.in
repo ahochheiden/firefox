@@ -32,6 +32,13 @@ else
 endif # ENABLE_TESTS
 
 $(BIN_UTIL_DIR)/test_stub_installer.exe: $(TEST_STUB_INSTALLER_DEPS)
+ifdef MOZ_USE_LEGACY_INSTALLER
 	$(MAKE) -C .. install_deps
 	cd $(CONFIG_DIR) && $(MAKENSISU) -nocd -- $(CONFIG_DIR)/test_stub.nsi
 	cp $(CONFIG_DIR)/test_stub_installer.exe $(BIN_UTIL_DIR)/test_stub_installer.exe
+else
+	$(MAKE) -C .. stage_installer
+	$(call py_action,nsis_build test_stub_installer,--config-dir=$(CONFIG_DIR) --nsi=test_stub.nsi \
+	--makensis=$(MAKENSISU) $(addprefix --makensis-flag=,$(MAKENSISU_FLAGS)) \
+	--produced=test_stub_installer.exe --output=$(BIN_UTIL_DIR)/test_stub_installer.exe)
+endif

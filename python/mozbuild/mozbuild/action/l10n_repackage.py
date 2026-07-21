@@ -16,8 +16,11 @@ Re-packs the en-US dist as a single-locale package. Orchestrates:
 Invoked in make via $(call py_action,l10n_repackage,...).
 """
 
+from __future__ import annotations
+
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -26,7 +29,14 @@ from pathlib import Path
 import buildconfig
 from mozpack.packager import l10n as packager_l10n
 
+from mozbuild.action import nsis_build, nsis_stage
 from mozbuild.action import package as action_package
+from mozbuild.nsis import (
+    NSIS_BRANDING_FILES,
+    NSIS_CUSTOM_PLUGINS,
+    NSIS_TOOLKIT_FILES,
+    installer_files,
+)
 
 # Glob patterns excluded from resource and chrome repacking.
 _NON_CHROME = frozenset((
@@ -77,9 +87,15 @@ def l10n_repackage(
     if is_winnt:
         if installer_dir is None:
             raise ValueError("--installer-dir is required on WINNT")
-        if result := _build_helper_exe(
-            make, installer_dir, locale, real_locale_mergedir, stagedist
-        ):
+        if buildconfig.substs.get("MOZ_USE_LEGACY_INSTALLER"):
+            result = _build_helper_exe(
+                make, installer_dir, locale, real_locale_mergedir, stagedist
+            )
+        else:
+            result = _build_uninstaller(
+                installer_dir, locale, real_locale_mergedir, stagedist
+            )
+        if result:
             return result
 
     suffix = action_package.FORMAT_SUFFIX.get(pkg_format)
@@ -231,6 +247,65 @@ def _build_helper_exe(
     helper_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(helper_src, helper_dst)
     return 0
+
+
+def _build_uninstaller(
+    installer_dir: Path,
+    locale: str,
+    real_locale_mergedir: Path,
+    stagedist: Path,
+) -> int:
+    substs = buildconfig.substs
+    topsrcdir = Path(buildconfig.topsrcdir)
+    config_dir = installer_dir / "l10ngen"
+    installer_srcdir = topsrcdir / "browser/installer/windows"
+    branding = topsrcdir / substs["MOZ_BRANDING_DIRECTORY"]
+    toolkit_nsis = topsrcdir / "toolkit/mozapps/installer/windows/nsis"
+    plugins = topsrcdir / "other-licenses/nsis/Plugins"
+    maintenance_service = bool(substs.get("MOZ_MAINTENANCE_SERVICE"))
+    installs = (
+        [
+            str(installer_srcdir / f)
+            for f in installer_files(maintenance_service=maintenance_service)
+        ]
+        + [str(branding / f) for f in NSIS_BRANDING_FILES]
+        + [str(toolkit_nsis / f) for f in NSIS_TOOLKIT_FILES]
+        + [str(plugins / f) for f in NSIS_CUSTOM_PLUGINS]
+    )
+    preprocessor_args = (
+        shlex.split(substs["NSIS_INSTALLER_DEFINES"])
+        # ACDEFINES stores dollar signs doubled. Restore them before preprocessing.
+        + shlex.split(substs["ACDEFINES"].replace("$$", "$"))
+        # AB_CD is not included in the configure substitution.
+        + [f"-DAB_CD={locale}"]
+        + [f"-DTOPOBJDIR={buildconfig.topobjdir}"]
+    )
+    locale_args = [
+        f"--l10n-dir={real_locale_mergedir}/browser/installer",
+        f"--l10n-dir={topsrcdir}/browser/locales/en-US/installer",
+    ]
+    if result := nsis_stage.nsis_stage(
+        config_dir=config_dir,
+        installs=installs,
+        defines_in=str(installer_srcdir / "nsis" / "defines.nsi.in"),
+        defines_out=str(config_dir / "defines.nsi"),
+        preprocessor_args=preprocessor_args,
+        topsrcdir=topsrcdir,
+        locale_args=locale_args,
+        ab_cd=locale,
+        preprocess_locale=True,
+        single_files=[],
+        convert_utf8=[],
+    ):
+        return result
+    return nsis_build.nsis_build(
+        config_dir=config_dir,
+        nsi="uninstaller.nsi",
+        makensis=substs["MAKENSISU"],
+        makensis_flags=shlex.split(substs.get("MAKENSISU_FLAGS", "")),
+        produced="helper.exe",
+        output=str(stagedist / "uninstall" / "helper.exe"),
+    )
 
 
 def main(argv: list[str]) -> int:

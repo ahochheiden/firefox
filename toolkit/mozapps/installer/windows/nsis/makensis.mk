@@ -12,13 +12,24 @@ SFX_MODULE ?= $(error SFX_MODULE is not defined)
 
 USE_UPX := $(if $(NSIS_USE_UPX),--use-upx)
 
+NSIS_STAGE_ARGS = --config-dir=$(CONFIG_DIR) \
+  $(addprefix --install=,$(addprefix $(srcdir)/,$(INSTALLER_FILES))) \
+  $(addprefix --install=,$(addprefix $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/,$(BRANDING_FILES))) \
+  $(addprefix --install=,$(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(NSIS_TOOLKIT_FILES))) \
+  $(addprefix --install=,$(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(NSIS_CUSTOM_PLUGINS))) \
+  --defines-in=$(srcdir)/nsis/defines.nsi.in --defines-out=$(CONFIG_DIR)/defines.nsi \
+  --topsrcdir=$(topsrcdir) $(addprefix --locale-arg=,$(PPL_LOCALE_ARGS)) --ab-cd=$(AB_CD) --preprocess-locale \
+  $(NSIS_INSTALLER_DEFINES) $(ACDEFINES) -DTOPOBJDIR=$(topobjdir)
+
 $(CONFIG_DIR)/setup.exe::
+ifdef MOZ_USE_LEGACY_INSTALLER
 	$(INSTALL) $(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(NSIS_TOOLKIT_FILES)) $(CONFIG_DIR)
 	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(NSIS_CUSTOM_PLUGINS)) $(CONFIG_DIR)
 	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/,$(NSIS_CUSTOM_UI)) $(CONFIG_DIR)
 	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) installer.nsi
 ifdef MOZ_STUB_INSTALLER
 	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) stub.nsi
+endif
 endif
 
 ifdef ZIP_IN
@@ -56,6 +67,7 @@ HELPER_DEPS = $(GLOBAL_DEPS) \
 # For building the uninstaller during the application build so it can be
 # included for mar file generation.
 $(CONFIG_DIR)/helper.exe: $(HELPER_DEPS)
+ifdef MOZ_USE_LEGACY_INSTALLER
 	$(RM) -r $(CONFIG_DIR)
 	$(MKDIR) $(CONFIG_DIR)
 	$(INSTALL) $(addprefix $(srcdir)/,$(INSTALLER_FILES)) $(CONFIG_DIR)
@@ -69,6 +81,11 @@ $(CONFIG_DIR)/helper.exe: $(HELPER_DEPS)
 	$(INSTALL) $(addprefix $(MOZILLA_DIR)/toolkit/mozapps/installer/windows/nsis/,$(NSIS_TOOLKIT_FILES)) $(CONFIG_DIR)
 	$(INSTALL) $(addprefix $(MOZILLA_DIR)/other-licenses/nsis/Plugins/,$(NSIS_CUSTOM_PLUGINS)) $(CONFIG_DIR)
 	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) uninstaller.nsi
+else
+	$(call py_action,nsis_stage helper,$(NSIS_STAGE_ARGS))
+	$(call py_action,nsis_build helper.exe,--config-dir=$(CONFIG_DIR) --nsi=uninstaller.nsi \
+	--makensis=$(MAKENSISU) $(addprefix --makensis-flag=,$(MAKENSISU_FLAGS)))
+endif
 
 uninstaller:: $(CONFIG_DIR)/helper.exe
 	$(NSINSTALL) -D $(DIST)/bin/uninstall
@@ -76,6 +93,7 @@ uninstaller:: $(CONFIG_DIR)/helper.exe
 
 ifdef MOZ_MAINTENANCE_SERVICE
 maintenanceservice_installer::
+ifdef MOZ_USE_LEGACY_INSTALLER
 	$(RM) -r $(CONFIG_DIR)
 	$(MKDIR) $(CONFIG_DIR)
 	$(INSTALL) $(addprefix $(srcdir)/,$(INSTALLER_FILES)) $(CONFIG_DIR)
@@ -91,4 +109,10 @@ maintenanceservice_installer::
 	cd $(CONFIG_DIR) && $(MAKENSISU) $(MAKENSISU_FLAGS) maintenanceservice_installer.nsi
 	$(NSINSTALL) -D $(DIST)/bin/
 	cp $(CONFIG_DIR)/maintenanceservice_installer.exe $(DIST)/bin
+else
+	$(call py_action,nsis_stage maintenanceservice,$(NSIS_STAGE_ARGS))
+	$(call py_action,nsis_build maintenanceservice_installer,--config-dir=$(CONFIG_DIR) \
+	--nsi=maintenanceservice_installer.nsi --makensis=$(MAKENSISU) $(addprefix --makensis-flag=,$(MAKENSISU_FLAGS)) \
+	--produced=maintenanceservice_installer.exe --output=$(DIST)/bin/maintenanceservice_installer.exe)
+endif
 endif
