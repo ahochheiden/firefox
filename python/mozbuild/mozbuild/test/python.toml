@@ -19,6 +19,8 @@ subsuite = "mozbuild"
 
 ["action/test_process_install_manifest.py"]
 
+["action/test_run_cargo.py"]
+
 ["action/test_zip.py"]
 
 ["backend/test_build.py"]
