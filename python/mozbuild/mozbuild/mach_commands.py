@@ -288,9 +288,9 @@ def cargo(
 
     # XXX duplication with `mach vendor rust`
     crates_and_roots = {
-        "gkrust": {"directory": gkrust_path, "library": True},
-        "gkrust-gtest": {"directory": gtest_path, "library": True},
-        "geckodriver": {"directory": "testing/geckodriver", "library": False},
+        "gkrust": {"directory": gkrust_path, "kind": "library"},
+        "gkrust-gtest": {"directory": gtest_path, "kind": "library"},
+        "geckodriver": {"directory": "testing/geckodriver", "kind": "host-program"},
     }
 
     if all_crates:
@@ -303,6 +303,12 @@ def cargo(
     if subcommand_args:
         subcommand_args = " ".join(subcommand_args)
 
+    use_legacy = command_context.substs.get("MOZ_USE_LEGACY_CARGO_INVOCATION")
+
+    if not use_legacy:
+        jobs = command_context.resolve_num_jobs(jobs)
+        command_context.ensure_backend_current()
+
     for crate in crates:
         crate_info = crates_and_roots.get(crate, None)
         if not crate_info:
@@ -312,14 +318,33 @@ def cargo(
             )
             return 1
 
+        directory = crate_info["directory"]
+
+        if not use_legacy:
+            ret = _run_cargo_command(
+                command_context,
+                crate,
+                crate_info,
+                directory,
+                cargo_command,
+                subcommand_args,
+                cargo_build_flags,
+                cargo_extra_flags,
+                message_format_json,
+                continue_on_error,
+                jobs,
+                verbose,
+            )
+            if ret != 0:
+                return ret
+            continue
+
         targets = [
             "force-cargo-library-%s" % cargo_command,
             "force-cargo-host-library-%s" % cargo_command,
             "force-cargo-program-%s" % cargo_command,
             "force-cargo-host-program-%s" % cargo_command,
         ]
-
-        directory = crate_info["directory"]
         # you can use these variables in 'cargo_build_flags'
         subst = {
             "arch": '"$(RUST_TARGET)"',
@@ -327,7 +352,7 @@ def cargo(
             "directory": directory,
             "features": '"$(RUST_LIBRARY_FEATURES)"',
             "manifest": str(Path(topsrcdir / directory / "Cargo.toml")),
-            "target": "--lib" if crate_info["library"] else "--bin " + crate,
+            "target": "--lib" if crate_info["kind"] == "library" else "--bin " + crate,
             "topsrcdir": str(topsrcdir),
         }
 
@@ -367,6 +392,107 @@ def cargo(
         if ret != 0:
             return ret
 
+    return 0
+
+
+def _run_cargo_command(
+    command_context,
+    crate,
+    crate_info,
+    directory,
+    cargo_command,
+    subcommand_args,
+    cargo_build_flags,
+    cargo_extra_flags,
+    message_format_json,
+    continue_on_error,
+    jobs,
+    verbose,
+):
+    import os
+    import subprocess
+
+    from mozfile import json
+    from mozshellutil import quote as shell_quote
+    from mozshellutil import split as shell_split
+
+    from mozbuild.rust_commands import (
+        CARGO_SPEC_FILES,
+        CargoCommand,
+        compose_env,
+        compose_mach_cargo_argv,
+    )
+
+    substs = command_context.substs
+    topsrcdir = command_context.topsrcdir
+    topobjdir = command_context.topobjdir
+
+    kind = crate_info["kind"]
+    spec_path = Path(topobjdir) / directory / CARGO_SPEC_FILES[kind]
+    if not spec_path.exists():
+        print(
+            f"No cargo spec for {crate} at {spec_path}. "
+            "Run `./mach build-backend` first."
+        )
+        return 1
+    command = CargoCommand.from_dict(json.loads(spec_path.read_text(encoding="utf-8")))
+
+    subst = {
+        "arch": substs.get("RUST_TARGET", ""),
+        "crate": crate,
+        "directory": directory,
+        "features": ",".join(command.features),
+        "manifest": command.manifest_path,
+        "target": "--lib" if crate_info["kind"] == "library" else "--bin " + crate,
+        "topsrcdir": topsrcdir,
+    }
+
+    extra_cli_flags = ()
+    if subcommand_args:
+        extra_cli_flags = tuple(shell_split(subcommand_args.format(**subst)))
+
+    build_flags_override = ()
+    no_auto_arg = False
+    if cargo_build_flags:
+        build_flags_override = tuple(shell_split(cargo_build_flags.format(**subst)))
+        no_auto_arg = True
+    else:
+        # Target programs use the same LTO-capable Rust flags as target libraries.
+        command.uses_ltoable_rustflags = True
+
+    current_env = dict(os.environ)
+    if cargo_extra_flags:
+        current_env["CARGO_EXTRA_FLAGS"] = cargo_extra_flags.format(**subst)
+    if message_format_json:
+        current_env["USE_CARGO_JSON_MESSAGE_FORMAT"] = "1"
+    if verbose:
+        current_env["BUILD_VERBOSE_LOG"] = "1"
+
+    env = compose_env(command, substs, current_env, topsrcdir, topobjdir)
+    argv = compose_mach_cargo_argv(
+        command,
+        substs,
+        env,
+        cargo_command,
+        build_flags_override=build_flags_override,
+        extra_cli_flags=extra_cli_flags,
+        no_auto_arg=no_auto_arg,
+        jobs=jobs,
+    )
+
+    if verbose:
+        print(shell_quote(*argv))
+
+    rc = subprocess.run(
+        argv, env=env, cwd=command.working_directory or None, check=False
+    ).returncode
+    if rc == 101:
+        print(
+            f"If cargo-{cargo_command} is not installed, install it using: "
+            f"cargo install cargo-{cargo_command}"
+        )
+    if rc != 0 and not continue_on_error:
+        return rc
     return 0
 
 
