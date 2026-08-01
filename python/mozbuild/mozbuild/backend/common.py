@@ -7,6 +7,7 @@ import json
 import os
 import pathlib
 from collections import defaultdict
+from dataclasses import asdict
 from operator import itemgetter
 
 import mozpack.path as mozpath
@@ -23,18 +24,23 @@ from mozbuild.frontend.context import (
 )
 from mozbuild.frontend.data import (
     BaseProgram,
+    BaseRustLibrary,
+    BaseRustProgram,
     ChromeManifestEntry,
+    ComputedFlags,
     ConfigFileSubstitution,
     Exports,
     FinalTargetFiles,
     FinalTargetPreprocessedFiles,
     GeneratedFile,
     HostLibrary,
+    HostRustLibrary,
     HostSources,
     IPDLCollection,
     JsShellArchive,
     LocalizedFiles,
     LocalizedPreprocessedFiles,
+    RustTests,
     SandboxedWasmLibrary,
     SharedLibrary,
     Sources,
@@ -51,6 +57,7 @@ from mozbuild.frontend.l10n_manifest import (
 )
 from mozbuild.jar import DeprecatedJarManifest, JarManifestParser
 from mozbuild.preprocessor import Preprocessor
+from mozbuild.rust_commands import CARGO_SPEC_FILES, CargoCommand
 
 
 class XPIDLManager:
@@ -116,6 +123,138 @@ class CommonBackend(BuildBackend):
         self._configs = set()
         self._generated_sources = set()
         self._l10n_manifest_data = []
+        self._computed_flags = defaultdict(list)
+        # Collect Rust edges until all per-directory flags are available.
+        self._rust_libraries_for_spec = []
+        self._rust_programs_for_spec = defaultdict(list)
+        self._rust_tests_for_spec = []
+
+    def _computed_flag_list(self, relobjdir, var):
+        """Return all values for a computed flag in one directory."""
+        out = []
+        for cf in self._computed_flags.get(relobjdir, ()):
+            out.extend(dict(cf.get_flags()).get(var, []))
+        return out
+
+    def _rust_computed_flags(self, relobjdir):
+        return {
+            "computed_cflags": tuple(self._computed_flag_list(relobjdir, "CFLAGS")),
+            "computed_cxxflags": tuple(self._computed_flag_list(relobjdir, "CXXFLAGS")),
+            "computed_host_cflags": tuple(
+                self._computed_flag_list(relobjdir, "HOST_CFLAGS")
+            ),
+            "computed_host_cxxflags": tuple(
+                self._computed_flag_list(relobjdir, "HOST_CXXFLAGS")
+            ),
+            "link_flags": tuple(self._computed_flag_list(relobjdir, "LDFLAGS")),
+        }
+
+    def _rust_library_command(self, lib, is_megazord):
+        is_host = isinstance(lib, HostRustLibrary)
+        target_subst = "RUST_HOST_TARGET" if is_host else "RUST_TARGET"
+        return CargoCommand(
+            kind="host-library" if is_host else "library",
+            subcommand="rustc",
+            manifest_path=mozpath.normsep(lib.cargo_file),
+            target_triple=self.environment.substs.get(target_subst, ""),
+            features=tuple(lib.features or ()),
+            is_megazord=is_megazord,
+            is_gkrust_gtest="gkrust_gtest" in lib.lib_name,
+            uses_ltoable_rustflags=not is_host,
+            lto_object_stem="" if is_host else lib.lib_name,
+            working_directory=mozpath.normsep(lib.objdir),
+            **self._rust_computed_flags(lib.relobjdir),
+        )
+
+    def _rust_program_command(self, programs, kind, is_megazord):
+        """Build one Cargo command for all Rust programs of one kind in a directory."""
+        first = programs[0]
+        target_subst = "RUST_TARGET" if kind == "program" else "RUST_HOST_TARGET"
+        cli = []
+        for program in programs:
+            cli += ["--bin", program.name]
+        # Windows programs link a version resource generated in the object directory.
+        extra_rustcflags = []
+        if (
+            kind == "program"
+            and self.environment.substs.get("MOZ_WIDGET_TOOLKIT") == "windows"
+        ):
+            resfile = mozpath.join(mozpath.normsep(first.objdir), "module.res")
+            extra_rustcflags += ["-C", f"link-arg={resfile}"]
+        return CargoCommand(
+            kind=kind,
+            subcommand="rustc",
+            manifest_path=mozpath.normsep(first.cargo_file),
+            target_triple=self.environment.substs.get(target_subst, ""),
+            features=tuple(first.features or ()),
+            is_megazord=is_megazord,
+            extra_rustcflags=tuple(extra_rustcflags),
+            cargo_subcommand_args=tuple(cli),
+            lto_object_stem="" if kind == "host-program" else first.name,
+            working_directory=mozpath.normsep(first.objdir),
+            **self._rust_computed_flags(first.relobjdir),
+        )
+
+    def _rust_tests_command(self, tests, is_megazord=False):
+        """Build a Cargo test command using the directory's Cargo profile."""
+        cli = ["--no-fail-fast"]
+        for name in tests.names:
+            cli += ["-p", name]
+        # Test executables load shared libraries from dist/bin. Other platforms use an
+        # rpath, while Windows stages the libraries next to the test binaries.
+        extra_rustflags = []
+        if self.environment.substs.get("OS_TARGET") != "WINNT":
+            abs_dist = mozpath.join(self.environment.topobjdir, "dist")
+            extra_rustflags += ["-C", f"link-arg=-Wl,-rpath,{abs_dist}/bin"]
+        return CargoCommand(
+            kind="test",
+            subcommand="test",
+            manifest_path=mozpath.normsep(mozpath.join(tests.srcdir, "Cargo.toml")),
+            target_triple=self.environment.substs.get("RUST_TARGET", ""),
+            features=tuple(tests.features or ()),
+            is_megazord=is_megazord,
+            extra_rustflags=tuple(extra_rustflags),
+            cargo_subcommand_args=tuple(cli),
+            lto_object_stem="tests",
+            working_directory=mozpath.normsep(tests.objdir),
+            **self._rust_computed_flags(tests.relobjdir),
+        )
+
+    def _rust_commands(self):
+        """Yield each spec path and Cargo command after collecting directory flags."""
+        # Every Rust edge in a directory containing a target megazord library uses the
+        # megazord Cargo profile.
+        megazord_relobjdirs = {
+            lib.relobjdir
+            for lib in self._rust_libraries_for_spec
+            if lib.KIND == "target" and "megazord" in lib.lib_name
+        }
+        for lib in self._rust_libraries_for_spec:
+            command = self._rust_library_command(
+                lib, lib.relobjdir in megazord_relobjdirs
+            )
+            yield mozpath.join(lib.objdir, CARGO_SPEC_FILES[command.kind]), command
+
+        for (relobjdir, kind_attr), programs in self._rust_programs_for_spec.items():
+            kind = "program" if kind_attr == "target" else "host-program"
+            path = mozpath.join(programs[0].objdir, CARGO_SPEC_FILES[kind])
+            yield (
+                path,
+                self._rust_program_command(
+                    programs, kind, relobjdir in megazord_relobjdirs
+                ),
+            )
+
+        for tests in self._rust_tests_for_spec:
+            path = mozpath.join(tests.objdir, CARGO_SPEC_FILES["test"])
+            yield (
+                path,
+                self._rust_tests_command(tests, tests.relobjdir in megazord_relobjdirs),
+            )
+
+    def _write_rust_command(self, path, command):
+        with self._write_file(path) as fh:
+            json.dump(asdict(command), fh, indent=2, sort_keys=True)
 
     def consume_object(self, obj):
         self._configs.add(obj.config)
@@ -160,6 +299,22 @@ class CommonBackend(BuildBackend):
                 self._write_unified_files(obj.unified_source_mapping, obj.objdir)
             if hasattr(self, "_process_unified_sources"):
                 self._process_unified_sources(obj)
+
+        elif isinstance(obj, ComputedFlags):
+            self._computed_flags[obj.relobjdir].append(obj)
+            return False
+
+        elif isinstance(obj, BaseRustLibrary):
+            self._rust_libraries_for_spec.append(obj)
+            return False
+
+        elif isinstance(obj, BaseRustProgram):
+            self._rust_programs_for_spec[(obj.relobjdir, obj.KIND)].append(obj)
+            return False
+
+        elif isinstance(obj, RustTests):
+            self._rust_tests_for_spec.append(obj)
+            return False
 
         elif isinstance(obj, BaseProgram):
             self._binaries.programs.append(obj)
@@ -267,6 +422,9 @@ class CommonBackend(BuildBackend):
                 self.environment.substs, self._l10n_manifest_data
             )
             write_l10n_manifest(manifest, pathlib.Path(topobjdir, "l10n-manifest.json"))
+
+        for path, command in self._rust_commands():
+            self._write_rust_command(path, command)
 
     def _expand_libs(self, input_bin):
         os_libs = []

@@ -518,7 +518,7 @@ ifndef MOZ_PROFILE_GENERATE
 ifeq ($(OS_ARCH), Linux)
 ifeq (,$(RUST_SANCOV_FLAGS)$(MOZ_ASAN)$(MOZ_TSAN)$(MOZ_UBSAN))
 ifndef MOZ_LTO_RUST_CROSS
-ifneq (,$(filter -Clto,$(cargo_rustc_flags)))
+ifdef RUST_LIBRARY_LTO
 	$(call py_action,check_binary $(@F),--networking $(RUST_LIBRARY_FILE))
 endif
 endif

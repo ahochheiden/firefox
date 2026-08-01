@@ -23,6 +23,7 @@ from mozbuild.frontend.context import (
     Path,
     SourcePath,
 )
+from mozbuild.rust_commands import applies_library_lto
 
 from ..frontend.data import (
     BaseLibrary,
@@ -1557,6 +1558,13 @@ class RecursiveMakeBackend(MakeBackend):
             )
         if libdef.output_category:
             self._process_non_default_target(libdef, rust_lib, backend_file)
+
+        # Use the command's LTO decision for the networking check.
+        kind = "library" if libdef.KIND == "target" else "host-library"
+        if applies_library_lto(
+            kind, "gkrust_gtest" in libdef.lib_name, self.environment.substs
+        ):
+            backend_file.write("RUST_LIBRARY_LTO := 1\n")
 
     def _process_host_shared_library(self, libdef, backend_file):
         backend_file.write("HOST_SHARED_LIBRARY = %s\n" % libdef.lib_name)

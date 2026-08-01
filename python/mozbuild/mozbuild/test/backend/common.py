@@ -75,6 +75,24 @@ CONFIGS = defaultdict(
                 "LIB_SUFFIX": "a",
             },
         },
+        "rust-library-flags": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "x86_64-unknown-linux-gnu",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
+        "rust-megazord-library": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "RUST_TARGET": "x86_64-unknown-linux-gnu",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
         "host-rust-library": {
             "defines": {},
             "substs": {

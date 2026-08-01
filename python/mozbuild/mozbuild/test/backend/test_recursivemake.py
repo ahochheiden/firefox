@@ -1107,9 +1107,70 @@ class TestRecursiveMakeBackend(BackendTester):
             "RUST_LIBRARY_FILE := x86_64-unknown-linux-gnu/release/libtest_library.a",
             "CARGO_FILE := $(srcdir)/Cargo.toml",
             "CARGO_TARGET_DIR := %s" % env.topobjdir,
+            "RUST_LIBRARY_LTO := 1",
         ]
 
         self.assertEqual(lines, expected)
+
+    def test_rust_library_command_spec(self):
+        """The Cargo command spec is serialized next to the library."""
+        import json
+
+        env = self._consume("rust-library", RecursiveMakeBackend)
+
+        spec_path = mozpath.join(env.topobjdir, ".cargo-library-spec.json")
+        with open(spec_path) as fh:
+            spec = json.load(fh)
+
+        self.assertEqual(spec["kind"], "library")
+        self.assertEqual(spec["subcommand"], "rustc")
+        self.assertTrue(spec["uses_ltoable_rustflags"])
+        self.assertFalse(spec["is_gkrust_gtest"])
+        self.assertFalse(spec["is_megazord"])
+        self.assertTrue(spec["manifest_path"].endswith("Cargo.toml"))
+        self.assertEqual(spec["working_directory"], mozpath.normsep(env.topobjdir))
+
+    def test_rust_megazord_library_command_spec(self):
+        """A megazord library is classified as megazord in its Cargo spec."""
+        import json
+
+        env = self._consume("rust-megazord-library", RecursiveMakeBackend)
+
+        spec_path = mozpath.join(env.topobjdir, ".cargo-library-spec.json")
+        with open(spec_path) as fh:
+            spec = json.load(fh)
+
+        self.assertEqual(spec["kind"], "library")
+        self.assertTrue(spec["is_megazord"])
+
+    def test_rust_megazord_tests_command_spec(self):
+        """A test colocated with a megazord library uses its Cargo profile."""
+        import json
+
+        env = self._consume("rust-megazord-library", RecursiveMakeBackend)
+
+        spec_path = mozpath.join(env.topobjdir, ".cargo-tests-spec.json")
+        with open(spec_path) as fh:
+            spec = json.load(fh)
+
+        self.assertEqual(spec["kind"], "test")
+        self.assertTrue(spec["is_megazord"])
+
+    def test_rust_library_command_spec_computed_flags(self):
+        """A directory's computed compile and link flags reach the spec."""
+        import json
+
+        env = self._consume("rust-library-flags", RecursiveMakeBackend)
+
+        spec_path = mozpath.join(env.topobjdir, ".cargo-library-spec.json")
+        with open(spec_path) as fh:
+            spec = json.load(fh)
+
+        self.assertIn("-DMOZ_RUST_SPEC_CFLAG", spec["computed_cflags"])
+        self.assertIn("-DMOZ_RUST_SPEC_CFLAG", spec["computed_cxxflags"])
+        self.assertIn("-DMOZ_RUST_SPEC_HOST_CFLAG", spec["computed_host_cflags"])
+        self.assertIn("-DMOZ_RUST_SPEC_HOST_CFLAG", spec["computed_host_cxxflags"])
+        self.assertIn("-Wl,--moz-rust-spec-ldflag", spec["link_flags"])
 
     def test_host_rust_library(self):
         """Test that a Rust library is written to backend.mk correctly."""
@@ -1169,6 +1230,7 @@ class TestRecursiveMakeBackend(BackendTester):
             "CARGO_FILE := $(srcdir)/Cargo.toml",
             "CARGO_TARGET_DIR := %s" % env.topobjdir,
             "RUST_LIBRARY_FEATURES := musthave,cantlivewithout",
+            "RUST_LIBRARY_LTO := 1",
         ]
 
         self.assertEqual(lines, expected)
