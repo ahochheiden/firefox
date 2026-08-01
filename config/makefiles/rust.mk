@@ -226,6 +226,9 @@ export CFLAGS_$(rust_cc_env_name)=$(CC_BASE_FLAGS)
 export CXXFLAGS_$(rust_cc_env_name)=$(CXX_BASE_FLAGS) $(filter -fno-aligned-new -fno-sized-deallocation,$(COMPUTED_CXXFLAGS))
 endif
 
+# The run_cargo action applies these same tweaks. Guard them here so they are
+# not applied twice when it inherits this environment.
+ifdef MOZ_USE_LEGACY_CARGO_INVOCATION
 # When host == target, cargo will compile build scripts with sanitizers enabled
 # if sanitizers are enabled, which may randomly fail when they execute
 # because of https://github.com/google/sanitizers/issues/1322.
@@ -238,11 +241,18 @@ endif
 endef
 $(foreach san,ASAN TSAN UBSAN,$(eval $(call sanitizer_options,$(san))))
 endif
+ifeq ($(OS_ARCH), Darwin)
+ifdef IPHONEOS_SDK_DIR
+PATH := $(topsrcdir)/build/macosx:$(PATH)
+endif
+endif
+endif
 
 # Force the target down to all bindgen callers, even those that may not
 # read BINDGEN_SYSTEM_FLAGS some way or another.
 export BINDGEN_EXTRA_CLANG_ARGS:=$(filter --target=%,$(BINDGEN_SYSTEM_FLAGS))
 export CARGO_TARGET_DIR
+export CARGOFLAGS
 export RUSTFLAGS
 export RUSTC
 export RUSTDOC
@@ -277,7 +287,6 @@ ifdef IPHONEOS_SDK_DIR
 export COREAUDIO_SDK_PATH=$(IPHONEOS_SDK_DIR)
 # export for build/macosx/xcrun
 export IPHONEOS_SDK_DIR
-PATH := $(topsrcdir)/build/macosx:$(PATH)
 endif
 endif
 # Use the same prefix as set through modules/zlib/src/mozzconf.h
@@ -354,6 +363,15 @@ endif
 define CARGO_BUILD
 $(call RUN_CARGO,rustc$(if $(BUILDSTATUS), --timings)$(if $(findstring k,$(filter-out --%, $(MAKEFLAGS))), --keep-going))
 endef
+
+# The + prefix preserves jobserver file descriptors. Omit it for `make -n`.
+# Pass --single-job when Make is limited to one job.
+define RUN_CARGO_ACTION
+$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)$(PYTHON3) -m mozbuild.action.run_cargo --spec $(1) $(if $(filter -j1,$(MAKEFLAGS)),--single-job) $(2)
+endef
+
+# Rust build edges forward timing and keep-going signals. Test edges do not.
+cargo_action_rustc_flags = $(if $(BUILDSTATUS),--timings) $(if $(findstring k,$(filter-out --%, $(MAKEFLAGS))),--keep-going)
 
 cargo_host_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_HOST_TARGET))_LINKER
 cargo_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_TARGET))_LINKER
@@ -507,7 +525,11 @@ endif
 # build.
 force-cargo-library-build:
 	$(call BUILDSTATUS,START_Rust $(notdir $(RUST_LIBRARY_FILE)))
+ifdef MOZ_USE_LEGACY_CARGO_INVOCATION
 	$(call CARGO_BUILD) --lib $(cargo_crate_type_flag) $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
+else
+	$(call RUN_CARGO_ACTION,.cargo-library-spec.json,$(cargo_action_rustc_flags))
+endif
 	$(call BUILDSTATUS,END_Rust $(notdir $(RUST_LIBRARY_FILE)))
 # When we are building in --enable-release mode; we add an additional check to confirm
 # that we are not importing any networking-related functions in rust code. This reduces
@@ -526,7 +548,7 @@ endif
 endif
 endif
 
-$(eval $(call make_cargo_rule,$(RUST_LIBRARY_FILE),force-cargo-library-build))
+$(eval $(call make_cargo_rule,$(RUST_LIBRARY_FILE),force-cargo-library-build,$(if $(MOZ_USE_LEGACY_CARGO_INVOCATION),,.cargo-library-spec.json)))
 
 SUGGEST_INSTALL_ON_FAILURE = (ret=$$?; if [ $$ret = 101 ]; then echo If $1 is not installed, install it using: cargo install $1; fi; exit $$ret)
 
@@ -574,7 +596,11 @@ endif
 
 force-cargo-test-run:
 	$(stage_test_libs)
+ifdef MOZ_USE_LEGACY_CARGO_INVOCATION
 	$(call RUN_CARGO,test $(cargo_target_flag) $(rust_test_flag) $(rust_test_options) $(rust_test_features_flag))
+else
+	$(call RUN_CARGO_ACTION,.cargo-tests-spec.json)
+endif
 
 endif # RUST_TESTS
 
@@ -584,10 +610,14 @@ host_rust_features_flag := --features '$(addsuffix $(COMMA),$(HOST_RUST_LIBRARY_
 
 force-cargo-host-library-build:
 	$(call BUILDSTATUS,START_Rust $(notdir $(HOST_RUST_LIBRARY_FILE)))
+ifdef MOZ_USE_LEGACY_CARGO_INVOCATION
 	$(call CARGO_BUILD) --lib $(cargo_host_flag) $(host_rust_features_flag)
+else
+	$(call RUN_CARGO_ACTION,.cargo-host-library-spec.json,$(cargo_action_rustc_flags))
+endif
 	$(call BUILDSTATUS,END_Rust $(notdir $(HOST_RUST_LIBRARY_FILE)))
 
-$(eval $(call make_cargo_rule,$(HOST_RUST_LIBRARY_FILE),force-cargo-host-library-build))
+$(eval $(call make_cargo_rule,$(HOST_RUST_LIBRARY_FILE),force-cargo-host-library-build,$(if $(MOZ_USE_LEGACY_CARGO_INVOCATION),,.cargo-host-library-spec.json)))
 
 ifndef CARGO_NO_AUTO_ARG
 force-cargo-host-library-%:
@@ -608,10 +638,14 @@ program_features_flag := --features '$(addsuffix $(COMMA),$(RUST_PROGRAM_FEATURE
 
 force-cargo-program-build: $(call resfile,module)
 	$(call BUILDSTATUS,START_Rust $(RUST_CARGO_PROGRAMS))
+ifdef MOZ_USE_LEGACY_CARGO_INVOCATION
 	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) $(program_features_flag) -- $(addprefix -C link-arg=$(CURDIR)/,$(call resfile,module)) $(CARGO_RUSTCFLAGS)
+else
+	$(call RUN_CARGO_ACTION,.cargo-program-spec.json,$(cargo_action_rustc_flags))
+endif
 	$(call BUILDSTATUS,END_Rust $(RUST_CARGO_PROGRAMS))
 
-$(foreach RUST_PROGRAM,$(RUST_PROGRAMS), $(eval $(call make_cargo_rule,$(RUST_PROGRAM),force-cargo-program-build,$(call resfile,module))))
+$(foreach RUST_PROGRAM,$(RUST_PROGRAMS), $(eval $(call make_cargo_rule,$(RUST_PROGRAM),force-cargo-program-build,$(call resfile,module) $(if $(MOZ_USE_LEGACY_CARGO_INVOCATION),,.cargo-program-spec.json))))
 
 ifndef CARGO_NO_AUTO_ARG
 force-cargo-program-%:
@@ -631,10 +665,14 @@ host_program_features_flag := --features '$(addsuffix $(COMMA),$(HOST_RUST_PROGR
 
 force-cargo-host-program-build:
 	$(call BUILDSTATUS,START_Rust $(HOST_RUST_CARGO_PROGRAMS))
+ifdef MOZ_USE_LEGACY_CARGO_INVOCATION
 	$(call CARGO_BUILD) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag) $(host_program_features_flag)
+else
+	$(call RUN_CARGO_ACTION,.cargo-host-program-spec.json,$(cargo_action_rustc_flags))
+endif
 	$(call BUILDSTATUS,END_Rust $(HOST_RUST_CARGO_PROGRAMS))
 
-$(foreach HOST_RUST_PROGRAM,$(HOST_RUST_PROGRAMS), $(eval $(call make_cargo_rule,$(HOST_RUST_PROGRAM),force-cargo-host-program-build)))
+$(foreach HOST_RUST_PROGRAM,$(HOST_RUST_PROGRAMS), $(eval $(call make_cargo_rule,$(HOST_RUST_PROGRAM),force-cargo-host-program-build,$(if $(MOZ_USE_LEGACY_CARGO_INVOCATION),,.cargo-host-program-spec.json))))
 
 ifndef CARGO_NO_AUTO_ARG
 force-cargo-host-program-%:
