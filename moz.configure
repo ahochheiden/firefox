@@ -123,6 +123,21 @@ option(
 set_config("MOZ_USE_LEGACY_INSTALLER", True, when="--disable-legacy-installer")
 
 
+option(
+    "--disable-legacy-cargo-invocation",
+    env="MOZ_USE_LEGACY_CARGO_INVOCATION",
+    default=True,
+    help="Disable the legacy (recursive-make) Rust cargo invocation",
+)
+
+
+set_config(
+    "MOZ_USE_LEGACY_CARGO_INVOCATION",
+    True,
+    when="--disable-legacy-cargo-invocation",
+)
+
+
 @depends(enable_tests)
 def gtest_has_rtti(value):
     if value:
