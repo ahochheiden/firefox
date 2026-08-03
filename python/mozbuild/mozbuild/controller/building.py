@@ -1429,29 +1429,10 @@ class BuildDriver(MozbuildObject):
 
             status = None
 
-            if not config_rc and any([
-                self.backend_out_of_date(
-                    mozpath.join(self.topobjdir, "backend.%sBackend" % backend)
-                )
-                for backend in all_backends
-            ]):
-                self.log(
-                    logging.INFO,
-                    "build_output",
-                    {},
-                    "Build configuration changed. Regenerating backend.",
-                )
-                args = [
-                    config.substs["PYTHON3"],
-                    mozpath.join(self.topobjdir, "config.status"),
-                ]
-                self.run_process(args, cwd=self.topobjdir, pass_thru=True)
+            if not config_rc:
+                self.ensure_backend_current()
 
-            if jobs == 0:
-                for param in self.mozconfig.get("make_extra") or []:
-                    key, value = param.split("=", 1)
-                    if key == "MOZ_PARALLEL_BUILD":
-                        jobs = int(value)
+            jobs = self.resolve_num_jobs(jobs, job_size)
 
             if "Make" not in active_backend:
                 backend_cls = get_backend_class(active_backend)(config)
