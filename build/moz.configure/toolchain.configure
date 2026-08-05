@@ -1018,6 +1018,16 @@ def compiler_wrapper(wrapper, ccache):
 set_config("COMPILER_WRAPPER", compiler_wrapper)
 
 
+@depends(compiler_wrapper)
+@imports("os")
+def cc_known_wrapper_custom(wrapper):
+    if wrapper:
+        return os.path.splitext(os.path.basename(wrapper[0]))[0]
+
+
+set_config("CC_KNOWN_WRAPPER_CUSTOM", cc_known_wrapper_custom)
+
+
 @dependable
 def wasm():
     return split_triplet("wasm32-wasi", allow_wasi=True)

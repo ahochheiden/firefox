@@ -212,6 +212,12 @@ export CC_$(rust_cc_env_name)=$(filter-out $(CC_BASE_FLAGS),$(CC))
 export CXX_$(rust_cc_env_name)=$(filter-out $(CXX_BASE_FLAGS),$(CXX))
 export AR_$(rust_cc_env_name)=$(AR)
 
+# cc-rs may not know whether we are using a compiler wrapper, so explicitly
+# tell it that we do.
+ifdef CC_KNOWN_WRAPPER_CUSTOM
+export CC_KNOWN_WRAPPER_CUSTOM
+endif
+
 # When --with-compiler-wrapper is used, CC/CXX become a space-separated pair of
 # paths (`<wrapper> <compiler>`). On Windows, if the cargo recipe crosses into an
 # msys2 shell, msys2 mistakes that value for a Windows path-list and rewrites it
