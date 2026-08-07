@@ -3521,7 +3521,7 @@ def add_libfuzzer_flags(libfuzzer_flags, linker_flags):
 
 
 # The LLVM symbolizer is used by all sanitizers
-check_prog(
+llvm_symbolizer = check_prog(
     "LLVM_SYMBOLIZER",
     ("llvm-symbolizer",),
     allow_missing=True,

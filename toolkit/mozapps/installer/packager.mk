@@ -21,6 +21,8 @@ endif
 
 export USE_ELF_HACK
 
+MOZ_PKG_DUPEFLAGS ?= $(if $(MOZ_PKG_DUPES_WARN_ONLY),-w) $(addprefix -f ,$(MOZ_PKG_ALLOWED_DUPES))
+
 stage-package: multilocale.txt locale-manifest.in $(MOZ_PKG_MANIFEST)
 	NO_PKG_FILES="$(NO_PKG_FILES)" \
 	$(PYTHON3) $(MOZILLA_DIR)/toolkit/mozapps/installer/packager.py $(DEFINES) $(ACDEFINES) \
@@ -143,7 +145,6 @@ ifdef MOZ_AUTOMATION
 	cp $(DEPTH)/mozinfo.json $(MOZ_MOZINFO_FILE)
 	$(PYTHON3) $(MOZILLA_DIR)/toolkit/mozapps/installer/informulate.py \
 		$(MOZ_BUILDINFO_FILE) $(MOZ_BUILDHUB_JSON) $(MOZ_BUILDID_INFO_TXT_FILE) \
-		$(MOZ_PKG_PLATFORM) \
 		$(if $(or $(filter-out mobile/android,$(MOZ_BUILD_APP)),$(MOZ_ANDROID_WITH_FENNEC)), \
 		--package=$(DIST)/$(PACKAGE) --installer=$(INSTALLER_PACKAGE), \
 		--no-download \

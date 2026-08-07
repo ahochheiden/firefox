@@ -3823,6 +3823,69 @@ def pkg_suffix(pkg_format):
 
 set_config("PKG_SUFFIX", pkg_suffix)
 
+@depends(build_project, moz_app_name)
+def moz_pkg_dir_default(build_project, moz_app_name):
+    if build_project == "mobile/android":
+        return "geckoview"
+    return moz_app_name
+
+
+set_config("MOZ_PKG_DIR_DEFAULT", moz_pkg_dir_default)
+
+
+@depends(moz_pkg_platform, "MOZ_SIMPLE_PACKAGE_NAME")
+@imports(_from="mozbuild.packaging", _import="jsshell_name")
+def pkg_jsshell_name(platform, simple_name):
+    return jsshell_name(
+        platform=platform,
+        simple_name=simple_name[0] if simple_name else None,
+    )
+
+
+set_config("JSSHELL_NAME", pkg_jsshell_name)
+
+
+@depends(when=True)
+@imports(_from="mozbuild.packaging", _import="NO_PKG_FILES")
+def no_pkg_files():
+    return list(NO_PKG_FILES)
+
+
+set_config("NO_PKG_FILES", no_pkg_files)
+
+
+@depends(
+    library_name_info.dll.prefix,
+    library_name_info.dll.suffix,
+    bin_suffix(target),
+    toolkit,
+    fold_libs,
+)
+@imports(_from="mozbuild.packaging", _import="quote_defines")
+def package_toolkit_defines(dll_prefix, dll_suffix, bin_suffix, toolkit, fold_libs):
+    defines = [
+        f"-DDLL_PREFIX={dll_prefix}",
+        f"-DDLL_SUFFIX={dll_suffix}",
+        f"-DBIN_SUFFIX={bin_suffix}",
+    ]
+    if toolkit == "cocoa":
+        defines += [
+            "-DDIR_MACOS=Contents/MacOS/",
+            "-DDIR_RESOURCES=Contents/Resources/",
+        ]
+    else:
+        defines += ["-DDIR_MACOS=", "-DDIR_RESOURCES="]
+    if fold_libs:
+        defines.append("-DMOZ_FOLD_LIBS=1")
+    return quote_defines(defines)
+
+
+set_config("PACKAGE_TOOLKIT_DEFINES", package_toolkit_defines)
+
+set_config(
+    "JAR_COMPRESSION", "none", when=depends(toolkit)(lambda t: t != "android")
+)
+
 
 @depends("MOZ_DEV_EDITION")
 def moz_langpack_eid_host(dev_edition):
@@ -3836,8 +3899,6 @@ set_config("MOZ_LANGPACK_EID_HOST", moz_langpack_eid_host)
 
 # Every other platform just winds up in dist/bin
 non_macos_pkg_path = dependable("bin")
-set_config("MOZ_PKG_BINPATH", non_macos_pkg_path, when=~target_is_osx)
-set_config("MOZ_PKG_RESPATH", non_macos_pkg_path, when=~target_is_osx)
 
 
 # Smart card support
@@ -3869,19 +3930,6 @@ with only_when(target_is_osx):
         return f"{prefix}{app_displayname}{suffix}.app"
 
     set_config("MOZ_MACBUNDLE_NAME", mac_bundle_name)
-
-    @depends(mac_bundle_name)
-    def moz_pkg_binpath(mac_bundle_name):
-        return f"{mac_bundle_name}/Contents/MacOS"
-
-    set_config("MOZ_PKG_BINPATH", moz_pkg_binpath)
-
-    # Resource path for the precomplete file
-    @depends(mac_bundle_name)
-    def moz_pkg_respath(mac_bundle_name):
-        return f"{mac_bundle_name}/Contents/Resources"
-
-    set_config("MOZ_PKG_RESPATH", moz_pkg_respath)
 
     @depends(
         "MOZ_MACBUNDLE_ID", moz_app_displayname, "--with-distribution-id", moz_debug
@@ -4003,6 +4051,27 @@ with only_when(target_is_osx):
             )
 
         set_config("MOZ_PKCS11_PROCESS_BUNDLEID", moz_pkcs11_process_bundle_id)
+
+
+@depends(mac_bundle_name, non_macos_pkg_path)
+def moz_pkg_binpath(mac_bundle_name, non_macos_pkg_path):
+    if mac_bundle_name:
+        return f"{mac_bundle_name}/Contents/MacOS"
+    return non_macos_pkg_path
+
+
+set_config("MOZ_PKG_BINPATH", moz_pkg_binpath)
+
+
+# Resource path for the precomplete file
+@depends(mac_bundle_name, non_macos_pkg_path)
+def moz_pkg_respath(mac_bundle_name, non_macos_pkg_path):
+    if mac_bundle_name:
+        return f"{mac_bundle_name}/Contents/Resources"
+    return non_macos_pkg_path
+
+
+set_config("MOZ_PKG_RESPATH", moz_pkg_respath)
 
 
 # Update-related programs: updater, maintenance service, update agent,

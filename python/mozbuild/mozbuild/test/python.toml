@@ -137,6 +137,8 @@ subsuite = "mozbuild"
 
 ["test_nsis.py"]
 
+["test_packaging.py"]
+
 ["test_preprocessor.py"]
 
 ["test_pythonutil.py"]
