@@ -179,10 +179,6 @@ upload:
 		$(UPLOAD_PATH)
 	$(PYTHON3) -u $(MOZILLA_DIR)/build/upload.py --base-path $(ABS_DIST) $(CHECKSUM_FILE)
 
-hg-bundle:
-	$(MKDIR) -p $(DIST)/$(PKG_SRCPACK_PATH)
-	$(CREATE_HG_BUNDLE_CMD)
-
 ALL_LOCALES = $(if $(filter en-US,$(LOCALES)),$(LOCALES),$(LOCALES) en-US)
 
 # Firefox uses @RESPATH@.
