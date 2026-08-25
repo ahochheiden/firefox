@@ -23,6 +23,8 @@ subsuite = "mozbuild"
 
 ["action/test_node.py"]
 
+["action/test_package_application.py"]
+
 ["action/test_package_prepare.py"]
 
 ["action/test_package_stage.py"]

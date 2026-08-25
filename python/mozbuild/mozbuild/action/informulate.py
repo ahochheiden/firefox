@@ -26,6 +26,11 @@ def main(argv):
     )
     parser.add_argument("--package", help="Path to application package file")
     parser.add_argument("--installer", help="Path to application installer file")
+    parser.add_argument(
+        "--ab-cd",
+        default=os.environ.get("AB_CD", "en-US"),
+        help="Locale of the package being described",
+    )
     args = parser.parse_args(argv)
     pkg_platform = buildconfig.substs["MOZ_PKG_PLATFORM"]
     mozinfo.find_and_update_from_json()
@@ -92,8 +97,7 @@ def main(argv):
             "target": {
                 "platform": pkg_platform,
                 "os": mozinfo.info["os"],
-                # This would be easier if the locale was specified at configure time.
-                "locale": os.environ.get("AB_CD", "en-US"),
+                "locale": args.ab_cd,
                 "version": s["MOZ_APP_VERSION_DISPLAY"] or s["MOZ_APP_VERSION"],
                 "channel": s["MOZ_UPDATE_CHANNEL"],
             },
