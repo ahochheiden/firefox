@@ -7,17 +7,28 @@ include  $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 installer:
 	@$(MAKE) -C mobile/android/installer installer
 
+ifdef MOZ_USE_LEGACY_PACKAGING
 package:
 	@$(MAKE) -C mobile/android/installer
 
 stage-package:
 	$(MAKE) -C mobile/android/installer stage-package
 
-deb: package
-	@$(MAKE) -C mobile/android/installer deb
-
 upload::
 	@$(MAKE) -C mobile/android/installer upload
+else
+package:
+	$(call py_action,package_configured,--mode=package --ab-cd=$(AB_CD))
+
+stage-package:
+	$(call py_action,package_configured,--mode=stage --ab-cd=$(AB_CD))
+
+upload::
+	$(call py_action,package_upload,--ab-cd=$(AB_CD) $(if $(MOZ_SIMPLE_PACKAGE_NAME),--simple-package-name=$(MOZ_SIMPLE_PACKAGE_NAME)) $(addprefix --extra-file=,$(UPLOAD_EXTRA_FILES)))
+endif
+
+deb: package
+	@$(MAKE) -C mobile/android/installer deb
 
 wget-en-US:
 	@$(MAKE) -C mobile/android/locales $@

@@ -31,6 +31,7 @@ ifeq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
 	$(MAKE) -C $(DEPTH)/browser/locales langpack
 endif
 
+ifdef MOZ_USE_LEGACY_PACKAGING
 ifeq (WINNT,$(OS_ARCH))
 PKGCOMP_FIND_OPTS =
 else
@@ -43,3 +44,7 @@ package-compare::
 	$(call py_action,preprocessor,$(DEFINES) $(ACDEFINES) $(MOZ_PKG_MANIFEST)) | grep '^$(BINPATH)' | sed -e 's/^\///' | sort > $(DIST)/pack-list.txt
 	-diff -u $(DIST)/pack-list.txt $(DIST)/bin-list.txt
 	rm -f $(DIST)/pack-list.txt $(DIST)/bin-list.txt
+else
+package-compare::
+	$(call py_action,package_compare,--manifest=$(MOZ_PKG_MANIFEST) $(DEFINES) $(ACDEFINES))
+endif

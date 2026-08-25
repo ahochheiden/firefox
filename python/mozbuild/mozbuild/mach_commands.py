@@ -1654,15 +1654,22 @@ def source_package(command_context, output, upload):
         )
         if upload:
             checksum_path = archive_path[: -len(".tar.xz")] + ".checksums"
-            command_context._run_make(
-                target=[
-                    "upload",
-                    f"UPLOAD_PATH={upload}",
-                    f"UPLOAD_FILES={archive_path}",
-                    f"CHECKSUM_FILE={checksum_path}",
-                ],
-                ensure_exit_code=True,
-            )
+            if _use_legacy_packaging(command_context):
+                command_context._run_make(
+                    target=[
+                        "upload",
+                        f"UPLOAD_PATH={upload}",
+                        f"UPLOAD_FILES={archive_path}",
+                        f"CHECKSUM_FILE={checksum_path}",
+                    ],
+                    ensure_exit_code=True,
+                )
+            elif _package_upload(
+                upload_path=upload,
+                files=[archive_path],
+                checksum_file=checksum_path,
+            ):
+                return 1
 
     else:
         command_context.log(
@@ -1673,6 +1680,40 @@ def source_package(command_context, output, upload):
         )
         return 1
     command_context.notify("Packaging complete")
+
+
+def _use_legacy_packaging(command_context):
+    return bool(command_context.substs.get("MOZ_USE_LEGACY_PACKAGING"))
+
+
+def _package_application(
+    command_context, mode="package", ab_cd=None, locales=None, **overrides
+):
+    from mozbuild.action.package_application import package_application
+    from mozbuild.packaging import package_options
+
+    options = package_options(
+        substs=command_context.substs,
+        topobjdir=command_context.topobjdir,
+        environ=os.environ,
+        mode=mode,
+        ab_cd=ab_cd,
+        locales=locales,
+    )
+    options.update(overrides)
+    return package_application(**options)
+
+
+def _upload_extra_files(environ):
+    """Files under `dist` to upload beside the package, named in
+    `MOZ_UPLOAD_EXTRA_FILES` separated by whitespace."""
+    return (environ.get("MOZ_UPLOAD_EXTRA_FILES") or "").split()
+
+
+def _package_upload(**overrides):
+    from mozbuild.action.package_upload import package_upload
+
+    return package_upload(extra_files=_upload_extra_files(os.environ), **overrides)
 
 
 @Command(
@@ -1688,9 +1729,12 @@ def source_package(command_context, output, upload):
 )
 def package(command_context, verbose=False):
     """Package the built product for distribution."""
-    ret = command_context._run_make(
-        directory=".", target="package", silent=not verbose, ensure_exit_code=False
-    )
+    if _use_legacy_packaging(command_context):
+        ret = command_context._run_make(
+            directory=".", target="package", silent=not verbose, ensure_exit_code=False
+        )
+    else:
+        ret = _package_application(command_context)
     if ret == 0:
         command_context.notify("Packaging complete")
         _print_package_name(command_context)
@@ -1817,10 +1861,14 @@ def install(command_context, **kwargs):
         from mozrunner.devices.ios_device import verify_ios_device
 
         ret = verify_ios_device(command_context, install=True, **kwargs) == 0
-    else:
+    elif _use_legacy_packaging(command_context) or command_context.substs.get(
+        "JS_STANDALONE"
+    ):
         ret = command_context._run_make(
             directory=".", target="install", ensure_exit_code=False
         )
+    else:
+        ret = _package_application(command_context, mode="install")
 
     if ret == 0:
         command_context.notify("Install complete")
@@ -2612,12 +2660,15 @@ def _run_desktop(
             binpath = app or command_context.get_binary_path("app")
     except BinaryNotFoundException as e:
         if packaged:
-            ret = command_context._run_make(
-                directory=".",
-                target="stage-package",
-                silent=True,
-                ensure_exit_code=False,
-            )
+            if _use_legacy_packaging(command_context):
+                ret = command_context._run_make(
+                    directory=".",
+                    target="stage-package",
+                    silent=True,
+                    ensure_exit_code=False,
+                )
+            else:
+                ret = _package_application(command_context, mode="stage")
 
             if ret == 0:
                 try:
@@ -3799,11 +3850,20 @@ def repackage_snap(
     else:
         # Deploy the current build for packaging, into the directory
         # where snapcraft will expect it
-        command_context._run_make(
-            directory=".",
-            target="stage-package",
-            append_env={"MOZ_PKG_DIR": "snap/source/usr/lib/firefox"},
-        )
+        if _use_legacy_packaging(command_context):
+            command_context._run_make(
+                directory=".",
+                target="stage-package",
+                append_env={"MOZ_PKG_DIR": "snap/source/usr/lib/firefox"},
+            )
+        else:
+            ret = _package_application(
+                command_context,
+                mode="stage",
+                pkg_dir="snap/source/usr/lib/firefox",
+            )
+            if ret:
+                return ret
         snapdir = os.path.join(command_context.distdir, "snap")
 
     # Handle the most common cases of arch:
@@ -4085,17 +4145,28 @@ def package_l10n(command_context, verbose=False, locales=[]):
         {},
         "Invoking multi-locale `mach package`",
     )
-    target = ["package"]
-    if command_context.substs["MOZ_BUILD_APP"] == "mobile/android":
-        target.append("AB_CD=multi")
+    android = command_context.substs["MOZ_BUILD_APP"] == "mobile/android"
 
-    command_context._run_make(
-        directory=command_context.topobjdir,
-        target=target,
-        append_env=append_env,
-        pass_thru=True,
-        ensure_exit_code=True,
-    )
+    if _use_legacy_packaging(command_context):
+        target = ["package"]
+        if android:
+            target.append("AB_CD=multi")
+
+        command_context._run_make(
+            directory=command_context.topobjdir,
+            target=target,
+            append_env=append_env,
+            pass_thru=True,
+            ensure_exit_code=True,
+        )
+    else:
+        ret = _package_application(
+            command_context,
+            locales=locales,
+            ab_cd="multi" if android else None,
+        )
+        if ret:
+            return ret
 
     if command_context.substs["MOZ_BUILD_APP"] == "mobile/android":
         command_context.log(
@@ -4301,18 +4372,25 @@ def repackage_single_locales(command_context, verbose=False, locales=[], dest=No
 
             append_env["UPLOAD_PATH"] = mozpath.join(dest, locale)
 
-            command_context._run_make(
-                directory=os.path.join(command_context.topobjdir),
-                target=["upload", f"AB_CD={locale}"],
-                append_env=append_env,
-                pass_thru=False,
-                print_directory=False,
-                ensure_exit_code=True,
-                silent=not verbose,
-                # We do our own logging.
-                log=False,
-                line_handler=line_handler,
-            )
+            if _use_legacy_packaging(command_context):
+                command_context._run_make(
+                    directory=os.path.join(command_context.topobjdir),
+                    target=["upload", f"AB_CD={locale}"],
+                    append_env=append_env,
+                    pass_thru=False,
+                    print_directory=False,
+                    ensure_exit_code=True,
+                    silent=not verbose,
+                    # We do our own logging.
+                    log=False,
+                    line_handler=line_handler,
+                )
+            elif _package_upload(
+                upload_path=append_env["UPLOAD_PATH"],
+                ab_cd=locale,
+                simple_package_name=append_env.get("MOZ_SIMPLE_PACKAGE_NAME"),
+            ):
+                return 1
     finally:
         if en_us_snapshot:
             shutil.move(en_us_snapshot, en_us_package)
