@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import mozpack.path as mozpath
 import mozunit
 
 from mozbuild.action import package_prepare
@@ -40,6 +41,12 @@ def _patched():
             ),
             "subprocess": es.enter_context(
                 mock.patch.object(package_prepare.subprocess, "call", return_value=0)
+            ),
+            "coverage": es.enter_context(
+                mock.patch.object(package_prepare.coverage_packager, "cli")
+            ),
+            "copyfile": es.enter_context(
+                mock.patch.object(package_prepare.shutil, "copyfile")
             ),
         }
 
@@ -269,20 +276,218 @@ class TestPackagePrepare(unittest.TestCase):
             calls["zip"].side_effect = lambda *a: order.append("zip")
             calls["libmegazord"].side_effect = lambda *a: order.append("libmegazord")
             calls["subprocess"].side_effect = lambda *a: order.append("rewrite") or 0
+            calls["coverage"].side_effect = lambda *a: order.append("coverage")
 
             package_prepare.package_prepare(
                 staged_dir="staged",
                 topsrcdir="/src",
+                topobjdir="/obj",
                 check_dupes=True,
                 mozharness_zip="dist/mozharness.zip",
+                code_coverage_archive="/obj/dist/ccov.zip",
                 rewrite_sanitizer_dylib="dist/firefox",
                 archives=[["/obj/a", "/obj/a.zip", "*"]],
                 libmegazord_artifacts=["/obj/dist/bin", "/obj/m.zip"],
             )
 
         self.assertEqual(
-            order, ["dupes", "mozharness", "rewrite", "zip", "libmegazord"]
+            order,
+            ["dupes", "mozharness", "coverage", "rewrite", "zip", "libmegazord"],
         )
+
+
+class TestCoverageAndMozsearch(unittest.TestCase):
+    def _mach_calls(self, calls):
+        return [
+            call.args[0][2:]
+            for call in calls["subprocess"].call_args_list
+            if call.args[0][1].endswith("mach")
+        ]
+
+    def test_chrome_map(self):
+        with _patched() as calls:
+            package_prepare.package_prepare(
+                staged_dir="staged", topsrcdir="/src", chrome_map=True
+            )
+
+        self.assertEqual(
+            self._mach_calls(calls), [["build-backend", "-b", "ChromeMap"]]
+        )
+
+    def test_chrome_map_failure(self):
+        with _patched() as calls:
+            calls["subprocess"].return_value = 1
+            rc = package_prepare.package_prepare(
+                staged_dir="staged",
+                topsrcdir="/src",
+                chrome_map=True,
+                code_coverage_archive="/obj/dist/ccov.zip",
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(calls["coverage"].call_count, 0)
+
+    def test_code_coverage_archive(self):
+        with _patched() as calls:
+            package_prepare.package_prepare(
+                staged_dir="staged",
+                topsrcdir="/src",
+                code_coverage_archive="/obj/dist/target.code-coverage-gcno.zip",
+            )
+
+        self.assertEqual(
+            calls["coverage"].call_args.args[0],
+            ["--output-file", "/obj/dist/target.code-coverage-gcno.zip"],
+        )
+
+    def test_mozsearch_index_archive(self):
+        with _patched() as calls:
+            package_prepare.package_prepare(
+                staged_dir="staged",
+                topobjdir="/obj",
+                mozsearch_index="/obj/dist/target.mozsearch-index.zip",
+            )
+
+        self.assertEqual(
+            calls["zip"].call_args.args[0],
+            [
+                "--error-if-empty",
+                "--dotfiles",
+                "-C",
+                "/obj/mozsearch_index",
+                "/obj/dist/target.mozsearch-index.zip",
+                "**",
+            ],
+        )
+
+    def test_mozsearch_includemap(self):
+        with _patched() as calls:
+            package_prepare.package_prepare(
+                staged_dir="staged",
+                topobjdir="/obj",
+                mozsearch_includemap="/obj/dist/target.mozsearch-distinclude.map",
+            )
+
+        self.assertEqual(
+            calls["copyfile"].call_args.args,
+            (
+                "/obj/_build_manifests/install/dist_include",
+                "/obj/dist/target.mozsearch-distinclude.map",
+            ),
+        )
+
+    def test_scip_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = mozpath.join(tmp, "rust-analyzer.json")
+
+            def write_config(argv, cwd=None, env=None):
+                if argv[1].endswith("mach"):
+                    with open(config, "w") as f:
+                        f.write("{}")
+                return 0
+
+            with _patched() as calls:
+                calls["subprocess"].side_effect = write_config
+                rc = package_prepare.package_prepare(
+                    staged_dir="staged",
+                    topsrcdir=tmp,
+                    moz_fetches_dir="/fetches",
+                    mozsearch_scip_index="/obj/dist/target.scip.zip",
+                )
+
+            self.assertFalse(os.path.exists(config))
+
+        self.assertEqual(rc, 0)
+        argv = [call.args[0] for call in calls["subprocess"].call_args_list]
+        self.assertEqual(argv[0][2:], ["rust-analyzer-config", "-o", config])
+        self.assertEqual(
+            argv[1],
+            [
+                "/fetches/rust-analyzer/bin/rust-analyzer",
+                "scip",
+                ".",
+                "--config-path",
+                config,
+            ],
+        )
+        self.assertEqual(
+            calls["zip"].call_args.args[0],
+            ["--error-if-empty", "-C", tmp, "/obj/dist/target.scip.zip", "index.scip"],
+        )
+
+    def test_scip_index_toolchain(self):
+        with _patched() as calls:
+            package_prepare.package_prepare(
+                staged_dir="staged",
+                topsrcdir="/src",
+                moz_fetches_dir="/fetches",
+                mozsearch_scip_index="/obj/dist/target.scip.zip",
+            )
+
+        env = calls["subprocess"].call_args_list[1].kwargs["env"]
+        self.assertEqual(env["CARGO"], "/fetches/rustc/bin/cargo")
+        self.assertEqual(env["RUSTC"], "/fetches/rustc/bin/rustc")
+
+    def test_scip_index_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = mozpath.join(tmp, "rust-analyzer.json")
+
+            def fail_the_index(argv, cwd=None, env=None):
+                if argv[1].endswith("mach"):
+                    with open(config, "w") as f:
+                        f.write("{}")
+                    return 0
+                return 3
+
+            with _patched() as calls:
+                calls["subprocess"].side_effect = fail_the_index
+                rc = package_prepare.package_prepare(
+                    staged_dir="staged",
+                    topsrcdir=tmp,
+                    moz_fetches_dir="/fetches",
+                    mozsearch_scip_index="/obj/dist/target.scip.zip",
+                    archives=[["/obj/a", "/obj/a.zip", "*"]],
+                )
+
+            self.assertFalse(os.path.exists(config))
+
+        self.assertEqual(rc, 3)
+        self.assertEqual(calls["zip"].call_count, 0)
+
+    def test_java_index(self):
+        with _patched() as calls:
+            package_prepare.package_prepare(
+                staged_dir="staged",
+                topsrcdir="/src",
+                topobjdir="/obj",
+                mozsearch_java_index="/obj/dist/target.java-index.zip",
+            )
+
+        self.assertEqual(self._mach_calls(calls), [["android", "compile-all"]])
+        self.assertEqual(
+            calls["zip"].call_args.args[0],
+            [
+                "--error-if-empty",
+                "--dotfiles",
+                "-C",
+                "/obj/mozsearch_java_index",
+                "/obj/dist/target.java-index.zip",
+                "**",
+            ],
+        )
+
+    def test_java_index_compile_failure(self):
+        with _patched() as calls:
+            calls["subprocess"].return_value = 1
+            rc = package_prepare.package_prepare(
+                staged_dir="staged",
+                topsrcdir="/src",
+                topobjdir="/obj",
+                mozsearch_java_index="/obj/dist/target.java-index.zip",
+            )
+
+        self.assertEqual(rc, 1)
+        self.assertEqual(calls["zip"].call_count, 0)
 
 
 class TestPackagePrepareMain(unittest.TestCase):

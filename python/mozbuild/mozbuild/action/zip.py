@@ -29,6 +29,11 @@ def main(args):
     )
     parser.add_argument("--strip", action="store_true", help="Strip executables")
     parser.add_argument(
+        "--dotfiles",
+        action="store_true",
+        help="Include files and directories whose names start with a dot",
+    )
+    parser.add_argument(
         "-x",
         metavar="EXCLUDE",
         default=[],
@@ -76,7 +81,9 @@ def main(args):
     deps = []
     file_count = 0
     with errors.accumulate():
-        finder = FileFinder(args.C, find_executables=args.strip)
+        finder = FileFinder(
+            args.C, find_executables=args.strip, find_dotfiles=args.dotfiles
+        )
         for path in args.input:
             for p, f in finder.find(path):
                 if not any([match(p, exclude) for exclude in args.x]):

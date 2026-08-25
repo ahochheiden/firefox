@@ -77,6 +77,20 @@ class TestZipAction(unittest.TestCase):
 
         self.assertEqual(self._zip_contents(out), ["a.txt", "b.txt"])
 
+    def test_dotfiles(self):
+        os.makedirs(os.path.join(self.tmpdir, "src", "sub"))
+        self._make_file("src/top.txt")
+        self._make_file("src/.hidden")
+        self._make_file("src/sub/.dot")
+        src = os.path.join(self.tmpdir, "src")
+
+        out = os.path.join(self.tmpdir, "out.zip")
+        zip_main(["-C", src, out, "**"])
+        self.assertEqual(self._zip_contents(out), ["top.txt"])
+
+        zip_main(["--dotfiles", "-C", src, out, "**"])
+        self.assertEqual(self._zip_contents(out), [".hidden", "sub/.dot", "top.txt"])
+
     def test_no_inputs_errors(self):
         out = os.path.join(self.tmpdir, "out.zip")
         with self.assertRaises(SystemExit):
