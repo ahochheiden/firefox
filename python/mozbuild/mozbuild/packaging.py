@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+import os
 import shlex
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Sequence
 
 import mozpack.path as mozpath
 
@@ -128,6 +129,21 @@ class PackagePaths:
         )
         self.installer_basename = installer_basename
         self.stub_installer_basename = f"{basename}.installer-stub"
+        self.checksums_file = mozpath.join(pkg_output_dir, f"{basename}.checksums")
+        self.langpack = (
+            f"{substs.get('PKG_LANGPACK_PATH', '')}"
+            + langpack_basename(
+                appname=substs["MOZ_PKG_APPNAME"],
+                version=substs["MOZ_PKG_VERSION"],
+                ab_cd=ab_cd,
+                simple_name=simple_name,
+            )
+            + ".xpi"
+        )
+        self.generated_source_file_package = f"{basename}.generated-files.tar.gz"
+        self.test_packages_file = mozpath.join(
+            pkg_output_dir, f"{basename}.test_packages.json"
+        )
         self.symbol_archive_basename = f"{basename}.crashreporter-symbols"
         self.symbol_full_archive_basename = f"{basename}.crashreporter-symbols-full"
         self.code_coverage_archive_basename = f"{basename}.code-coverage-gcno"
@@ -151,6 +167,96 @@ class PackagePaths:
         )
         self.mozinfo_file = mozpath.join(pkg_output_dir, f"{basename}.mozinfo.json")
         self.jsshell = mozpath.join(dist_dir, substs["JSSHELL_NAME"])
+
+
+def files_to_upload(
+    *,
+    substs: Mapping[str, str],
+    paths: PackagePaths,
+    topsrcdir: str,
+    topobjdir: str,
+    ab_cd: str = "en-US",
+    extra_files: Sequence[str] = (),
+) -> list[str]:
+    dist = paths.dist_dir
+    out = paths.pkg_output_dir
+    app = substs["MOZ_BUILD_APP"]
+    installer_objdir = mozpath.join(topobjdir, app, "installer", "windows")
+    android = app == "mobile/android"
+
+    candidates = [
+        mozpath.join(dist, paths.package),
+        paths.installer_package,
+        mozpath.join(dist, paths.langpack),
+        mozpath.join(out, paths.mozharness_package),
+        mozpath.join(out, f"{paths.symbol_archive_basename}.zip"),
+        mozpath.join(out, paths.generated_source_file_package),
+        paths.sourcestamp_file,
+        paths.buildinfo_file,
+        paths.buildhub_json,
+        paths.buildid_info_txt_file,
+        paths.mozinfo_file,
+        paths.test_packages_file,
+        paths.jsshell,
+        mozpath.join(out, f"{paths.symbol_full_archive_basename}.tar.zst"),
+        mozpath.join(installer_objdir, "instgen", "setup.exe"),
+        mozpath.join(installer_objdir, "instgen", "setup-stub.exe"),
+        mozpath.join(topsrcdir, "toolchains.json"),
+        mozpath.join(topobjdir, "sbom.json"),
+        mozpath.join(topobjdir, "config.status"),
+        mozpath.join(topobjdir, "licenses.json"),
+    ]
+
+    candidates += [mozpath.join(dist, extra) for extra in extra_files]
+
+    if ab_cd in ("", "en-US"):
+        suffix = ".exe" if substs.get("OS_TARGET") == "WINNT" else ""
+        candidates += [
+            mozpath.join(dist, "host", "bin", f"mar{suffix}"),
+            mozpath.join(dist, "host", "bin", f"mbsdiff{suffix}"),
+        ]
+    else:
+        candidates += [
+            mozpath.join(installer_objdir, "l10ngen", "setup.exe"),
+            mozpath.join(installer_objdir, "l10ngen", "setup-stub.exe"),
+        ]
+
+    if substs.get("MOZ_CODE_COVERAGE"):
+        candidates += [
+            mozpath.join(out, f"{paths.code_coverage_archive_basename}.zip"),
+            mozpath.join(topobjdir, "chrome-map.json"),
+        ]
+
+    if substs.get("ENABLE_MOZSEARCH_PLUGIN"):
+        candidates += [
+            mozpath.join(topobjdir, "chrome-map.json"),
+            mozpath.join(out, f"{paths.mozsearch_archive_basename}.zip"),
+            mozpath.join(out, f"{paths.mozsearch_scip_index_basename}.zip"),
+            mozpath.join(out, f"{paths.mozsearch_includemap_basename}.map"),
+        ]
+        if android:
+            candidates.append(
+                mozpath.join(out, f"{paths.mozsearch_java_index_basename}.zip")
+            )
+
+    if substs.get("MOZ_STUB_INSTALLER"):
+        candidates.append(mozpath.join(out, f"{paths.stub_installer_basename}.exe"))
+
+    if substs.get("MOZ_APPSERVICES_IN_TREE"):
+        candidates.append(
+            mozpath.join(out, f"{paths.libmegazord_artifacts_archive_basename}.zip")
+        )
+
+    candidates.append(mozpath.join(out, f"{paths.xpt_artifacts_archive_basename}.zip"))
+
+    if paths.update_framework_artifacts_archive_basename:
+        candidates.append(
+            mozpath.join(
+                out, f"{paths.update_framework_artifacts_archive_basename}.zip"
+            )
+        )
+
+    return [f for f in dict.fromkeys(candidates) if f and os.path.exists(f)]
 
 
 def all_locales(locales: Iterable[str]) -> list[str]:
