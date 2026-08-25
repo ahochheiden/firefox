@@ -1075,6 +1075,20 @@ option(
 set_config("MOZ_PACKAGER_MINIFY_PDFJS", True, when="--enable-minify-pdfjs")
 
 
+option(
+    "--disable-legacy-packaging",
+    env="MOZ_USE_LEGACY_PACKAGING",
+    help="Disable the legacy Make driven application packaging",
+)
+
+
+set_config(
+    "MOZ_USE_LEGACY_PACKAGING",
+    True,
+    when="--enable-legacy-packaging",
+)
+
+
 @depends(toolkit)
 def omnijar_name(toolkit):
     # Fennec's static resources live in the assets/ folder of the
