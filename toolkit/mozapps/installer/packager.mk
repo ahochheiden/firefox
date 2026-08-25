@@ -24,21 +24,19 @@ export USE_ELF_HACK
 MOZ_PKG_DUPEFLAGS ?= $(addprefix -f ,$(MOZ_PKG_ALLOWED_DUPES))
 
 stage-package: multilocale.txt locale-manifest.in $(MOZ_PKG_MANIFEST)
-	NO_PKG_FILES="$(NO_PKG_FILES)" \
-	$(PYTHON3) $(MOZILLA_DIR)/toolkit/mozapps/installer/packager.py $(DEFINES) $(ACDEFINES) \
+	$(call py_action,package_stage $(MOZ_PKG_DIR),$(DEFINES) $(ACDEFINES) \
+		$(foreach f,$(NO_PKG_FILES),--no-pkg-files '$(f)') \
 		--format $(MOZ_PACKAGER_FORMAT) \
 		$(addprefix --removals ,$(MOZ_PKG_REMOVALS)) \
 		$(if $(filter-out 0,$(MOZ_PKG_FATAL_WARNINGS)),,--ignore-errors) \
 		$(if $(MOZ_AUTOMATION),,--ignore-broken-symlinks) \
 		$(if $(MOZ_PACKAGER_MINIFY),--minify) \
-		$(if $(MOZ_PACKAGER_MINIFY_JS),--minify-js \
-		  $(addprefix --js-binary ,$(JS_BINARY)) \
-		) \
+		$(if $(MOZ_PACKAGER_MINIFY_JS),--minify-js) \
 		$(if $(MOZ_PACKAGER_MINIFY_PDFJS),--minify-pdfjs) \
 		$(addprefix --jarlog ,$(wildcard $(JARLOG_FILE_AB_CD))) \
 		$(addprefix --compress ,$(JAR_COMPRESSION)) \
 		$(MOZ_PKG_MANIFEST) '$(DIST)' '$(DIST)'/$(MOZ_PKG_DIR)$(if $(MOZ_PKG_MANIFEST),,$(if $(MOZ_MACBUNDLE_NAME),$(MOZ_PKG_BINPATH:%=/%))) \
-		$(if $(filter omni,$(MOZ_PACKAGER_FORMAT)),$(if $(NON_OMNIJAR_FILES),--non-resource $(NON_OMNIJAR_FILES)))
+		$(if $(filter omni,$(MOZ_PACKAGER_FORMAT)),$(if $(NON_OMNIJAR_FILES),--non-resource $(NON_OMNIJAR_FILES))))
 
 prepare-package: stage-package
 ifdef RUN_FIND_DUPES

@@ -7,8 +7,8 @@ PACKAGE       = $(PKG_PATH)$(PKG_BASENAME)$(PKG_SUFFIX)
 ifneq (,$(PGO_JARLOG_PATH))
   # The backslash subst is to work around an issue with our version of mozmake,
   # where backslashes get slurped in command-line arguments if a command is run
-  # with a double-quote character. The command to packager.py happens to be one
-  # of these commands, where double-quotes appear in certain ACDEFINES values.
+  # with a double-quote character. The command to package_stage happens to be
+  # one of these commands, where double-quotes appear in certain ACDEFINES values.
   # This turns a jarlog path like "Z:\task..." into "Z:task", which fails.
   # Switching the backslashes for forward slashes works around the issue.
   JARLOG_FILE_AB_CD = $(subst \,/,$(PGO_JARLOG_PATH))
