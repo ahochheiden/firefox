@@ -662,17 +662,32 @@ def FlagsFactory(flags):
     """Returns a class which holds optional flags for an item in a list.
 
     The flags are defined in the dict given as argument, where keys are
-    the flag names, and values the type used for the value of that flag.
+    the flag names, and values either the type used for the value of that
+    flag, or a ``(type, default)`` tuple. Without a default, a flag starts
+    out as the type called with no arguments.
 
     The resulting class is used by the various <TypeName>WithFlagsFactory
     functions below.
     """
     assert isinstance(flags, dict)
-    assert all(isinstance(v, type) for v in flags.values())
+
+    types = {}
+    defaults = {}
+    for name, flag in flags.items():
+        if isinstance(flag, tuple):
+            flag_type, default = flag
+            assert isinstance(flag_type, type)
+            assert isinstance(default, flag_type)
+            defaults[name] = default
+        else:
+            flag_type = flag
+            assert isinstance(flag_type, type)
+        types[name] = flag_type
 
     class Flags:
-        __slots__ = flags.keys()
-        _flags = flags
+        __slots__ = types.keys()
+        _flags = types
+        _defaults = defaults
 
         def update(self, **kwargs):
             for k, v in kwargs.items():
@@ -681,26 +696,27 @@ def FlagsFactory(flags):
         def __getattr__(self, name):
             if name not in self.__slots__:
                 raise AttributeError(
-                    "'%s' object has no attribute '%s'"
-                    % (self.__class__.__name__, name)
+                    f"'{self.__class__.__name__}' object has no attribute '{name}'"
                 )
             try:
                 return object.__getattr__(self, name)
             except AttributeError:
-                value = self._flags[name]()
+                if name in self._defaults:
+                    value = copy.deepcopy(self._defaults[name])
+                else:
+                    value = self._flags[name]()
                 self.__setattr__(name, value)
                 return value
 
         def __setattr__(self, name, value):
             if name not in self.__slots__:
                 raise AttributeError(
-                    "'%s' object has no attribute '%s'"
-                    % (self.__class__.__name__, name)
+                    f"'{self.__class__.__name__}' object has no attribute '{name}'"
                 )
             if not isinstance(value, self._flags[name]):
                 raise TypeError(
-                    "'%s' attribute of class '%s' must be '%s'"
-                    % (name, self.__class__.__name__, self._flags[name].__name__)
+                    f"'{name}' attribute of class '{self.__class__.__name__}' "
+                    f"must be '{self._flags[name].__name__}'"
                 )
             return object.__setattr__(self, name, value)
 
@@ -723,7 +739,8 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
     flags on each item.
 
     The flags are defined in the dict given as argument, where keys are
-    the flag names, and values the type used for the value of that flag.
+    the flag names, and values either the type used for the value of that
+    flag, or a ``(type, default)`` tuple.
 
     Example:
 

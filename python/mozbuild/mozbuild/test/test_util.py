@@ -17,6 +17,7 @@ from mozunit import main
 from mozbuild.util import (
     EnumString,
     EnumStringComparisonError,
+    FlagsFactory,
     ForwardingArgumentParser,
     HierarchicalStringList,
     MozbuildDeletionError,
@@ -440,6 +441,76 @@ class TestStrictOrderingOnAppendListWithAction(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             l += "abc"
+
+
+class TestFlagsFactoryDefaults(unittest.TestCase):
+    def test_default_from_type(self):
+        Flags = FlagsFactory({"foo": bool, "bar": str, "baz": list})
+        flags = Flags()
+
+        self.assertEqual(flags.foo, False)
+        self.assertEqual(flags.bar, "")
+        self.assertEqual(flags.baz, [])
+
+    def test_default(self):
+        Flags = FlagsFactory({"foo": (bool, True), "bar": (str, "qux")})
+        flags = Flags()
+
+        self.assertEqual(flags.foo, True)
+        self.assertEqual(flags.bar, "qux")
+
+    def test_default_override(self):
+        Flags = FlagsFactory({"foo": (bool, True)})
+        flags = Flags()
+        flags.foo = False
+
+        self.assertEqual(flags.foo, False)
+
+    def test_default_assignment_type(self):
+        Flags = FlagsFactory({"foo": (bool, True)})
+        flags = Flags()
+
+        with self.assertRaises(TypeError):
+            flags.foo = "not a bool"
+
+    def test_default_wrong_type(self):
+        with self.assertRaises(AssertionError):
+            FlagsFactory({"foo": (bool, "not a bool")})
+
+    def test_default_mutable_not_shared(self):
+        Flags = FlagsFactory({"foo": (list, ["a"])})
+        first = Flags()
+        second = Flags()
+
+        first.foo.append("b")
+
+        self.assertEqual(first.foo, ["a", "b"])
+        self.assertEqual(second.foo, ["a"])
+
+    def test_default_mutable_not_mutated(self):
+        default = ["a"]
+        Flags = FlagsFactory({"foo": (list, default)})
+        Flags().foo.append("b")
+
+        self.assertEqual(default, ["a"])
+
+
+class TestStrictOrderingOnAppendListWithFlagsFactoryDefaults(unittest.TestCase):
+    def test_default_per_item(self):
+        cls = StrictOrderingOnAppendListWithFlagsFactory({
+            "foo": (bool, True),
+            "bar": (list, []),
+        })
+        l = cls()
+        l += ["a", "b"]
+
+        self.assertEqual(l["a"].foo, True)
+        self.assertEqual(l["b"].foo, True)
+
+        l["a"].bar.append("x")
+
+        self.assertEqual(l["a"].bar, ["x"])
+        self.assertEqual(l["b"].bar, [])
 
 
 class TestStrictOrderingOnAppendListWithFlagsFactory(unittest.TestCase):
