@@ -1,0 +1,11 @@
+# Any copyright is dedicated to the Public Domain.
+# http://creativecommons.org/publicdomain/zero/1.0/
+
+GENERATED_FILES += ["consumer.stamp"]
+
+consumer = GENERATED_FILES["consumer.stamp"]
+consumer.script = "gen.py"
+consumer.extra_deps = [
+    "!/python/mozbuild/mozbuild/test/backend/data/build/nondefault-producer/producer.stamp"
+]
+consumer.default_target = False

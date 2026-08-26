@@ -5,6 +5,7 @@
 import os
 import shutil
 import sys
+import time
 import unittest
 from contextlib import contextmanager
 from tempfile import mkdtemp
@@ -114,6 +115,142 @@ class TestBuild(unittest.TestCase):
                 )
 
             self.validate(config)
+
+    NONDEFAULT_DIR = "python/mozbuild/mozbuild/test/backend/data/build"
+
+    def _nondefault_stamp(self, config, role):
+        return mozpath.join(
+            config.topobjdir,
+            self.NONDEFAULT_DIR,
+            f"nondefault-{role}",
+            f"{role}.stamp",
+        )
+
+    def _nondefault_runs(self, config, role):
+        """How many times a generator ran.
+
+        Counted from a side effect rather than a timestamp, because a whole
+        build here takes less time than the resolution Make compares at.
+        """
+        runs = self._nondefault_stamp(config, role) + ".runs"
+        if not os.path.exists(runs):
+            return 0
+        with open(runs) as fh:
+            return len(fh.readlines())
+
+    def _nondefault_stub(self, config, role):
+        return mozpath.join(
+            config.topobjdir,
+            self.NONDEFAULT_DIR,
+            f"nondefault-{role}",
+            ".deps",
+            f"{role}.stamp.stub",
+        )
+
+    def _age_nondefault(self, config):
+        """Move the built artifacts into the past, producer before consumer.
+
+        A whole build here takes less time than the resolution Make compares
+        timestamps at, so without this a rebuilt file can look no newer than
+        the one that consumed it. Ageing the producer further back than the
+        consumer also makes "the producer ran but its output did not change"
+        distinguishable from "its output changed".
+        """
+        now = time.time()
+        for role, age in (("producer", 20), ("consumer", 10)):
+            for path in (
+                self._nondefault_stamp(config, role),
+                self._nondefault_stub(config, role),
+            ):
+                os.utime(path, (now - age, now - age))
+
+    def _make_nondefault_consumer(self, build, config):
+        with self.line_handler() as handle_make_line:
+            build._run_make(
+                directory=config.topobjdir,
+                target=[
+                    "install_manifest_depends=",
+                    "TEST_MOZBUILD=1",
+                    mozpath.join(
+                        self.NONDEFAULT_DIR, "nondefault-consumer/consumer.stamp"
+                    ),
+                ],
+                silent=False,
+                line_handler=handle_make_line,
+            )
+
+    def test_generated_files_default_target_on_request(self):
+        substs = list(BASE_SUBSTS)
+        with self.do_test_backend(RecursiveMakeBackend, substs=substs) as config:
+            build = MozbuildObject(config.topsrcdir, None, None, config.topobjdir)
+            build._config_environment = config
+            producer_input = mozpath.join(
+                config.topobjdir,
+                self.NONDEFAULT_DIR,
+                "nondefault-producer/producer-input",
+            )
+            os.makedirs(os.path.dirname(producer_input), exist_ok=True)
+            with open(producer_input, "w", newline="") as fh:
+                fh.write("first\n")
+
+            def runs():
+                return tuple(
+                    self._nondefault_runs(config, w) for w in ("producer", "consumer")
+                )
+
+            # Requesting the consumer builds the producer first.
+            self._make_nondefault_consumer(build, config)
+
+            for role in ("producer", "consumer"):
+                self.assertTrue(
+                    os.path.exists(self._nondefault_stamp(config, role)), role
+                )
+            with open(self._nondefault_stamp(config, "producer")) as fh:
+                self.assertEqual(fh.read(), "first\n")
+            self.assertEqual(runs(), (1, 1))
+
+            # Asking again runs neither generator.
+            self._make_nondefault_consumer(build, config)
+            self.assertEqual(runs(), (1, 1))
+
+            # A changed producer input rebuilds both.
+            self._age_nondefault(config)
+            with open(producer_input, "w", newline="") as fh:
+                fh.write("second\n")
+            self._make_nondefault_consumer(build, config)
+
+            with open(self._nondefault_stamp(config, "producer")) as fh:
+                self.assertEqual(fh.read(), "second\n")
+            self.assertEqual(runs(), (2, 2))
+
+            # A producer run that leaves its output unchanged does not
+            # rebuild the consumer.
+            self._age_nondefault(config)
+            os.utime(producer_input)
+            self._make_nondefault_consumer(build, config)
+            self.assertEqual(runs(), (3, 2))
+
+    def test_generated_files_default_target_not_built(self):
+        substs = list(BASE_SUBSTS)
+        with self.do_test_backend(RecursiveMakeBackend, substs=substs) as config:
+            build = MozbuildObject(config.topsrcdir, None, None, config.topobjdir)
+            build._config_environment = config
+
+            with self.line_handler() as handle_make_line:
+                build._run_make(
+                    directory=config.topobjdir,
+                    target=[
+                        "install_manifest_depends=",
+                        "TEST_MOZBUILD=1",
+                    ],
+                    silent=False,
+                    line_handler=handle_make_line,
+                )
+
+            for role in ("producer", "consumer"):
+                self.assertFalse(
+                    os.path.exists(self._nondefault_stamp(config, role)), role
+                )
 
     def test_faster_recursive_make(self):
         substs = list(BASE_SUBSTS) + [
