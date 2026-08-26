@@ -1963,6 +1963,7 @@ class TreeMetadataEmitter(LoggingMixin):
                         for f in (outputs if isinstance(outputs, tuple) else (outputs,))
                         if links_against(f)
                     ),
+                    default_target=flags.default_target,
                 )
 
     def _process_test_manifests(self, context):

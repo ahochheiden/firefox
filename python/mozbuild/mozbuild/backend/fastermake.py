@@ -133,6 +133,8 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
                     self._generated_files_map[
                         mozpath.relpath(fullpath, self.environment.topobjdir)
                     ] = first_output
+            if not obj.default_target:
+                return False
             self._generated_files.append(obj)
             return False
 

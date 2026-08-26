@@ -50,6 +50,15 @@ class TestFasterMakeBackend(BackendTester):
             ["foo/a/config.json", "foo/a/x.js", "foo/b/config.json", "foo/b/y.js"],
         )
 
+    def test_generated_files_default_target(self):
+        env = self._consume("generated-files-default-target", FasterMakeBackend)
+
+        with open(mozpath.join(env.topobjdir, "faster", "Makefile")) as fh:
+            lines = [l.rstrip() for l in fh]
+        self.assertIn("default: $(TOPOBJDIR)/$(MDDEPDIR)/foo.c.stub", lines)
+        self.assertEqual([l for l in lines if "bar.c" in l], [])
+        self.assertIn("install-dist/bin: $(TOPOBJDIR)/baz.js", lines)
+
 
 class TestJarLocaleConstraint(BackendTester):
     """A `locales translated:` section reaches the backend only for a repack."""

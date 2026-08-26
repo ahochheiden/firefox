@@ -557,10 +557,11 @@ class RecursiveMakeBackend(MakeBackend):
                 tier = "pre-compile"
             else:
                 tier = "misc"
-            if tier == "pre-compile":
-                self._pre_compile.add(obj.relobjdir)
-            else:
-                self._no_skip[tier].add(obj.relobjdir)
+            if obj.default_target:
+                if tier == "pre-compile":
+                    self._pre_compile.add(obj.relobjdir)
+                else:
+                    self._no_skip[tier].add(obj.relobjdir)
             backend_file.write_once("include $(topsrcdir)/config/AB_rCD.mk\n")
             reldir = mozpath.relpath(obj.objdir, backend_file.objdir)
             if not reldir:
@@ -583,6 +584,8 @@ class RecursiveMakeBackend(MakeBackend):
             # For the others, we want a `tier` target.
             if tier != "pre-compile" and reldir:
                 tier = "%s/%s" % (reldir, tier)
+            if not obj.default_target:
+                tier = None
             for stmt in self._format_statements_for_generated_file(
                 obj, tier, extra_dependencies="backend.mk" if obj.flags else ""
             ):

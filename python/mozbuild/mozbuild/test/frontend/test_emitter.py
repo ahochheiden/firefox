@@ -551,6 +551,15 @@ class TestEmitterBasic(unittest.TestCase):
             self.assertIsInstance(o, GeneratedFile)
             self.assertEqual(o.force, "bar.c" in o.outputs)
 
+    def test_generated_files_default_target(self):
+        reader = self.reader("generated-files-default-target")
+        objs = self.read_topsrcdir(reader)
+
+        self.assertEqual(len(objs), 3)
+        for o in objs:
+            self.assertIsInstance(o, GeneratedFile)
+            self.assertEqual(o.default_target, "bar.c" not in o.outputs)
+
     def test_localized_generated_files(self):
         reader = self.reader("localized-generated-files")
         objs = self.read_topsrcdir(reader)

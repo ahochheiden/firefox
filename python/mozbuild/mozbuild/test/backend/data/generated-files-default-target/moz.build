@@ -1,0 +1,19 @@
+# Any copyright is dedicated to the Public Domain.
+# http://creativecommons.org/publicdomain/zero/1.0/
+
+GENERATED_FILES += ["bar.c", "foo.c"]
+
+bar = GENERATED_FILES["bar.c"]
+bar.script = "generate-bar.py"
+bar.default_target = False
+
+foo = GENERATED_FILES["foo.c"]
+foo.script = "generate-foo.py"
+
+GENERATED_FILES += [("baz.js", "qux.js")]
+
+baz = GENERATED_FILES[("baz.js", "qux.js")]
+baz.script = "generate-bar.py"
+baz.default_target = False
+
+FINAL_TARGET_FILES += ["!qux.js"]

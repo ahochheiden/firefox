@@ -1515,6 +1515,7 @@ class GeneratedFile(ContextDerived):
         "required_during_compile",
         "localized",
         "force",
+        "default_target",
     )
 
     def __init__(
@@ -1529,6 +1530,7 @@ class GeneratedFile(ContextDerived):
         force=False,
         required_during_compile=None,
         extra_deps=(),
+        default_target=True,
     ):
         ContextDerived.__init__(self, context)
         self.script = script
@@ -1539,6 +1541,7 @@ class GeneratedFile(ContextDerived):
         self.extra_deps = extra_deps
         self.localized = localized
         self.force = force
+        self.default_target = default_target
 
         if self.config.substs.get("MOZ_WIDGET_TOOLKIT") == "android":
             # In GeckoView builds, the gradle build is done during export to

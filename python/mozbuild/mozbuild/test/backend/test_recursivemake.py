@@ -532,6 +532,26 @@ class TestRecursiveMakeBackend(BackendTester):
         lines = [l.strip() for l in open(root_deps_path).readlines()]
         self.assertIn("consumer/pre-compile: producer/pre-compile", lines)
 
+    def test_generated_files_default_target(self):
+        env = self._consume("generated-files-default-target", RecursiveMakeBackend)
+
+        backend_path = mozpath.join(env.topobjdir, "backend.mk")
+        lines = [
+            l.strip()
+            for l in open(backend_path).readlines()[2:]
+            if not l.startswith("#")
+        ]
+
+        tier_lines = [l for l in lines if "_TARGETS +=" in l]
+
+        # The output that is not a default target still has a rule, so it can
+        # be requested by name.
+        self.assertIn("bar.c: $(MDDEPDIR)/bar.c.stub ;", lines)
+        # It is not added to any tier's target list.
+        self.assertEqual([l for l in tier_lines if "bar.c.stub" in l], [])
+        # Everything else keeps its tier attachment.
+        self.assertEqual(len([l for l in tier_lines if "foo.c.stub" in l]), 1)
+
     def test_generated_files_force(self):
         """Ensure GENERATED_FILES with .force is handled properly."""
         env = self._consume("generated-files-force", RecursiveMakeBackend)
