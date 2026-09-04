@@ -39,6 +39,16 @@ class JarSection:
     chrome_manifests: tuple[str, ...]
 
 
+def jar_manifest_defines(context):
+    """The defines a jar manifest is preprocessed with.
+
+    A configured define wins over one that the declaring `moz.build` sets, and
+    a define set to False is absent, as it is on a preprocessor command line.
+    """
+    defines = {**(context.get("DEFINES") or {}), **context.config.defines}
+    return {name: value for name, value in defines.items() if value is not False}
+
+
 def parse_jar_manifest(path, defines, ab_cd):
     """Read a jar manifest and return its sections with every file that was read.
 
