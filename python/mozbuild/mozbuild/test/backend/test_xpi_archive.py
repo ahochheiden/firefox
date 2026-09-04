@@ -24,6 +24,60 @@ class TestXPIArchiveEdge(BackendTester):
         with open(mozpath.join(env.topobjdir, "root-deps.mk")) as fh:
             return env, [l.rstrip() for l in fh.readlines()]
 
+    def test_the_archive_is_declared_where_its_input_is_produced(self):
+        """A directory fragment cannot reach the rule making the track."""
+        _, lines = self._root_deps("xpi-archive")
+        body = "\n".join(lines)
+
+        self.assertIn("py_action,xpi_archive testext@example.com", body)
+        self.assertIn("--prefix testext ", body)
+        self.assertIn("dist/xpi-stage/testext@example.com.xpi", body)
+
+    def test_the_archive_is_a_target_of_what_was_installed(self):
+        """A recipe on a tier would run whether or not the install changed."""
+        _, lines = self._root_deps("xpi-archive")
+
+        self.assertIn(
+            "$(DEPTH)/dist/xpi-stage/testext@example.com.xpi: "
+            "$(DEPTH)/install_dist_xpi-stage.track",
+            lines,
+        )
+        self.assertIn(
+            "$(DEPTH)/install_dist_xpi-stage.track: install-dist/xpi-stage ;", lines
+        )
+        self.assertIn(
+            "recurse_tools: $(DEPTH)/dist/xpi-stage/testext@example.com.xpi", lines
+        )
+        self.assertIn(
+            "-include $(MDDEPDIR)/xpi/dist/xpi-stage/testext@example.com.xpi.pp",
+            lines,
+        )
+
+    def test_nothing_about_the_archive_is_left_in_the_directory(self):
+        """The rule and the track it reads have to be read together."""
+        env = self._consume("xpi-archive", RecursiveMakeBackend)
+
+        with open(mozpath.join(env.topobjdir, "backend.mk")) as fh:
+            body = fh.read()
+
+        self.assertNotIn("xpi_archive", body)
+
+    def test_archives_of_one_name_keep_their_own_dependencies(self):
+        _, lines = self._root_deps("xpi-archive-same-name")
+        depfiles = sorted(
+            l.split()[1] for l in lines if l.startswith("-include $(MDDEPDIR)/")
+        )
+
+        self.assertEqual(len(depfiles), len(set(depfiles)))
+        self.assertEqual(
+            depfiles,
+            [
+                "$(MDDEPDIR)/xpi/_tests/somewhere/shared.xpi.pp",
+                "$(MDDEPDIR)/xpi/_tests/somewhere/sub_shared.xpi.pp",
+                "$(MDDEPDIR)/xpi/dist/xpi-stage/shared.xpi.pp",
+            ],
+        )
+
     def test_a_built_file_staged_for_an_archive_is_copied_from_the_top_level_makefile(
         self,
     ):
@@ -62,6 +116,17 @@ class TestXPIArchiveEdge(BackendTester):
             },
         )
 
+    def test_the_archive_depends_on_a_built_file_staged_for_it(self):
+        """The track records the destination, but a separate install puts the
+        file there, so the archive depends on that install as well.
+        """
+        _, lines = self._root_deps("xpi-archive-generated")
+
+        rule = [l for l in lines if l.startswith("$(DEPTH)/dist/xpi-stage/genext.xpi:")]
+        self.assertEqual(len(rule), 1)
+        self.assertIn("$(DEPTH)/install_dist_xpi-stage.track", rule[0])
+        self.assertIn(f"{STAGED}.track", rule[0])
+
     def test_a_renamed_built_file_staged_for_an_archive_is_recorded(self):
         """The file list comes from the track, so a copy the install does not
         make still has to be recorded there, whatever name it is copied under.
@@ -96,6 +161,7 @@ class TestXPIArchiveEdge(BackendTester):
         )
         rule = [l for l in lines if l.startswith("recurse_misc:")]
         self.assertTrue(any(f"{staged}.track" in l for l in rule))
+        self.assertFalse(any("stageonly.xpi:" in l for l in lines))
 
     def test_nothing_else_installs_a_staged_built_file(self):
         """Two installs writing one destination is a race, not a fallback."""
@@ -113,6 +179,37 @@ class TestXPIArchiveEdge(BackendTester):
     def test_a_staged_built_file_needs_a_top_level_rule(self):
         with self.assertRaisesRegex(Exception, "is copied from staged/made.inc"):
             self._consume("xpi-stage-compile-output", RecursiveMakeBackend)
+
+    def test_a_test_destination_puts_the_archive_where_it_is_read(self):
+        """`XPI_TESTDIR` names somewhere other than beside the staging area."""
+        _, lines = self._root_deps("xpi-archive-testdir")
+
+        self.assertIn(
+            "$(DEPTH)/_tests/somewhere/testext.xpi: "
+            "$(DEPTH)/install_dist_xpi-stage.track",
+            lines,
+        )
+        self.assertIn("--prefix testext-staged ", "\n".join(lines))
+
+    def test_a_test_destination_archive_belongs_to_the_misc_tier(self):
+        """A test archive is read by a test run, which can follow a misc build."""
+        _, lines = self._root_deps("xpi-archive-testdir")
+
+        self.assertIn("recurse_misc: $(DEPTH)/_tests/somewhere/testext.xpi", lines)
+        self.assertFalse(
+            any("testext.xpi" in l for l in lines if l.startswith("recurse_tools:"))
+        )
+
+    def test_a_preprocessed_install_is_part_of_the_archive(self):
+        """The reason the file list comes from the track rather than the tree."""
+        env = self._consume("xpi-archive", RecursiveMakeBackend)
+        m = InstallManifest(
+            path=mozpath.join(
+                env.topobjdir, "_build_manifests", "install", "dist_xpi-stage"
+            )
+        )
+
+        self.assertIn("testext/generated.js", m)
 
 
 if __name__ == "__main__":
