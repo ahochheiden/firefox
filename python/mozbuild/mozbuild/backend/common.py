@@ -215,6 +215,7 @@ class CommonBackend(BuildBackend):
         self._generated_sources = set()
         self._l10n_manifest_data = []
         self._licenses = LicenseCollection()
+        self._staged_objdir_installs = defaultdict(list)
         self._computed_flags = defaultdict(list)
         # Collect Rust edges until all per directory flags are available.
         self._rust_libraries_for_spec = []
@@ -490,6 +491,18 @@ class CommonBackend(BuildBackend):
             json.dump(
                 {"licenses": self._licenses.records()}, fh, sort_keys=True, indent=2
             )
+
+    def _record_staged_objdir_install(self, obj, source, dest):
+        """Record a built file copied into an extension staging area.
+
+        The install manifest cannot carry it, so the copy is a rule of its own
+        that the archive packaging the staging area depends on. ``source`` and
+        ``dest`` are relative to the object directory.
+        """
+        if mozpath.basedir(obj.install_target, ("dist/xpi-stage",)) is None:
+            return False
+        self._staged_objdir_installs[obj.install_target].append((source, dest))
+        return True
 
     def consume_finished(self):
         if len(self._idl_manager.modules):

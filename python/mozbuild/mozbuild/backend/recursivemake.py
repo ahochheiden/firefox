@@ -1033,6 +1033,8 @@ class RecursiveMakeBackend(MakeBackend):
             )
             rule.add_commands(commands)
 
+        self._add_staged_objdir_rules(root_deps_mk)
+
         # Wrapper rules for the faster backend's underscored targets.
         for manifest in install_manifests:
             if not manifest.startswith("dist/"):
@@ -1052,6 +1054,30 @@ class RecursiveMakeBackend(MakeBackend):
             mozpath.join(self.environment.topobjdir, "root-deps.mk")
         ) as root_deps:
             root_deps_mk.dump(root_deps, removal_guard=False)
+
+    def _add_staged_objdir_rules(self, root_deps_mk):
+        """Declare root-level installs of built files into XPI staging areas."""
+        tracks = []
+        for stage, installs in sorted(self._staged_objdir_installs.items()):
+            manifest = self._built_install_manifests[stage]
+            rule = root_deps_mk.create_rule([self._built_install_track(stage)])
+            rule.add_dependencies([self._built_install_manifest_path(stage)])
+            for source, dest in sorted(installs):
+                produced = mozpath.join(self.environment.topobjdir, source)
+                if produced not in self._root_generated_outputs:
+                    raise Exception(
+                        f"{dest} is copied from {source}, which has no rule in "
+                        "the top level backend file. The copy runs from the top "
+                        "level Makefile, so it can only read a GENERATED_FILES "
+                        "output that nothing links against."
+                    )
+                manifest.add_link(produced, dest)
+                rule.add_dependencies([mozpath.join("$(DEPTH)", source)])
+            rule.add_commands([self._built_install_command(stage), "@$(TOUCH) $@"])
+            tracks.append(self._built_install_track(stage))
+
+        if tracks:
+            root_deps_mk.create_rule(["recurse_misc"]).add_dependencies(tracks)
 
     def _add_unified_build_rules(
         self,
@@ -1852,11 +1878,12 @@ class RecursiveMakeBackend(MakeBackend):
                         absolute_files.append(f.full_path)
                     else:
                         install_manifest.add_link(f.full_path, dest_file)
-                elif f.target_basename != mozpath.basename(f.full_path):
-                    renamed_objdir_files.append(f)
                 else:
                     install_manifest.add_optional_exists(dest_file)
-                    objdir_files.append(f)
+                    if f.target_basename != mozpath.basename(f.full_path):
+                        renamed_objdir_files.append(f)
+                    else:
+                        objdir_files.append(f)
             install_location = "$(DEPTH)/%s" % mozpath.join(target, subpath)
             if objdir_files:
                 if obj.install_target == "dist/include":
@@ -1877,13 +1904,15 @@ class RecursiveMakeBackend(MakeBackend):
                         tier = (
                             "libs" if f.target_basename == "multilocale.txt" else "misc"
                         )
-                        dest = mozpath.join(target, subpath, f.target_basename)
-                        self._add_objdir_install_target(backend_file, tier, f, dest)
+                        self._add_built_file_install(
+                            obj, backend_file, tier, f, target, subpath
+                        )
             if renamed_objdir_files:
                 tier = "export" if obj.install_target == "dist/include" else "misc"
                 for f in renamed_objdir_files:
-                    dest = mozpath.join(target, subpath, f.target_basename)
-                    self._add_objdir_install_target(backend_file, tier, f, dest)
+                    self._add_built_file_install(
+                        obj, backend_file, tier, f, target, subpath
+                    )
             if absolute_files:
                 # Unfortunately, we can't use _add_install_target because on
                 # Windows, the absolute file paths that we want to install
@@ -1906,6 +1935,20 @@ class RecursiveMakeBackend(MakeBackend):
                             % (basename, mozpath.join(install_location, basename))
                         )
                 backend_file.write("misc::\n%s\n" % "\n".join(rules))
+
+    def _add_built_file_install(self, obj, backend_file, tier, f, target, subpath):
+        """Install a built file from the directory that builds it.
+
+        A copy into an extension staging area is recorded for the top level
+        Makefile instead, where the archive packaging that area can depend on
+        it.
+        """
+        dest = mozpath.join(target, subpath, f.target_basename)
+        if self._record_staged_objdir_install(
+            obj, mozpath.relpath(f.full_path, self.environment.topobjdir), dest
+        ):
+            return
+        self._add_objdir_install_target(backend_file, tier, f, dest)
 
     def _process_installed_pp_files(self, obj, files):
         """Install preprocessed files through the manifest installing the rest.
