@@ -10,8 +10,9 @@ The l10n manifest is written during configure to
 All data structures of interest are children of the L10nManifest
 class.
 
-jar.mn entries are captured with AB_CD=MOZ_L10N_AB_CD_PLACEHOLDER
-so the manifest stays locale-independent, and are resolved during staging.
+jar.mn entries are captured with the locale placeholder unresolved so the
+manifest is independent of any one locale, and each locale resolves them
+during staging.
 """
 
 from __future__ import annotations
@@ -27,7 +28,6 @@ import mozpack.path as mozpath
 from mozbuild.frontend.context import SourcePath
 from mozbuild.frontend.data import ContextDerived
 from mozbuild.frontend.jar_manifest import (
-    JarEntry,
     JarSection,
     jar_manifest_defines,
     parse_jar_manifest,
@@ -35,7 +35,6 @@ from mozbuild.frontend.jar_manifest import (
 from mozbuild.frontend.reader import SandboxValidationError
 
 MANIFEST_VERSION = 2
-MOZ_L10N_AB_CD_PLACEHOLDER = "MOZ_L10N_AB_CD_PLACEHOLDER"
 
 
 def locale_pp_placeholder(name: str) -> str:
@@ -89,6 +88,16 @@ class L10nManifestContextData:
     localized_pp_files: list[LocalizedFileGroup] = field(default_factory=list)
     localized_generated_files: list[LocalizedGenScript] = field(default_factory=list)
 
+    def to_dict(self):
+        """The context as the l10n manifest carries it.
+
+        A locale template is carried as the text it holds, so the jar parts are
+        written by the model rather than by walking the dataclasses.
+        """
+        raw = asdict(self)
+        raw["jar_sections"] = [section.to_dict() for section in self.jar_sections]
+        return raw
+
 
 @dataclass
 class L10nManifest:
@@ -105,7 +114,14 @@ class L10nManifest:
 def write_l10n_manifest(manifest: L10nManifest, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(asdict(manifest), f, indent=2, sort_keys=True)
+        json.dump(_manifest_to_dict(manifest), f, indent=2, sort_keys=True)
+
+
+def _manifest_to_dict(manifest: L10nManifest) -> dict:
+    """The manifest as JSON."""
+    raw = asdict(manifest)
+    raw["contexts"] = [context.to_dict() for context in manifest.contexts]
+    return raw
 
 
 def load_l10n_manifest(path: Path) -> L10nManifest:
@@ -123,17 +139,7 @@ def load_l10n_manifest(path: Path) -> L10nManifest:
             install_subdir=c["install_subdir"],
             defines=c["defines"],
             locale_pp_defines=c["locale_pp_defines"],
-            jar_sections=[
-                JarSection(
-                    name=s["name"],
-                    base=s["base"],
-                    relativesrcdir=s["relativesrcdir"],
-                    entries=tuple(JarEntry(**e) for e in s["entries"]),
-                    chrome_manifests=tuple(s["chrome_manifests"]),
-                    locales=s["locales"],
-                )
-                for s in c["jar_sections"]
-            ],
+            jar_sections=[JarSection.from_dict(s) for s in c["jar_sections"]],
             localized_files=[LocalizedFileGroup(**g) for g in c["localized_files"]],
             localized_pp_files=[
                 LocalizedFileGroup(**g) for g in c["localized_pp_files"]
@@ -321,8 +327,8 @@ def _extract_jar_sections(context, path) -> Iterator[JarSection]:
     least one locale entry, a locale-marked chrome.manifest line, or a
     [localization] block.
 
-    Runs the preprocessor with AB_CD=MOZ_L10N_AB_CD_PLACEHOLDER so
-    locale substitution is deferred to stage time.
+    The model is not tied to a locale, so a section is captured as declared and
+    each locale resolves it at stage time.
 
     When LOCALE_PP_DEFINES is set, runs the preprocessor twice. The
     first pass leaves the defines unset (capturing #else branches);
@@ -347,7 +353,7 @@ def _is_locale_aware(entry) -> bool:
     """
     if entry.is_locale:
         return True
-    src = entry.source or ""
+    src = entry.source.text
     return src.startswith("en-US/") or "/locales/en-US/" in src
 
 
@@ -360,9 +366,7 @@ def _run_jar_pp(
     defines = jar_manifest_defines(context)
     if locale_pp_overrides:
         defines.update(locale_pp_overrides)
-    sections, inputs = parse_jar_manifest(
-        path.full_path, defines, MOZ_L10N_AB_CD_PLACEHOLDER
-    )
+    sections, inputs = parse_jar_manifest(path.full_path, defines)
     # Reading the manifest happens outside the sandbox, and a section this
     # locale skips yields nothing that would record it, so the paths it read
     # are recorded on the context the l10n object is derived from.
@@ -372,7 +376,7 @@ def _run_jar_pp(
     for jarinfo in sections:
         has_locale_aware_entry = any(_is_locale_aware(e) for e in jarinfo.entries)
         has_locale_manifest = any(
-            m.lstrip().startswith("locale ") for m in jarinfo.chrome_manifests
+            m.text.lstrip().startswith("locale ") for m in jarinfo.chrome_manifests
         )
         if not (has_locale_aware_entry or has_locale_manifest):
             continue
