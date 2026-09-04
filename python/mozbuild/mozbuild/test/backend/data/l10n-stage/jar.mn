@@ -13,8 +13,6 @@ browser.jar:
   locale/@AB_CD@/testing/ios.svg            (en-US/ios.svg)
 #endif
 
-#define EN_US en-US
-#if AB_CD != EN_US
 [localization] @AB_CD@.jar:
+locales translated:
   testing/extra                             (%extra.ftl)
-#endif

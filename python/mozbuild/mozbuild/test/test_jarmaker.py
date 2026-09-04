@@ -309,6 +309,25 @@ class TestJarMaker(unittest.TestCase):
         open(os.path.join(refpath, "hoge", "foo", "2"), "w").write("2\n")
         open(os.path.join(refpath, "hoge", "baz"), "w").write("baz\n")
 
+    def test_locales_translated(self):
+        with open(os.path.join(self.srcdir, "jar.mn"), "w") as fh:
+            fh.write("test.jar:\nlocales translated:\n dir/foo (bar)\n")
+        with open(os.path.join(self.srcdir, "bar"), "w") as fh:
+            fh.write("content\n")
+
+        for ab_cd, built in (("en-US", False), ("de", True)):
+            builddir = os.path.join(self.tmpdir, ab_cd)
+            jm = JarMaker(outputFormat="flat")
+            jm.sourcedirs = [self.srcdir]
+            jm.topsourcedir = self.srcdir
+            jm.pp.context["AB_CD"] = ab_cd
+            jm.makeJar(os.path.join(self.srcdir, "jar.mn"), builddir)
+
+            self.assertEqual(
+                os.path.exists(os.path.join(builddir, "chrome", "test", "dir", "foo")),
+                built,
+            )
+
     def test_a_wildcard_jar(self):
         """Test a wildcard in jar.mn"""
         self._create_wildcard_setup()

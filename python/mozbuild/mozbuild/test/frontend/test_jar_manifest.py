@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import dataclasses
 import os
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ import mozpack.path as mozpath
 import mozunit
 
 from mozbuild.frontend.jar_manifest import parse_jar_manifest
+from mozbuild.jar import DeprecatedJarManifest
 
 MANIFEST = """\
 #filter substitution
@@ -108,6 +110,56 @@ class TestParseJarManifest(unittest.TestCase):
         outputs = [e.output for e in sections[0].entries]
 
         self.assertIn("content/browser/included.js", outputs)
+
+    def test_a_section_applies_to_every_locale_by_default(self):
+        sections, _ = self._parse()
+        section = sections[0]
+
+        self.assertEqual(section.locales, "all")
+        self.assertTrue(section.applies_to("en-US"))
+        self.assertTrue(section.applies_to("de"))
+
+    def test_a_translated_section_skips_the_source_locale(self):
+        body = MANIFEST.replace("browser.jar:", "browser.jar:\nlocales translated:", 1)
+        sections, _ = self._parse(body)
+        section = sections[0]
+
+        self.assertEqual(section.locales, "translated")
+        self.assertFalse(section.applies_to("en-US"))
+        self.assertTrue(section.applies_to("de"))
+
+    def test_the_constraint_survives_a_relativesrcdir_split(self):
+        """`relativesrcdir` starts a fresh section once entries exist, so the
+        constraint has to carry across the split it causes.
+        """
+        body = (
+            "#filter substitution\n"
+            "[localization] @AB_CD@.jar:\n"
+            "locales translated:\n"
+            "relativesrcdir toolkit/locales:\n"
+            "  toolkit/about   (%toolkit/about/aboutAbout.ftl)\n"
+            "relativesrcdir dom/locales:\n"
+            "  toolkit/dom     (%chrome/dom/dom.properties)\n"
+        )
+        sections, _ = self._parse(body)
+
+        self.assertEqual(len(sections), 2)
+        for section in sections:
+            self.assertEqual(section.locales, "translated")
+            self.assertFalse(section.applies_to("en-US"))
+
+    def test_the_constraint_must_precede_the_entries_it_governs(self):
+        body = MANIFEST + "locales translated:\n"
+
+        with self.assertRaisesRegex(DeprecatedJarManifest, "locales must come before"):
+            self._parse(body)
+
+    def test_applies_to_unknown_constraint(self):
+        sections, _ = self._parse()
+        section = dataclasses.replace(sections[0], locales="some")
+
+        with self.assertRaisesRegex(ValueError, "unknown locale constraint some"):
+            section.applies_to("de")
 
     def test_defines_reach_the_preprocessor(self):
         body = MANIFEST + "  content/browser/@THING@.js  (named.js)\n"

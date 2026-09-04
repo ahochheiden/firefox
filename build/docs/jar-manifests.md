@@ -117,6 +117,21 @@ If the `moz.build` specifies `USE_EXTENSION_MANIFEST = 1`, the `jar.mn` processo
 creates a single `chrome.manifest` file suitable for registering chrome as
 an extension.
 
+### Restricting a section to translated locales
+
+A section that only applies when repacking a locale says so, rather than
+comparing `AB_CD` in a preprocessor conditional:
+
+```
+[localization] @AB_CD@.jar:
+locales translated:
+relativesrcdir toolkit/locales:
+  toolkit/about  (%toolkit/about/*About.ftl)
+```
+
+`locales all:` is the default and does not need writing. The constraint has to
+appear before the entries it governs.
+
 ### Example
 
 The file {searchfox}`browser/themes/addons/jar.mn <mozilla-central/rev/5b2d2863bd315f232a3f769f76e0eb16cdca7cb0:browser/themes/addons/jar.mn>` registers a `resource` chrome package under the name `builtin-themes`. Its source files are in `%content/builtin-themes/`:

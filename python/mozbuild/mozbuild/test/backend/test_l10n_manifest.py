@@ -14,19 +14,19 @@ from mozbuild.test.backend.common import BackendTester
 
 
 class TestL10nManifestBackendIntegration(BackendTester):
-    def test_locale_pp_defines_in_manifest(self):
+    def _context(self):
         env = self._consume("l10n-manifest", RecursiveMakeBackend)
-
         manifest_path = mozpath.join(env.topobjdir, "l10n-manifest.json")
         self.assertTrue(os.path.exists(manifest_path), manifest_path)
-
         with open(manifest_path, encoding="utf-8") as f:
             raw = json.load(f)
-
         self.assertEqual(raw["version"], MANIFEST_VERSION)
         self.assertEqual(len(raw["contexts"]), 1)
+        return raw["contexts"][0]
 
-        ctx = raw["contexts"][0]
+    def test_locale_pp_defines_in_manifest(self):
+        ctx = self._context()
+
         self.assertEqual(
             ctx["locale_pp_defines"],
             {
@@ -37,10 +37,28 @@ class TestL10nManifestBackendIntegration(BackendTester):
                 },
             },
         )
-        self.assertEqual(ctx["jar_sections"], [])
-        self.assertEqual(ctx["localized_files"], [])
-        self.assertEqual(ctx["localized_pp_files"], [])
-        self.assertEqual(ctx["localized_generated_files"], [])
+
+    def test_a_section_records_its_locale_constraint(self):
+        ctx = self._context()
+
+        self.assertEqual(ctx["jar_sections"][0]["locales"], "all")
+
+    def test_a_translated_only_manifest_is_still_a_build_input(self):
+        """Every section is skipped for the source locale, so nothing else
+        records the manifest and editing it would not regenerate the backend.
+        """
+        env = self._get_environment(
+            "l10n-manifest-translated", srcdir_name="l10n-manifest-translated"
+        )
+        objs = self._emit("l10n-manifest-translated", env=env)[1]
+
+        recorded = set()
+        for obj in objs:
+            recorded |= {mozpath.normsep(p) for p in obj.context_all_paths}
+
+        srcdir = mozpath.normsep(env.topsrcdir)
+        self.assertIn(mozpath.join(srcdir, "jar.mn"), recorded)
+        self.assertIn(mozpath.join(srcdir, "included.inc"), recorded)
 
     def _written_contexts(self, config_name):
         env = self._get_environment(config_name, srcdir_name="l10n-manifest-roots")

@@ -69,12 +69,17 @@ class JarManifestEntry:
         self.preprocess = preprocess
 
 
+LOCALES_ALL = "all"
+LOCALES_TRANSLATED = "translated"
+
+
 class JarInfo:
     def __init__(self, base_or_jarinfo, name=None):
         if name is None:
             assert isinstance(base_or_jarinfo, JarInfo)
             self.base = base_or_jarinfo.base
             self.name = base_or_jarinfo.name
+            self.locales = base_or_jarinfo.locales
         else:
             assert not isinstance(base_or_jarinfo, JarInfo)
             self.base = base_or_jarinfo or ""
@@ -83,6 +88,7 @@ class JarInfo:
             # base, the jar name is under chrome/
             if not self.base:
                 self.name = mozpath.join("chrome", self.name)
+            self.locales = LOCALES_ALL
         self.relativesrcdir = None
         self.chrome_manifests = []
         self.entries = []
@@ -106,6 +112,7 @@ class JarManifestParser:
         re.VERBOSE,
     )
     relsrcline = re.compile(r"relativesrcdir\s+(?P<relativesrcdir>.+?):")
+    localesline = re.compile(r"locales\s+(?P<locales>all|translated):")
     regline = re.compile(r"%\s+(.*)$")
     entryre = r"(?P<optPreprocess>\*)?(?P<optOverwrite>\+?)\s+"
     entryline = re.compile(
@@ -154,6 +161,19 @@ class JarManifestParser:
                 self._current_jar = JarInfo(self._current_jar)
                 self._jars.append(self._current_jar)
             self._current_jar.relativesrcdir = m.group("relativesrcdir")
+            return
+
+        # - which locales the section applies to, in the following form:
+        # "locales <all|translated>:". It has to come before anything the
+        # section declares, because it decides whether they apply at all.
+        m = self.localesline.match(line)
+        if m:
+            if self._current_jar.chrome_manifests or self._current_jar.entries:
+                raise DeprecatedJarManifest(
+                    "locales must come before any chrome manifest or entry "
+                    "in this section"
+                )
+            self._current_jar.locales = m.group("locales")
             return
 
         # - chrome manifest entries, prefixed with "%".
@@ -329,6 +349,11 @@ class JarMaker:
         pp.do_include(infile)
 
         for info in pp.out:
+            if (
+                info.locales == LOCALES_TRANSLATED
+                and pp.context.get("AB_CD") == "en-US"
+            ):
+                continue
             self.processJarSection(info, jardir)
 
     def generateLocaleDirs(self, relativesrcdir):

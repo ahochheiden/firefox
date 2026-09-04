@@ -14,8 +14,16 @@ from __future__ import annotations
 import dataclasses
 from typing import Optional
 
-from mozbuild.jar import DeprecatedJarManifest, JarManifestParser
+from mozbuild.jar import (
+    LOCALES_ALL,
+    LOCALES_TRANSLATED,
+    DeprecatedJarManifest,
+    JarManifestParser,
+)
 from mozbuild.preprocessor import Preprocessor
+
+# The locale every localizable string is authored in.
+SOURCE_LOCALE = "en-US"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -37,6 +45,15 @@ class JarSection:
     relativesrcdir: Optional[str]
     entries: tuple[JarEntry, ...]
     chrome_manifests: tuple[str, ...]
+    locales: str = LOCALES_ALL
+
+    def applies_to(self, ab_cd: str) -> bool:
+        """Whether this section belongs in a build of ``ab_cd``."""
+        if self.locales == LOCALES_ALL:
+            return True
+        if self.locales == LOCALES_TRANSLATED:
+            return ab_cd != SOURCE_LOCALE
+        raise ValueError(f"unknown locale constraint {self.locales}")
 
 
 def jar_manifest_defines(context):
@@ -81,6 +98,7 @@ def parse_jar_manifest(path, defines, ab_cd):
                 for entry in jarinfo.entries
             ),
             chrome_manifests=tuple(jarinfo.chrome_manifests),
+            locales=jarinfo.locales,
         )
         for jarinfo in pp.out
     )

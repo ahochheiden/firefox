@@ -1,0 +1,7 @@
+#filter substitution
+browser.jar:
+  content/browser/always.txt        (always.txt)
+
+[localization] @AB_CD@.jar:
+locales translated:
+  testing/only.ftl                  (only.ftl)

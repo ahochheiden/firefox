@@ -130,6 +130,7 @@ def load_l10n_manifest(path: Path) -> L10nManifest:
                     relativesrcdir=s["relativesrcdir"],
                     entries=tuple(JarEntry(**e) for e in s["entries"]),
                     chrome_manifests=tuple(s["chrome_manifests"]),
+                    locales=s["locales"],
                 )
                 for s in c["jar_sections"]
             ],
@@ -362,7 +363,8 @@ def _run_jar_pp(
     sections, inputs = parse_jar_manifest(
         path.full_path, defines, MOZ_L10N_AB_CD_PLACEHOLDER
     )
-    # Reading the manifest happens outside the sandbox, so the paths it read
+    # Reading the manifest happens outside the sandbox, and a section this
+    # locale skips yields nothing that would record it, so the paths it read
     # are recorded on the context the l10n object is derived from.
     for read in inputs:
         context.add_source(mozpath.normsep(read))

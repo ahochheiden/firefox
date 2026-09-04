@@ -190,6 +190,8 @@ def _stage_context(state: StageState, context: L10nManifestContextData) -> None:
     !output references to the generated outputs.
     """
     for section in context.jar_sections:
+        if not section.applies_to(state.locale):
+            continue
         _stage_jar_section(state, context, section)
     if state.mode == "langpack":
         # LOCALIZED_GENERATED_FILES must run before LOCALIZED_FILES so their

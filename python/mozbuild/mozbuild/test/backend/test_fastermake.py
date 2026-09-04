@@ -38,5 +38,51 @@ class TestFasterMakeBackend(BackendTester):
         self.assertEqual(expected, actual)
 
 
+class TestJarLocaleConstraint(BackendTester):
+    """A `locales translated:` section reaches the backend only for a repack."""
+
+    def _install_manifests(self, locale):
+        env = self._get_environment(
+            "jar-locale-constraint", substs={"MOZ_UI_LOCALE": locale}
+        )
+        self._consume("jar-locale-constraint", FasterMakeBackend, env=env)
+        faster = mozpath.join(env.topobjdir, "faster")
+        return {
+            name: InstallManifest(path=mozpath.join(faster, name))
+            for name in os.listdir(faster)
+            if name.startswith("install_")
+        }
+
+    def _destinations(self, manifests, name):
+        if name not in manifests:
+            return []
+        reg = FileRegistry()
+        manifests[name].populate_registry(reg)
+        return sorted(path for path, _ in reg)
+
+    def test_the_unconstrained_section_is_present_for_the_source_locale(self):
+        manifests = self._install_manifests("en-US")
+
+        self.assertIn(
+            "chrome/browser/content/browser/always.txt",
+            self._destinations(manifests, "install_dist_bin"),
+        )
+
+    def test_the_constrained_section_is_absent_for_the_source_locale(self):
+        manifests = self._install_manifests("en-US")
+
+        self.assertEqual(
+            self._destinations(manifests, "install_dist_bin_localization"), []
+        )
+
+    def test_the_constrained_section_is_present_for_another_locale(self):
+        manifests = self._install_manifests("de")
+
+        self.assertIn(
+            "de/testing/only.ftl",
+            self._destinations(manifests, "install_dist_bin_localization"),
+        )
+
+
 if __name__ == "__main__":
     main()

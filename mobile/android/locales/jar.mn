@@ -33,9 +33,8 @@ relativesrcdir dom/locales:
 
 # Only run this if we're not en-US, as en-US is already built
 # by toolkit/locales/jar.mn.
-#define EN_US en-US
-#if AB_CD != EN_US
 [localization] @AB_CD@.jar:
+locales translated:
 relativesrcdir toolkit/locales:
 #about:about
   toolkit/about                                    (%toolkit/about/*About.ftl)
@@ -53,6 +52,5 @@ relativesrcdir toolkit/locales:
   toolkit/branding                                 (%toolkit/branding/*brandings.ftl)
   toolkit/global                                   (%toolkit/global/*processTypes.ftl)
   toolkit/global                                   (%toolkit/global/*resetProfile.ftl)
-#endif
-# Do not add files below the endif. Reviewers, expand more context above
-# for comments.
+# Do not add files below the localization section. Reviewers, expand more
+# context above for comments.

@@ -1,0 +1,5 @@
+#filter substitution
+#include included.inc
+[localization] @AB_CD@.jar:
+locales translated:
+  testing/only  (%only.ftl)

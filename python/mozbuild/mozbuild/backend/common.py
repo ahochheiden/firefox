@@ -716,6 +716,8 @@ class CommonBackend(BuildBackend):
         self.backend_input_files |= inputs
 
         for jarinfo in sections:
+            if not jarinfo.applies_to(ab_cd):
+                continue
             jar_context = Context(
                 allowed_variables=VARIABLES, config=obj._context.config
             )

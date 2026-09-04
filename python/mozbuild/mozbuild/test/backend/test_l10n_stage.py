@@ -97,14 +97,13 @@ class TestL10nStage(BackendTester):
             self._read(dest, "localization/de/testing/extra"), "extra-string = de\n"
         )
 
-    def test_the_translated_only_section_for_en_us(self):
+    def test_the_translated_only_section_is_absent_for_the_source_locale(self):
+        """`toolkit/locales/jar.mn` already builds this content for en-US, so
+        staging it here made two rules write the same file.
+        """
         dest = self._stage("en-US")
 
-        # Recorded as it behaves today, not as the jar manifest reads.
-        self.assertEqual(
-            self._read(dest, "localization/en-US/testing/extra"),
-            "extra-string = en-US\n",
-        )
+        self.assertIsNone(self._read(dest, "localization/en-US/testing/extra"))
 
 
 if __name__ == "__main__":
