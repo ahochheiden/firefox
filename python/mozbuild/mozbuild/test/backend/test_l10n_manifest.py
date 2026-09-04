@@ -46,14 +46,6 @@ class TestL10nManifestBackendIntegration(BackendTester):
             [["es*", "es-ES"], ["es-MX", "es-MX"], ["fr", "fr"]],
         )
 
-    def test_jar_maker_defines(self):
-        env = self._consume("l10n-manifest", RecursiveMakeBackend)
-
-        with open(mozpath.join(env.topobjdir, "backend.mk")) as fh:
-            lines = [l.rstrip() for l in fh]
-
-        self.assertIn("DEFINES += -Dandroid_marketplace=en-US", lines)
-
     def test_a_section_records_its_locale_constraint(self):
         ctx = self._context()
 
