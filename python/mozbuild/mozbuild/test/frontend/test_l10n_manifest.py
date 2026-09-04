@@ -9,7 +9,13 @@ from pathlib import Path
 import mozpack.path as mozpath
 from mozunit import main
 
-from mozbuild.frontend.jar_manifest import JarEntry, JarSection, LocaleTemplate
+from mozbuild.frontend.jar_manifest import (
+    JarEntry,
+    JarSection,
+    LocaleMappedSource,
+    LocaleTemplate,
+    MappedEntrySource,
+)
 from mozbuild.frontend.l10n_manifest import (
     MANIFEST_VERSION,
     L10nManifest,
@@ -41,13 +47,6 @@ class TestL10nManifestRoundTrip(unittest.TestCase):
                     locale_relsrcdir="browser/locales",
                     install_subdir="",
                     defines={"FOO": "bar"},
-                    locale_pp_defines={
-                        "ANDROID_MARKETPLACE_AB_CD": {
-                            "es*": "es-ES",
-                            "es-MX": "es-MX",
-                            "fr": "fr",
-                        },
-                    },
                     jar_sections=[
                         JarSection(
                             name=LocaleTemplate("browser"),
@@ -61,6 +60,19 @@ class TestL10nManifestRoundTrip(unittest.TestCase):
                                     source=LocaleTemplate("en-US/foo.ftl"),
                                     output=LocaleTemplate("foo.ftl"),
                                     is_locale=True,
+                                    preprocess=False,
+                                ),
+                                JarEntry(
+                                    source=MappedEntrySource(
+                                        mapping=LocaleMappedSource(
+                                            key="android_marketplace",
+                                            sources=(("es*", "es-ES"),),
+                                            default="en-US",
+                                        ),
+                                        below="badge.png",
+                                    ),
+                                    output=LocaleTemplate("badge.png"),
+                                    is_locale=False,
                                     preprocess=False,
                                 ),
                             ),
@@ -122,7 +134,6 @@ class TestBuildL10nManifestFromSubsts(unittest.TestCase):
             locale_relsrcdir="browser/locales",
             install_subdir="",
             defines={},
-            locale_pp_defines={},
         )
         manifest = build_l10n_manifest_from_substs(substs, [ctx])
 
@@ -177,7 +188,6 @@ class TestL10nManifestRoots(unittest.TestCase):
             locale_relsrcdir=relsrcdir,
             install_subdir="",
             defines={},
-            locale_pp_defines={},
         )
 
     def _relsrcdirs(self, roots, relsrcdirs):

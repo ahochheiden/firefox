@@ -17,12 +17,14 @@ _ios_marketplace_locales = (
     "nl nn-NO pl pt-BR pt-PT ro ru sk sl sv-SE th tr vi zh-CN zh-TW"
 ).split()
 
-LOCALE_PP_DEFINES = {
-    "ANDROID_MARKETPLACE_AB_CD": {
+LOCALIZED_JAR_SOURCES = {
+    "android_marketplace": {
+        "default": "en-US",
         "es*": "es-ES",
         **{loc: loc for loc in _android_marketplace_locales},
     },
-    "IOS_MARKETPLACE_AB_CD": {
+    "ios_marketplace": {
+        "default": "en-US",
         "es*": "es-ES",
         **{loc: loc for loc in _ios_marketplace_locales},
     },

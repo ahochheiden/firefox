@@ -24,6 +24,7 @@ from mozbuild.frontend.context import (
     Path,
     SourcePath,
 )
+from mozbuild.frontend.jar_manifest import _locale_mapped_sources
 from mozbuild.rust_commands import applies_library_lto
 
 from ..frontend.data import (
@@ -584,6 +585,12 @@ class RecursiveMakeBackend(MakeBackend):
         elif isinstance(obj, JARManifest):
             self._no_skip["misc"].add(backend_file.relobjdir)
             backend_file.write("JAR_MANIFEST := %s\n" % obj.path.full_path)
+            ab_cd = obj.config.substs["MOZ_UI_LOCALE"]
+            for key, source in _locale_mapped_sources(
+                obj._context.get("LOCALIZED_JAR_SOURCES")
+            ).items():
+                define = shell_quote(f"-D{key}={source.resolve(ab_cd)}")
+                backend_file.write(f"DEFINES += {define}\n")
 
         elif isinstance(obj, RustProgram):
             self._process_rust_program(obj, backend_file)

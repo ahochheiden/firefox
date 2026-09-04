@@ -13,7 +13,9 @@ import mozunit
 from mozbuild.frontend.jar_manifest import (
     AB_CD_TOKEN,
     JarManifestError,
+    JarSection,
     parse_jar_manifest,
+    source_from_dict,
 )
 from mozbuild.jar import DeprecatedJarManifest
 
@@ -40,12 +42,12 @@ class TestParseJarManifest(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmpdir = mozpath.normsep(self._tmp.name)
 
-    def _parse(self, body=MANIFEST, defines=None, includes=None):
+    def _parse(self, body=MANIFEST, defines=None, includes=None, sources=None):
         for name, included in (includes or {}).items():
             _write(mozpath.join(self.tmpdir, name), included)
         path = mozpath.join(self.tmpdir, "jar.mn")
         _write(path, body)
-        return parse_jar_manifest(path, defines or {})
+        return parse_jar_manifest(path, defines or {}, localized_sources=sources)
 
     def test_one_section_is_named_and_based(self):
         sections, _ = self._parse()
@@ -178,6 +180,128 @@ class TestParseJarManifest(unittest.TestCase):
             self.assertEqual(section.locales, "translated")
             self.assertFalse(section.applies_to("en-US"))
 
+    def _mapped(self, entry, key="badge"):
+        body = "#filter substitution\nbrowser.jar:\n  " + entry + "\n"
+        return self._parse(
+            body,
+            sources={key: {"default": "en-US", "fr": "fr"}},
+        )
+
+    def test_a_mapping_chooses_the_directory_a_source_reads_from(self):
+        sections, _ = self._mapped("content/icon.png  (@badge@/icon.png)")
+        entry = sections[0].entries[0]
+
+        self.assertEqual(entry.source.resolve("fr"), "fr/icon.png")
+        self.assertEqual(entry.source.resolve("de"), "en-US/icon.png")
+
+    def test_an_exact_locale_wins_over_a_pattern_and_the_first_pattern_wins(self):
+        sections, _ = self._parse(
+            "#filter substitution\nbrowser.jar:\n  content/icon.png  (@badge@/icon.png)\n",
+            sources={
+                "badge": {
+                    "default": "en-US",
+                    "es*": "es-ES",
+                    "*-MX": "mx",
+                    "es-MX": "es-MX",
+                }
+            },
+        )
+        entry = sections[0].entries[0]
+
+        self.assertEqual(entry.source.resolve("es-MX"), "es-MX/icon.png")
+        self.assertEqual(entry.source.resolve("es-AR"), "es-ES/icon.png")
+        self.assertEqual(entry.source.resolve("pt-MX"), "mx/icon.png")
+        self.assertEqual(entry.source.resolve("de"), "en-US/icon.png")
+
+        again = source_from_dict(entry.source.to_dict())
+        self.assertEqual(again.resolve("es-MX"), "es-MX/icon.png")
+        self.assertEqual(again.resolve("es-AR"), "es-ES/icon.png")
+
+    def test_a_mapping_must_start_the_source(self):
+        with self.assertRaisesRegex(JarManifestError, "must start with @badge@"):
+            self._mapped("content/icon.png  (below/@badge@/icon.png)")
+
+    def test_a_mapping_named_twice_is_rejected(self):
+        with self.assertRaisesRegex(JarManifestError, "names @badge@ more than once"):
+            self._mapped("content/icon.png  (@badge@/@badge@/icon.png)")
+
+    def test_a_mapping_cannot_name_a_destination(self):
+        with self.assertRaisesRegex(
+            JarManifestError,
+            "content/@badge@/icon.png names the source mapping @badge@, "
+            "which only a source may do",
+        ):
+            self._mapped("content/@badge@/icon.png  (en-US/icon.png)")
+
+    def test_a_mapping_cannot_name_a_section(self):
+        body = "#filter substitution\n[localization] @badge@.jar:\n  a  (en-US/a)\n"
+
+        with self.assertRaisesRegex(
+            JarManifestError, "names the source mapping @badge@, which only a source"
+        ):
+            self._parse(body, sources={"badge": {"default": "en-US", "fr": "fr"}})
+
+    def test_a_mapping_cannot_name_a_chrome_registration(self):
+        body = (
+            "#filter substitution\n"
+            "browser.jar:\n"
+            "%  content browser %content/@badge@/\n"
+            "  content/a  (en-US/a)\n"
+        )
+
+        with self.assertRaisesRegex(
+            JarManifestError,
+            "content browser %content/@badge@/ names the source mapping @badge@",
+        ):
+            self._parse(body, sources={"badge": {"default": "en-US", "fr": "fr"}})
+
+    def test_a_mapping_needs_a_default(self):
+        body = "#filter substitution\nbrowser.jar:\n  a  (@badge@/a)\n"
+
+        with self.assertRaisesRegex(JarManifestError, "badge needs a default source"):
+            self._parse(body, sources={"badge": {"fr": "fr"}})
+
+    def test_a_mapping_cannot_be_called_ab_cd(self):
+        body = "#filter substitution\nbrowser.jar:\n"
+
+        with self.assertRaisesRegex(JarManifestError, "AB_CD names the locale itself"):
+            self._parse(body, sources={"AB_CD": {"default": "en-US"}})
+
+    def test_a_parsed_section_survives_being_written_and_read(self):
+        """What is serialized has to reconstruct the same source, not a copy of
+        it with different types.
+        """
+        sections, _ = self._mapped("content/icon.png  (@badge@/icon.png)")
+        entry = sections[0].entries[0]
+
+        again = source_from_dict(entry.source.to_dict())
+
+        self.assertEqual(again, entry.source)
+        self.assertEqual(again.resolve("fr"), entry.source.resolve("fr"))
+
+    def test_a_locale_resolves_a_path_below_a_chosen_source(self):
+        """A locale resolves every path it appears in, and a source mapping
+        chooses only the directory above one.
+        """
+        sections, _ = self._mapped(
+            "content/@AB_CD@/icon.png  (@badge@/@AB_CD@/icon.png)"
+        )
+        entry = sections[0].entries[0]
+
+        self.assertEqual(entry.source.resolve("fr"), "fr/fr/icon.png")
+        self.assertEqual(entry.output.resolve("fr"), "content/fr/icon.png")
+
+    def test_a_locale_resolves_the_directory_a_mapping_chose(self):
+        """A mapping value is a path like any other, so a locale resolves it."""
+        sections, _ = self._parse(
+            "#filter substitution\nbrowser.jar:\n  content/icon.png  (@badge@/icon.png)\n",
+            sources={"badge": {"default": "shared/@AB_CD@", "fr": "only/@AB_CD@"}},
+        )
+        entry = sections[0].entries[0]
+
+        self.assertEqual(entry.source.resolve("fr"), "only/fr/icon.png")
+        self.assertEqual(entry.source.resolve("de"), "shared/de/icon.png")
+
     def test_the_constraint_must_precede_the_entries_it_governs(self):
         body = MANIFEST + "locales translated:\n"
 
@@ -257,6 +381,36 @@ class TestParseJarManifest(unittest.TestCase):
 
         with self.assertRaisesRegex(JarManifestError, "included.inc:1"):
             self._parse(body, includes={"included.inc": "#ifdef AB_CD\n#endif\n"})
+
+    def test_a_relativesrcdir_cannot_name_a_source_mapping(self):
+        body = (
+            "#filter substitution\n"
+            "browser.jar:\n"
+            "relativesrcdir @badge@/locales:\n"
+            "  a  (%a)\n"
+        )
+
+        with self.assertRaisesRegex(
+            JarManifestError,
+            "relativesrcdir @badge@/locales names @badge@, which is only resolved "
+            "in an entry source",
+        ):
+            self._parse(body, sources={"badge": {"default": "en-US", "fr": "fr"}})
+
+    def test_a_section_survives_being_written_and_read(self):
+        sections, _ = self._parse(
+            "#filter substitution\n"
+            "[localization] @AB_CD@.jar:\n"
+            "locales translated:\n"
+            "relativesrcdir toolkit/locales:\n"
+            "%  locale testing @AB_CD@ %locale/@AB_CD@/testing/\n"
+            "  toolkit/about  (%toolkit/about/aboutAbout.ftl)\n"
+            "  content/icon.png  (@badge@/icon.png)\n",
+            sources={"badge": {"default": "en-US", "fr": "fr"}},
+        )
+        section = sections[0]
+
+        self.assertEqual(JarSection.from_dict(section.to_dict()), section)
 
 
 class _Context(dict):

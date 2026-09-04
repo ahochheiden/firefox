@@ -2404,28 +2404,27 @@ VARIABLES = {
         see {ref}`jar-manifests`.
         """,
     ),
-    "LOCALE_PP_DEFINES": (
+    "LOCALIZED_JAR_SOURCES": (
         dict,
         dict,
-        """Per-locale preprocessor defines applied when localized jar.mn
-        files are processed.
+        """Directories a jar.mn entry takes its source from, chosen by locale.
 
-        Each top-level key is the name of a define. Each value is a lookup
-        table that maps an ab_cd code or an fnmatch pattern to the value
-        the define should take for that locale.
+        Each top-level key names a source mapping that a jar.mn entry
+        refers to as ``@key@`` in its source position. Each value maps an
+        ab_cd code or an fnmatch pattern to the directory to read for that
+        locale, and must include ``default`` for every other locale.
 
         Example:
-            LOCALE_PP_DEFINES = {
-                "ANDROID_MARKETPLACE_AB_CD": {
+            LOCALIZED_JAR_SOURCES = {
+                "android_marketplace": {
+                    "default": "en-US",
                     "es*": "es-ES",
-                    "es-MX": "es-MX",
                     "fr": "fr",
                 },
             }
 
-        Exact ab_cd keys win over patterns. A locale that matches neither
-        leaves the define unset, so #ifdef branches in the jar.mn fall
-        through to their #else.
+        An exact ab_cd match wins over a pattern. Where two patterns match,
+        the one declared first wins.
         """,
     ),
     # IDL Generation.

@@ -3,12 +3,14 @@
 
 JAR_MANIFESTS += ["jar.mn"]
 
-LOCALE_PP_DEFINES = {
-    "ANDROID_MARKETPLACE_AB_CD": {
+LOCALIZED_JAR_SOURCES = {
+    "android_marketplace": {
+        "default": "en-US",
         "es*": "es-ES",
         "de": "de",
     },
-    "IOS_MARKETPLACE_AB_CD": {
+    "ios_marketplace": {
+        "default": "en-US",
         "fr": "fr",
     },
 }

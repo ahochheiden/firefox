@@ -29,23 +29,13 @@ from mozbuild.frontend.context import SourcePath
 from mozbuild.frontend.data import ContextDerived
 from mozbuild.frontend.jar_manifest import (
     JarSection,
+    LocaleTemplate,
     jar_manifest_defines,
     parse_jar_manifest,
 )
 from mozbuild.frontend.reader import SandboxValidationError
 
 MANIFEST_VERSION = 2
-
-
-def locale_pp_placeholder(name: str) -> str:
-    """Per-key placeholder for a LOCALE_PP_DEFINES preprocessor
-    variable, so stage time can resolve or skip each key independently.
-
-    e.g.
-    ANDROID_MARKETPLACE_AB_CD ->
-    MOZ_L10N_DEFINE_ANDROID_MARKETPLACE_AB_CD_PLACEHOLDER.
-    """
-    return f"MOZ_L10N_DEFINE_{name}_PLACEHOLDER"
 
 
 @dataclass
@@ -81,7 +71,6 @@ class L10nManifestContextData:
     relsrcdir: str
     install_subdir: str
     defines: dict[str, object]
-    locale_pp_defines: dict[str, dict[str, str]]
     locale_relsrcdir: str
     jar_sections: list[JarSection] = field(default_factory=list)
     localized_files: list[LocalizedFileGroup] = field(default_factory=list)
@@ -91,8 +80,8 @@ class L10nManifestContextData:
     def to_dict(self):
         """The context as the l10n manifest carries it.
 
-        A locale template is carried as the text it holds, so the jar parts are
-        written by the model rather than by walking the dataclasses.
+        A jar entry source is one of two shapes, so the jar parts are written by
+        the model rather than by walking the dataclasses.
         """
         raw = asdict(self)
         raw["jar_sections"] = [section.to_dict() for section in self.jar_sections]
@@ -138,7 +127,6 @@ def load_l10n_manifest(path: Path) -> L10nManifest:
             locale_relsrcdir=c["locale_relsrcdir"],
             install_subdir=c["install_subdir"],
             defines=c["defines"],
-            locale_pp_defines=c["locale_pp_defines"],
             jar_sections=[JarSection.from_dict(s) for s in c["jar_sections"]],
             localized_files=[LocalizedFileGroup(**g) for g in c["localized_files"]],
             localized_pp_files=[
@@ -237,14 +225,9 @@ def _extract_l10n_manifest_context_data(
     has_localized_files = _has_walkable(localized_files)
     has_localized_pp_files = _has_walkable(localized_pp_files)
     has_localized_gen = bool(context.get("LOCALIZED_GENERATED_FILES"))
-    has_locale_pp_defines = bool(context.get("LOCALE_PP_DEFINES"))
 
     if not (
-        has_jar
-        or has_localized_files
-        or has_localized_pp_files
-        or has_localized_gen
-        or has_locale_pp_defines
+        has_jar or has_localized_files or has_localized_pp_files or has_localized_gen
     ):
         return None
 
@@ -253,9 +236,6 @@ def _extract_l10n_manifest_context_data(
         locale_relsrcdir=_locale_relsrcdir(emitter.config, str(context.relsrcdir)),
         install_subdir="",
         defines=_normalize_defines(context.get("DEFINES")),
-        locale_pp_defines={
-            k: dict(v) for k, v in (context.get("LOCALE_PP_DEFINES") or {}).items()
-        },
     )
 
     if has_jar:
@@ -278,7 +258,6 @@ def _extract_l10n_manifest_context_data(
         or context_data.localized_files
         or context_data.localized_pp_files
         or context_data.localized_generated_files
-        or context_data.locale_pp_defines
     ):
         return None
 
@@ -323,50 +302,16 @@ def _normalize_defines(defines) -> dict[str, object]:
 
 
 def _extract_jar_sections(context, path) -> Iterator[JarSection]:
-    """Parse a jar.mn and yield JarSections for groups that contain at
-    least one locale entry, a locale-marked chrome.manifest line, or a
-    [localization] block.
+    """Read a jar.mn once and yield the sections that carry locale content.
 
     The model is not tied to a locale, so a section is captured as declared and
     each locale resolves it at stage time.
-
-    When LOCALE_PP_DEFINES is set, runs the preprocessor twice. The
-    first pass leaves the defines unset (capturing #else branches);
-    the second sets each define to its placeholder (capturing #ifdef
-    branches). Stage time resolves the placeholder to the locale's
-    value, or skips the entry when the placeholder doesn't resolve
-    (so unsupported locales fall back to the first pass's #else).
     """
-    yield from _run_jar_pp(context, path, locale_pp_overrides=None)
-    locale_pp_defines = context.get("LOCALE_PP_DEFINES") or {}
-    if locale_pp_defines:
-        overrides = {k: locale_pp_placeholder(k) for k in locale_pp_defines}
-        yield from _run_jar_pp(context, path, locale_pp_overrides=overrides)
-
-
-def _is_locale_aware(entry) -> bool:
-    """A jar.mn entry contributes locale content when its source is
-    %-prefixed (is_locale=True) or rooted in en-US (en-US/... or
-    .../locales/en-US/...).
-
-    Other sources are en-US-only and not repacked per locale.
-    """
-    if entry.is_locale:
-        return True
-    src = entry.source.text
-    return src.startswith("en-US/") or "/locales/en-US/" in src
-
-
-def _run_jar_pp(
-    context,
-    path,
-    *,
-    locale_pp_overrides: Optional[dict[str, str]],
-) -> Iterator[JarSection]:
-    defines = jar_manifest_defines(context)
-    if locale_pp_overrides:
-        defines.update(locale_pp_overrides)
-    sections, inputs = parse_jar_manifest(path.full_path, defines)
+    sections, inputs = parse_jar_manifest(
+        path.full_path,
+        jar_manifest_defines(context),
+        localized_sources=context.get("LOCALIZED_JAR_SOURCES"),
+    )
     # Reading the manifest happens outside the sandbox, and a section this
     # locale skips yields nothing that would record it, so the paths it read
     # are recorded on the context the l10n object is derived from.
@@ -381,6 +326,22 @@ def _run_jar_pp(
         if not (has_locale_aware_entry or has_locale_manifest):
             continue
         yield jarinfo
+
+
+def _is_locale_aware(entry) -> bool:
+    """A jar.mn entry contributes locale content when its source is
+    %-prefixed (is_locale=True) or rooted in en-US (en-US/... or
+    .../locales/en-US/...).
+
+    Other sources are en-US-only and not repacked per locale.
+    """
+    if entry.is_locale:
+        return True
+    if not isinstance(entry.source, LocaleTemplate):
+        # A source chosen by locale is locale content by construction.
+        return True
+    src = entry.source.text
+    return src.startswith("en-US/") or "/locales/en-US/" in src
 
 
 def _extract_localized_files(files) -> list[LocalizedFileGroup]:

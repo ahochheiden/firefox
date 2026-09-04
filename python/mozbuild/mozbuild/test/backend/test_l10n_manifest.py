@@ -24,19 +24,35 @@ class TestL10nManifestBackendIntegration(BackendTester):
         self.assertEqual(len(raw["contexts"]), 1)
         return raw["contexts"][0]
 
-    def test_locale_pp_defines_in_manifest(self):
+    def _entries(self):
         ctx = self._context()
+        self.assertEqual(len(ctx["jar_sections"]), 1)
+        return {e["output"]: e for e in ctx["jar_sections"][0]["entries"]}
 
+    def test_a_plain_source_is_serialized_as_a_template(self):
+        entry = self._entries()["locale/@AB_CD@/testing/plain.ftl"]
+
+        self.assertEqual(entry["source"], {"kind": "template", "text": "plain.ftl"})
+
+    def test_a_locale_chosen_source_is_serialized_with_its_mapping(self):
+        entry = self._entries()["locale/@AB_CD@/testing/badge.png"]
+
+        self.assertEqual(entry["source"]["kind"], "mapped")
+        self.assertEqual(entry["source"]["key"], "android_marketplace")
+        self.assertEqual(entry["source"]["below"], "badge.png")
+        self.assertEqual(entry["source"]["default"], "en-US")
         self.assertEqual(
-            ctx["locale_pp_defines"],
-            {
-                "ANDROID_MARKETPLACE_AB_CD": {
-                    "es*": "es-ES",
-                    "es-MX": "es-MX",
-                    "fr": "fr",
-                },
-            },
+            entry["source"]["sources"],
+            [["es*", "es-ES"], ["es-MX", "es-MX"], ["fr", "fr"]],
         )
+
+    def test_jar_maker_defines(self):
+        env = self._consume("l10n-manifest", RecursiveMakeBackend)
+
+        with open(mozpath.join(env.topobjdir, "backend.mk")) as fh:
+            lines = [l.rstrip() for l in fh]
+
+        self.assertIn("DEFINES += -Dandroid_marketplace=en-US", lines)
 
     def test_a_section_records_its_locale_constraint(self):
         ctx = self._context()

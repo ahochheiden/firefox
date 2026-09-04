@@ -711,7 +711,9 @@ class CommonBackend(BuildBackend):
         ab_cd = obj.config.substs["MOZ_UI_LOCALE"]
 
         sections, inputs = parse_jar_manifest(
-            obj.path.full_path, jar_manifest_defines(obj._context)
+            obj.path.full_path,
+            jar_manifest_defines(obj._context),
+            localized_sources=obj._context.get("LOCALIZED_JAR_SOURCES"),
         )
         self.backend_input_files |= inputs
 

@@ -132,6 +132,30 @@ relativesrcdir toolkit/locales:
 `locales all:` is the default and does not need writing. The constraint has to
 appear before the entries it governs.
 
+### Choosing a source directory by locale
+
+Where the directory an entry reads from depends on the locale, the mapping is
+declared in `moz.build` and the entry names it:
+
+```
+LOCALIZED_JAR_SOURCES = {
+    "android_marketplace": {
+        "default": "en-US",
+        "es*": "es-ES",
+        "de": "de",
+    },
+}
+```
+
+```
+  locale/@AB_CD@/icons/android.png  (@android_marketplace@/android.png)
+```
+
+An exact locale wins over a pattern, and the first declared pattern wins where
+two match. `default` is required, because a locale that matches nothing still
+reads from somewhere. The name may only appear once, at the start of a source,
+and never in a destination.
+
 ### Example
 
 The file {searchfox}`browser/themes/addons/jar.mn <mozilla-central/rev/5b2d2863bd315f232a3f769f76e0eb16cdca7cb0:browser/themes/addons/jar.mn>` registers a `resource` chrome package under the name `builtin-themes`. Its source files are in `%content/builtin-themes/`:

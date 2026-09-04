@@ -2,3 +2,4 @@
 browser.jar:
 %  locale testing @AB_CD@ %locale/@AB_CD@/testing/
   locale/@AB_CD@/testing/plain.ftl    (%plain.ftl)
+  locale/@AB_CD@/testing/badge.png    (@android_marketplace@/badge.png)
