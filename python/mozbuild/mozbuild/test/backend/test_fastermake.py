@@ -37,6 +37,19 @@ class TestFasterMakeBackend(BackendTester):
         actual = [(path, mozpath.relpath(f.path, env.topsrcdir)) for (path, f) in reg]
         self.assertEqual(expected, actual)
 
+    def test_final_target_files_directory_wildcard(self):
+        env = self._consume("final-target-files-directory-wildcard", FasterMakeBackend)
+        m = InstallManifest(
+            path=mozpath.join(env.topobjdir, "faster", "install_dist_bin")
+        )
+        reg = FileRegistry()
+        m.populate_registry(reg)
+
+        self.assertEqual(
+            sorted(reg.paths()),
+            ["foo/a/config.json", "foo/a/x.js", "foo/b/config.json", "foo/b/y.js"],
+        )
+
 
 class TestJarLocaleConstraint(BackendTester):
     """A `locales translated:` section reaches the backend only for a repack."""
