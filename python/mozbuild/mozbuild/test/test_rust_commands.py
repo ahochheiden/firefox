@@ -102,7 +102,6 @@ class TestCargoInvocation(unittest.TestCase):
     def test_from_environ(self):
         invocation = CargoInvocation.from_environ({
             "BUILD_VERBOSE_LOG": "1",
-            "USE_CARGO_JSON_MESSAGE_FORMAT": "1",
             "MACH_STDOUT_ISATTY": "1",
             "extra_rustflags": "-Wclippy::all -Dwarnings",
             "CARGO_RUSTCFLAGS": "-C 'link-arg=-L/opt/my libs'",
@@ -113,7 +112,6 @@ class TestCargoInvocation(unittest.TestCase):
             invocation,
             CargoInvocation(
                 verbose=True,
-                json_output=True,
                 color="always",
                 extra_rustflags=("-Wclippy::all", "-Dwarnings"),
                 cargo_rustcflags=("-C", "link-arg=-L/opt/my libs"),
@@ -133,12 +131,8 @@ class TestCargoInvocation(unittest.TestCase):
         self.assertEqual(CargoInvocation.from_environ({"NO_ANSI": "1"}).color, "")
 
     def test_zero_valued_signals_are_off(self):
-        invocation = CargoInvocation.from_environ({
-            "BUILD_VERBOSE_LOG": "0",
-            "USE_CARGO_JSON_MESSAGE_FORMAT": "0",
-        })
+        invocation = CargoInvocation.from_environ({"BUILD_VERBOSE_LOG": "0"})
         self.assertFalse(invocation.verbose)
-        self.assertFalse(invocation.json_output)
 
 
 ELIGIBLE = {"RUST_LTO_ELIGIBLE": "1"}

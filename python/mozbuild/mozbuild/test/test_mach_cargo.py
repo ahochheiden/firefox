@@ -247,8 +247,7 @@ class TestRunCargoCommand(unittest.TestCase):
         self.assertIn(
             "/src/toolkit/library/rust/Cargo.toml", seen["build_flags_override"]
         )
-        # Replacing the build flags drops the LTO capable Rust flags, matching
-        # the Make path, which only adds ADD_RUST_LTOABLE without an override.
+        # Replacing the build flags drops the LTO capable Rust flags too.
         self.assertFalse(seen["ltoable"])
 
     def test_ltoable_forced_without_build_flags(self):
@@ -336,52 +335,23 @@ class TestRunCargoCommand(unittest.TestCase):
         command_context.resolve_num_jobs.return_value = 1
         command_context._spawn.return_value.build.return_value = 0
         command_context._spawn.return_value.configure.return_value = 0
-        command_context._run_make.return_value = 0
         with mock.patch.object(
             mach_commands, "_run_cargo_command", return_value=0
         ) as executor:
             rc = mach_commands.cargo(command_context, cargo_command, package=package)
         return rc, command_context, executor
 
-    def test_nonlegacy_dispatches_to_executor(self):
+    def test_dispatches_to_executor(self):
         rc, cc, executor = self._run_cargo({})
         self.assertEqual(rc, 0)
         executor.assert_called()
         cc.ensure_backend_current.assert_called_once()
-        cc._run_make.assert_not_called()
-
-    def test_legacy_dispatches_to_run_make(self):
-        rc, cc, executor = self._run_cargo({"MOZ_USE_LEGACY_CARGO_INVOCATION": True})
-        self.assertEqual(rc, 0)
-        cc._run_make.assert_called()
-        executor.assert_not_called()
-        cc.ensure_backend_current.assert_not_called()
 
     def test_package_dispatch_passes_the_target_placeholder(self):
         _, _, executor = self._run_cargo({}, package="gkrust-shared")
         self.assertEqual(
             executor.call_args.args[4], ["-p", "gkrust-shared", "--target={arch}"]
         )
-
-    def test_legacy_package_substitutes_the_target_and_skips_auto_args(self):
-        _, cc, _ = self._run_cargo(
-            {"MOZ_USE_LEGACY_CARGO_INVOCATION": True}, package="gkrust-shared"
-        )
-        kwargs = cc._run_make.call_args.kwargs
-        self.assertIn(
-            'cargo_extra_cli_flags=-p gkrust-shared --target="$(RUST_TARGET)"',
-            kwargs["target"],
-        )
-        self.assertEqual(kwargs["append_env"]["CARGO_NO_AUTO_ARG"], "1")
-
-    def test_legacy_joins_arguments_for_make(self):
-        _, cc, _ = self._run_cargo(
-            {"MOZ_USE_LEGACY_CARGO_INVOCATION": True}, cargo_command="audit"
-        )
-        target = cc._run_make.call_args.kwargs["target"]
-        flags = [t for t in target if t.startswith("cargo_build_flags=")]
-        self.assertEqual(len(flags), 1)
-        self.assertTrue(flags[0].startswith("cargo_build_flags=-f "))
 
 
 if __name__ == "__main__":

@@ -1345,8 +1345,6 @@ class RecursiveMakeBackend(MakeBackend):
         backend_file.write_once("CARGO_TARGET_DIR := %s\n" % target_dir)
         backend_file.write("%s += $(DEPTH)/%s\n" % (target_variable, obj.location))
         backend_file.write("%s += %s\n" % (target_cargo_variable, obj.name))
-        if obj.features:
-            backend_file.write(f"{obj.FEATURES_VAR} := {','.join(obj.features)}\n")
         if obj.output_category:
             program_target = f"$(DEPTH)/{obj.location}"
             self._process_non_default_target(obj, program_target, backend_file)
@@ -1375,7 +1373,6 @@ class RecursiveMakeBackend(MakeBackend):
         self._process_non_default_target(obj, "force-cargo-test-run", backend_file)
         backend_file.write_once("CARGO_FILE := $(srcdir)/Cargo.toml\n")
         backend_file.write_once("RUST_TESTS := %s\n" % " ".join(obj.names))
-        backend_file.write_once(f"RUST_TEST_FEATURES := {','.join(obj.features)}\n")
 
     def _process_legacy_run_tests(self, obj, backend_file):
         self._no_skip["check"].add(backend_file.relobjdir)
@@ -1582,17 +1579,9 @@ class RecursiveMakeBackend(MakeBackend):
         # up recompiling lots of things.
         target_dir = mozpath.normpath(backend_file.environment.topobjdir)
         backend_file.write("CARGO_TARGET_DIR := %s\n" % target_dir)
-        if libdef.features:
-            backend_file.write(
-                f"{libdef.FEATURES_VAR} := {','.join(libdef.features)}\n"
-            )
         if libdef.cargo_profile_suffix:
             backend_file.write(
                 f"RUST_LIBRARY_CARGO_PROFILE_SUFFIX := {libdef.cargo_profile_suffix}\n"
-            )
-        if libdef.cargo_crate_type:
-            backend_file.write(
-                f"RUST_LIBRARY_CARGO_CRATE_TYPE := {libdef.cargo_crate_type}\n"
             )
         if libdef.output_category:
             self._process_non_default_target(libdef, rust_lib, backend_file)

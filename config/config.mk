@@ -63,8 +63,6 @@ __depth :=
 endif
 $(foreach __d,$(__depth) .,$(eval __depth = $(wordlist 2,$(words $(__depth)),$(__depth))$(eval -include $(subst $(space),/,$(strip $(srcdir) $(__depth) defs.mk)))))
 
-COMMA = ,
-
 # Sanity check some variables
 CHECK_VARS := \
  XPI_NAME \

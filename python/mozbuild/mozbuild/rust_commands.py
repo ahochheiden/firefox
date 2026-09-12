@@ -201,7 +201,6 @@ class CargoInvocation:
             color = "never" if _bool(environ.get("NO_ANSI")) else "always"
         return cls(
             verbose=_bool(environ.get("BUILD_VERBOSE_LOG")),
-            json_output=_bool(environ.get("USE_CARGO_JSON_MESSAGE_FORMAT")),
             color=color,
             extra_rustflags=tuple((environ.get("extra_rustflags") or "").split()),
             cargo_rustcflags=tuple(_as_args(environ.get("CARGO_RUSTCFLAGS"))),
