@@ -240,6 +240,7 @@ def handle_keyed_by(config, tasks):
         "workdir",
         "worker-type",
         "virtualization",
+        "fetches.build",
         "fetches.fetch",
         "fetches.toolchain",
         "fetches.openh264-plugin",
@@ -250,6 +251,7 @@ def handle_keyed_by(config, tasks):
         "mozharness.requires-signed-builds",
         "build-signing-label",
         "dependencies",
+        "use-build-fetches",
     ]
     for task in tasks:
         for field in fields:

@@ -384,6 +384,11 @@ class TestDescriptionSchema(Schema, kw_only=True):
     ] = None
     # Fetch uv binary and add it to PATH
     use_uv: TOptional[bool] = None
+    # Receive the installer, the test archives and the symbols of the build
+    # under test as fetches rather than as mozharness downloads
+    use_build_fetches: TOptional[  # type: ignore
+        optionally_keyed_by("test-platform", "variant", bool, use_msgspec=True)
+    ] = None
     # Cache mounts / volumes to set up
     use_caches: TOptional[  # type: ignore
         optionally_keyed_by(
@@ -472,6 +477,7 @@ def set_defaults(config, tasks):
         task.setdefault("use-python", "system")
         task.setdefault("use-uv", True)
         task.setdefault("use-caches", ["checkout", "pip", "uv"])
+        task.setdefault("use-build-fetches", False)
 
         task["mozharness"].setdefault("extra-options", [])
         task["mozharness"].setdefault("requires-signed-builds", False)
@@ -546,6 +552,7 @@ def run_remaining_transforms(config, tasks):
     transform_modules = (
         ("raptor", lambda t: t["suite"] == "raptor"),
         ("other", None),
+        ("build_fetches", None),
         ("worker", None),
         ("confirm_failure", None),
         ("pernosco", lambda t: t["build-platform"].startswith("linux64")),

@@ -15,7 +15,7 @@ from taskgraph.util import json
 
 from gecko_taskgraph.test.conftest import FakeParameters
 from gecko_taskgraph.transforms import test as test_transforms
-from gecko_taskgraph.transforms.test import chunk, other
+from gecko_taskgraph.transforms.test import build_fetches, chunk, other
 from gecko_taskgraph.transforms.test.chunk import DYNAMIC_CHUNK_DURATION
 from gecko_taskgraph.util import chunking
 
@@ -857,6 +857,259 @@ def test_drop_artifact_build_unsupported(
         )
     )
     assert bool(tasks) is expected_kept
+
+
+@pytest.fixture
+def build_fetches_task(make_test_task):
+    def inner(
+        script="desktop_unittest.py",
+        suite="mochitest-plain",
+        category="mochitest",
+        test_platform="linux64/debug",
+        download_symbols=True,
+        **extra,
+    ):
+        mozharness = {
+            "script": script,
+            "extra-options": [],
+            "requires-signed-builds": False,
+            "build-artifact-name": "public/build/target.tar.xz",
+        }
+        if download_symbols is not None:
+            mozharness["download-symbols"] = download_symbols
+        return make_test_task(**{
+            "attributes": {"unittest_suite": suite, "unittest_category": category},
+            "mozharness": mozharness,
+            "test-platform": test_platform,
+            "try-name": suite,
+            "use-build-fetches": True,
+            **extra,
+        })
+
+    return inner
+
+
+def run_build_fetches(run_transform, task):
+    return list(run_transform(build_fetches.add_build_fetches, task))[0]
+
+
+def archive_fetches(task):
+    return [
+        (fetch["artifact"], fetch["dest"])
+        for fetch in task["fetches"]["build"]
+        if fetch.get("dest", "").startswith("tests")
+    ]
+
+
+def test_build_fetches_disabled(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform, build_fetches_task(**{"use-build-fetches": False})
+    )
+    assert "fetches" not in task
+    assert "worker" not in task
+
+
+def test_build_fetches_desktop_debug(run_transform, build_fetches_task):
+    task = run_build_fetches(run_transform, build_fetches_task())
+    assert task["fetches"] == {
+        "build": [
+            {"artifact": "/public/build/target.tar.xz", "extract": False},
+            {"artifact": "/public/build/target.common.tests.tar.zst", "dest": "tests"},
+            {
+                "artifact": "/public/build/target.condprof.tests.tar.zst",
+                "dest": "tests",
+            },
+            {
+                "artifact": "/public/build/target.mochitest.tests.tar.zst",
+                "dest": "tests",
+            },
+            {
+                "artifact": "/public/build/target.trainhop.tests.tar.zst",
+                "dest": "tests",
+            },
+            {
+                "artifact": "/public/build/target.crashreporter-symbols.zip",
+                "dest": "symbols",
+            },
+        ]
+    }
+    assert task["worker"]["env"] == {
+        "MOZHARNESS_USE_FETCHES": "1",
+        "MOZ_SYMBOLS_URL": {
+            "artifact-reference": (
+                "<build/public/build/target.crashreporter-symbols.zip>"
+            )
+        },
+    }
+
+
+def test_build_fetches_jittest_ondemand(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            suite="jittest",
+            category="jittest",
+            test_platform="linux64/opt",
+            download_symbols="ondemand",
+        ),
+    )
+    assert archive_fetches(task) == [
+        ("/public/build/target.common.tests.tar.zst", "tests"),
+        ("/public/build/target.condprof.tests.tar.zst", "tests"),
+        ("/public/build/target.jittest.tests.tar.zst", "tests"),
+        ("/public/build/target.jsshell.zip", "tests/bin"),
+    ]
+    assert not any(f.get("dest") == "symbols" for f in task["fetches"]["build"])
+    assert task["worker"]["env"]["MOZ_SYMBOLS_URL"] == {
+        "artifact-reference": "<build/public/build/target.crashreporter-symbols.zip>"
+    }
+
+
+def test_build_fetches_jsreftest_suite_archive(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            suite="jsreftest",
+            category="reftest",
+            test_platform="linux64/opt",
+            download_symbols="ondemand",
+        ),
+    )
+    assert [a for a, _ in archive_fetches(task)] == [
+        "/public/build/target.common.tests.tar.zst",
+        "/public/build/target.condprof.tests.tar.zst",
+        "/public/build/target.jsreftest.tests.tar.zst",
+        "/public/build/target.reftest.tests.tar.zst",
+    ]
+
+
+def test_build_fetches_android_shippable_per_test(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            script="android_emulator_unittest.py",
+            suite="test-verify",
+            category="test-verify",
+            test_platform="android-em-14-x86_64-shippable/opt",
+            download_symbols="ondemand",
+            mozharness={
+                "script": "android_emulator_unittest.py",
+                "extra-options": [],
+                "requires-signed-builds": False,
+                "build-artifact-name": "public/build/target.apk",
+                "download-symbols": "ondemand",
+            },
+        ),
+    )
+    assert task["fetches"]["build"][0] == {
+        "artifact": "/public/build/target.apk",
+        "extract": False,
+    }
+    assert archive_fetches(task) == [
+        ("/public/build/en-US/target.common.tests.tar.zst", "tests"),
+        ("/public/build/en-US/target.condprof.tests.tar.zst", "tests"),
+        ("/public/build/en-US/target.mochitest.tests.tar.zst", "tests"),
+        ("/public/build/en-US/target.reftest.tests.tar.zst", "tests"),
+        ("/public/build/en-US/target.trainhop.tests.tar.zst", "tests"),
+        ("/public/build/en-US/target.xpcshell.tests.tar.zst", "tests"),
+    ]
+    assert task["worker"]["env"]["MOZ_SYMBOLS_URL"] == {
+        "artifact-reference": (
+            "<build/public/build/en-US/target.crashreporter-symbols.zip>"
+        )
+    }
+
+
+def test_build_fetches_android_suite_alias(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            script="android_hardware_unittest.py",
+            suite="crashtest",
+            category="reftest",
+            test_platform="android-hw-p6-13-0-android-aarch64/debug",
+        ),
+    )
+    assert [a for a, _ in archive_fetches(task)] == [
+        "/public/build/target.common.tests.tar.zst",
+        "/public/build/target.condprof.tests.tar.zst",
+        "/public/build/target.reftest.tests.tar.zst",
+    ]
+
+
+@pytest.mark.parametrize(
+    "script,expected",
+    (
+        pytest.param(
+            "web_platform_tests.py",
+            ["common", "condprof", "web-platform"],
+            id="wpt",
+        ),
+        pytest.param("awsy_script.py", ["awsy", "common", "condprof"], id="awsy"),
+        pytest.param("raptor_script.py", ["common", "condprof", "raptor"], id="raptor"),
+        pytest.param("talos_script.py", ["common", "condprof", "talos"], id="talos"),
+        pytest.param("marionette.py", ["common", "condprof"], id="common-only"),
+    ),
+)
+def test_build_fetches_script_categories(
+    run_transform, build_fetches_task, script, expected
+):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(script=script, suite="task", category="task"),
+    )
+    assert [a for a, _ in archive_fetches(task)] == [
+        f"/public/build/target.{name}.tests.tar.zst" for name in expected
+    ]
+
+
+def test_build_fetches_signed_installer(run_transform, build_fetches_task):
+    task = build_fetches_task(test_platform="windows11-64-24h2/opt")
+    task["mozharness"]["requires-signed-builds"] = True
+    task["mozharness"]["build-artifact-name"] = "public/build/target.installer.msix"
+    task = run_build_fetches(run_transform, task)
+    assert task["fetches"]["build-signing"] == [
+        {"artifact": "/public/build/target.installer.msix", "extract": False}
+    ]
+    assert all("extract" not in f for f in task["fetches"]["build"])
+
+
+def test_build_fetches_upstream_target(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            script="raptor_script.py",
+            test_platform="android-hw-p6-13-0-android-aarch64-shippable/opt",
+            target={
+                "upstream-task": "signing-apk",
+                "name": "public/build/target.arm64-v8a.apk",
+            },
+        ),
+    )
+    assert task["fetches"]["signing-apk"] == [
+        {"artifact": "/public/build/target.arm64-v8a.apk", "extract": False}
+    ]
+
+
+def test_build_fetches_index_target_left_alone(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            script="raptor_script.py",
+            target={"index": "mobile.v2.reference-browser", "name": "target.apk"},
+        ),
+    )
+    assert "fetches" not in task
+    assert "worker" not in task
+
+
+def test_build_fetches_without_symbols(run_transform, build_fetches_task):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(test_platform="linux64-asan/opt", download_symbols=None),
+    )
+    assert not any(f.get("dest") == "symbols" for f in task["fetches"]["build"])
+    assert task["worker"]["env"] == {"MOZHARNESS_USE_FETCHES": "1"}
 
 
 def test_perfherder_extra_options(run_transform, make_test_task):
