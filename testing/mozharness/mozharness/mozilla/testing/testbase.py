@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import platform
+import shutil
 import ssl
 import urllib.parse
 import urllib.request
@@ -559,10 +560,66 @@ You can set this by specifying --test-url URL
             elif self.symbols_url:
                 self.download_unpack(self.symbols_url, self.symbols_path)
 
+    def _fetched_tests_dirs(self):
+        dirs = self.query_abs_dirs()
+        tests = os.path.join(dirs["abs_fetches_dir"], "tests")
+        test_install_dir = dirs.get(
+            "abs_test_install_dir", os.path.join(dirs["abs_work_dir"], "tests")
+        )
+        return tests, test_install_dir
+
+    def clobber(self):
+        if os.environ.get("MOZHARNESS_USE_FETCHES"):
+            tests, test_install_dir = self._fetched_tests_dirs()
+            if os.path.isdir(test_install_dir) and not os.path.exists(tests):
+                shutil.move(test_install_dir, tests)
+        super().clobber()
+
+    def _use_fetches(self):
+        dirs = self.query_abs_dirs()
+        installer = os.path.basename(
+            urllib.parse.unquote(urlparse(self.installer_url).path)
+        )
+        self.installer_path = os.path.join(dirs["abs_fetches_dir"], installer)
+        tests, test_install_dir = self._fetched_tests_dirs()
+        if os.path.isdir(tests):
+            self.mkdir_p(os.path.dirname(test_install_dir))
+            try:
+                os.rename(tests, test_install_dir)
+            except OSError:
+                self.warning(f"Copying {tests} to {test_install_dir}, rename failed")
+                shutil.move(tests, test_install_dir)
+        elif not os.path.isdir(test_install_dir):
+            self.fatal(f"Neither {tests} nor {test_install_dir} exists")
+        download_symbols = self.config.get("download_symbols")
+        if download_symbols == "ondemand":
+            symbols_url = os.environ["MOZ_SYMBOLS_URL"]
+            if self.retry(
+                action=self._urlopen,
+                args=(symbols_url,),
+                kwargs={"timeout": 120},
+                sleeptime=10,
+                failure_status=None,
+            ):
+                self.symbols_url = symbols_url
+                self.symbols_path = symbols_url
+            else:
+                self.warning(
+                    f"Cannot open symbols url {symbols_url}. "
+                    "Let minidump-stackwalk query for symbols."
+                )
+        elif download_symbols:
+            self.symbols_url = os.environ["MOZ_SYMBOLS_URL"]
+            self.symbols_path = os.path.join(dirs["abs_fetches_dir"], "symbols")
+
     def download_and_extract(self, extract_dirs=None, suite_categories=None):
         """
         download and extract test zip / download installer
         """
+        if os.environ.get("MOZHARNESS_USE_FETCHES"):
+            self._use_fetches()
+            return
+
         # Swap plain http for https when we're downloading from ftp
         # See bug 957502 and friends
         from_ = "http://ftp.mozilla.org"
