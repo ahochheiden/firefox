@@ -15,7 +15,7 @@ from taskgraph.util import json
 
 from gecko_taskgraph.test.conftest import FakeParameters
 from gecko_taskgraph.transforms import test as test_transforms
-from gecko_taskgraph.transforms.test import chunk
+from gecko_taskgraph.transforms.test import chunk, other
 from gecko_taskgraph.transforms.test.chunk import DYNAMIC_CHUNK_DURATION
 from gecko_taskgraph.util import chunking
 
@@ -857,6 +857,18 @@ def test_drop_artifact_build_unsupported(
         )
     )
     assert bool(tasks) is expected_kept
+
+
+def test_perfherder_extra_options(run_transform, make_test_task):
+    task = make_test_task(
+        attributes={"unittest_suite": "mochitest-plain", "unittest_variant": "xorig"}
+    )
+    task = list(run_transform(other.set_perfherder_extra_options, task))[0]
+    assert task["worker"]["env"]["PERFHERDER_EXTRA_OPTIONS"] == "mochitest-plain xorig"
+
+    task = make_test_task(attributes={"unittest_suite": "xpcshell"})
+    task = list(run_transform(other.set_perfherder_extra_options, task))[0]
+    assert task["worker"]["env"]["PERFHERDER_EXTRA_OPTIONS"] == "xpcshell"
 
 
 if __name__ == "__main__":

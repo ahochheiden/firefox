@@ -2383,6 +2383,7 @@ class BaseScript(ScriptMixin, LogMixin):
             "framework": {"name": "mozharness"},
             "suites": [],
         }
+        extra_options = os.environ.get("PERFHERDER_EXTRA_OPTIONS", "").split()
         try:
             for action in self.all_actions:
                 if action not in self.actions:
@@ -2392,14 +2393,17 @@ class BaseScript(ScriptMixin, LogMixin):
                 start = time.monotonic()
                 self.run_action(action)
                 end = time.monotonic()
-                perfherder_data["suites"].append({
+                suite = {
                     "name": action,
                     "value": end - start,
                     "lowerIsBetter": True,
                     "unit": "s",
                     "shouldAlert": False,
                     "subtests": [],
-                })
+                }
+                if extra_options:
+                    suite["extraOptions"] = extra_options
+                perfherder_data["suites"].append(suite)
         except Exception:
             self.fatal("Uncaught exception: %s" % traceback.format_exc())
         finally:

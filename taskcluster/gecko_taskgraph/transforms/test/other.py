@@ -1285,3 +1285,15 @@ def resolve_openh264_version(config, tasks):
                     if key in fetch:
                         fetch[key] = fetch[key].format(openh264_version=version)
         yield task
+
+
+@transforms.add
+def set_perfherder_extra_options(config, tasks):
+    for task in tasks:
+        options = [task["attributes"]["unittest_suite"]]
+        variant = task["attributes"].get("unittest_variant")
+        if variant:
+            options.append(variant)
+        env = task.setdefault("worker", {}).setdefault("env", {})
+        env.setdefault("PERFHERDER_EXTRA_OPTIONS", " ".join(options))
+        yield task
