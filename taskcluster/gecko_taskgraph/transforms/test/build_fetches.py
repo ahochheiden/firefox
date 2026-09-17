@@ -105,11 +105,38 @@ def test_archives(task):
     return sorted(archives)
 
 
-def installer(task):
+INDEX_DEPENDENCY = "indexed-installer"
+INSTALLER_SUFFIXES = (
+    ".apk",
+    ".tar.bz2",
+    ".tar.xz",
+    ".tar.gz",
+    ".dmg",
+    ".installer-stub.exe",
+    ".installer.exe",
+    ".exe",
+    ".zip",
+)
+
+
+def index_search_label(kind, index):
+    return f"{kind}-index-search-{index}"
+
+
+def symbols_next_to_installer(path):
+    for suffix in INSTALLER_SUFFIXES:
+        if path.endswith(suffix):
+            return path[: -len(suffix)] + ".crashreporter-symbols.zip"
+    return path + ".crashreporter-symbols.zip"
+
+
+def installer(config, task):
     target = task.get("target")
     if isinstance(target, dict):
         if "index" in target:
-            return None
+            label = index_search_label(config.kind, target["index"])
+            task.setdefault("dependencies", {})[INDEX_DEPENDENCY] = label
+            return INDEX_DEPENDENCY, f"public/{target['name']}"
         return target["upstream-task"], target["name"]
     if task["mozharness"]["requires-signed-builds"]:
         return "build-signing", task["mozharness"]["build-artifact-name"]
@@ -134,12 +161,7 @@ def add_build_fetches(config, tasks):
             yield task
             continue
 
-        source = installer(task)
-        if source is None:
-            yield task
-            continue
-
-        upstream, path = source
+        upstream, path = installer(config, task)
         fetches = task.setdefault("fetches", {})
         fetches.setdefault(upstream, []).append({
             "artifact": f"/{path}",
@@ -159,11 +181,21 @@ def add_build_fetches(config, tasks):
         env = task.setdefault("worker", {}).setdefault("env", {})
         env["MOZHARNESS_USE_FETCHES"] = "1"
 
-        symbols = f"/{get_artifact_path(task, artifact_dir + SYMBOLS_ARCHIVE)}"
+        if upstream == INDEX_DEPENDENCY:
+            symbols_source = INDEX_DEPENDENCY
+            symbols = f"/{symbols_next_to_installer(path)}"
+        else:
+            symbols_source = "build"
+            symbols = f"/{get_artifact_path(task, artifact_dir + SYMBOLS_ARCHIVE)}"
         download_symbols = task["mozharness"].get("download-symbols")
         if download_symbols:
-            env["MOZ_SYMBOLS_URL"] = {"artifact-reference": f"<build{symbols}>"}
+            env["MOZ_SYMBOLS_URL"] = {
+                "artifact-reference": f"<{symbols_source}{symbols}>"
+            }
         if download_symbols is True:
-            build_fetches.append({"artifact": symbols, "dest": SYMBOLS_DEST})
+            fetches.setdefault(symbols_source, []).append({
+                "artifact": symbols,
+                "dest": SYMBOLS_DEST,
+            })
 
         yield task

@@ -427,7 +427,7 @@ def verify_test_packaging(task, taskgraph, scratch_pad, graph_config, parameters
         if exceptions:
             raise Exception("\n".join(exceptions))
         return
-    if task.kind in TEST_KINDS:
+    if task.kind in TEST_KINDS and "build" in task.dependencies:
         build_task = taskgraph[task.dependencies["build"]]
         scratch_pad[build_task.label] = 1
 

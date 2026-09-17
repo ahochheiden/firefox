@@ -727,6 +727,26 @@ def make_job_description(config, tasks):
         yield jobdesc
 
 
+@transforms.add
+def add_index_search_tasks(config, jobs):
+    marker = f"{config.kind}-index-search-"
+    seen = set()
+    for job in jobs:
+        yield job
+        for label in job.get("dependencies", {}).values():
+            if not label.startswith(marker) or label in seen:
+                continue
+            seen.add(label)
+            index = label[len(marker) :]
+            yield {
+                "label": label,
+                "description": f"Task found through the {index} index",
+                "worker-type": "invalid/always-optimized",
+                "run": {"using": "always-optimized"},
+                "optimization": {"index-search": [index]},
+            }
+
+
 def normpath(path):
     return path.replace("/", "\\")
 

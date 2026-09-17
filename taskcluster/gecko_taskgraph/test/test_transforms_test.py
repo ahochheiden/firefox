@@ -1091,16 +1091,74 @@ def test_build_fetches_upstream_target(run_transform, build_fetches_task):
     ]
 
 
-def test_build_fetches_index_target_left_alone(run_transform, build_fetches_task):
+def test_build_fetches_index_target(run_transform, build_fetches_task):
     task = run_build_fetches(
         run_transform,
         build_fetches_task(
             script="raptor_script.py",
+            download_symbols="ondemand",
             target={"index": "mobile.v2.reference-browser", "name": "target.apk"},
         ),
     )
-    assert "fetches" not in task
-    assert "worker" not in task
+    label = "fake-kind-index-search-mobile.v2.reference-browser"
+    assert task["dependencies"] == {"indexed-installer": label}
+    assert task["fetches"]["indexed-installer"] == [
+        {"artifact": "/public/target.apk", "extract": False}
+    ]
+    assert [a for a, _ in archive_fetches(task)] == [
+        "/public/build/target.common.tests.tar.zst",
+        "/public/build/target.condprof.tests.tar.zst",
+        "/public/build/target.raptor.tests.tar.zst",
+    ]
+    assert task["worker"]["env"] == {
+        "MOZHARNESS_USE_FETCHES": "1",
+        "MOZ_SYMBOLS_URL": {
+            "artifact-reference": (
+                "<indexed-installer/public/target.crashreporter-symbols.zip>"
+            )
+        },
+    }
+
+
+def test_build_fetches_index_target_symbols(run_transform, build_fetches_task):
+    index = "gecko.v2.mozilla-beta.shippable.latest.firefox.linux64-opt"
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(target={"index": index, "name": "build/target.tar.xz"}),
+    )
+    symbols = "/public/build/target.crashreporter-symbols.zip"
+    assert task["fetches"]["indexed-installer"] == [
+        {"artifact": "/public/build/target.tar.xz", "extract": False},
+        {"artifact": symbols, "dest": "symbols"},
+    ]
+    assert not any(f.get("dest") == "symbols" for f in task["fetches"]["build"])
+    assert task["worker"]["env"]["MOZ_SYMBOLS_URL"] == {
+        "artifact-reference": f"<indexed-installer{symbols}>"
+    }
+
+
+def test_add_index_search_tasks(run_transform):
+    label = "fake-kind-index-search-mobile.v2.reference-browser"
+    jobs = [
+        {
+            "label": "test-a",
+            "dependencies": {"build": "build-a", "indexed-installer": label},
+        },
+        {
+            "label": "test-b",
+            "dependencies": {"build": "build-b", "indexed-installer": label},
+        },
+        {"label": "test-c", "dependencies": {"build": "build-c"}},
+    ]
+    out = list(run_transform(test_transforms.add_index_search_tasks, jobs))
+    assert [job["label"] for job in out] == ["test-a", label, "test-b", "test-c"]
+    assert out[1] == {
+        "label": label,
+        "description": "Task found through the mobile.v2.reference-browser index",
+        "worker-type": "invalid/always-optimized",
+        "run": {"using": "always-optimized"},
+        "optimization": {"index-search": ["mobile.v2.reference-browser"]},
+    }
 
 
 def test_build_fetches_without_symbols(run_transform, build_fetches_task):
