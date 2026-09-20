@@ -205,8 +205,7 @@ def mozharness_test_on_docker(config, job, taskdesc):
         mozharness_url = f"<build/{get_artifact_path(taskdesc, 'mozharness.zip')}>"
         env["MOZHARNESS_URL"] = {"artifact-reference": mozharness_url}
 
-    if "MOZHARNESS_USE_FETCHES" in env:
-        env["MOZ_FETCHES_DIR"] = "{workdir}/workspace/fetches".format(**run)
+    env["MOZ_FETCHES_DIR"] = "{workdir}/workspace/fetches".format(**run)
 
     extra_config = {
         "installer_url": installer,

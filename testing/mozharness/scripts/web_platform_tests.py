@@ -538,21 +538,7 @@ class WebPlatformTest(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidM
         return cmd
 
     def download_and_extract(self):
-        super().download_and_extract(
-            extract_dirs=[
-                "mach",
-                "bin/*",
-                "config/*",
-                "extensions/*",
-                "mozbase/*",
-                "marionette/*",
-                "tools/*",
-                "web-platform/*",
-                "mozpack/*",
-                "mozbuild/*",
-            ],
-            suite_categories=["web-platform"],
-        )
+        super().download_and_extract()
         dirs = self.query_abs_dirs()
         if self.is_android:
             self.xre_path = dirs["abs_xre_dir"]

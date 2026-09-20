@@ -262,8 +262,7 @@ class AndroidHardwareTest(
                 "https"
             ],  # starting ssl port to use for the server
             "certs_path": os.path.join(dirs["abs_work_dir"], "tests/certs"),
-            # TestingMixin._download_and_extract_symbols() will set
-            # self.symbols_path when downloading/extracting.
+            # TestingMixin.download_and_extract() sets self.symbols_path.
             "symbols_path": self.symbols_path,
             "modules_dir": dirs["abs_modules_dir"],
             "installer_path": self.installer_path,
@@ -379,14 +378,6 @@ class AndroidHardwareTest(
                 suites.append((k, cat_suites[k]))
         return suites
 
-    def _query_suite_categories(self):
-        if self.test_suite:
-            categories = [self.test_suite]
-        else:
-            # per-test mode
-            categories = ["mochitest", "reftest", "xpcshell"]
-        return categories
-
     ##########################################
     # Actions for AndroidHardwareTest        #
     ##########################################
@@ -412,9 +403,9 @@ class AndroidHardwareTest(
 
     def download_and_extract(self):
         """
-        Download and extract product APK, tests.zip, and host utils.
+        Take the product APK, the tests and the host utils from the fetches.
         """
-        super().download_and_extract(suite_categories=self._query_suite_categories())
+        super().download_and_extract()
         dirs = self.query_abs_dirs()
         self.xre_path = dirs["abs_xre_dir"]
 

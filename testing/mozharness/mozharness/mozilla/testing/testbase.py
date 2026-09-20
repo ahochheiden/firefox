@@ -4,7 +4,6 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import copy
-import json
 import os
 import platform
 import shutil
@@ -14,7 +13,7 @@ import urllib.request
 from urllib.parse import ParseResult, urlparse
 
 from mozharness.base.errors import BaseErrorList
-from mozharness.base.log import FATAL, WARNING
+from mozharness.base.log import WARNING
 from mozharness.base.python import (
     ResourceMonitoringMixin,
     VirtualenvMixin,
@@ -29,18 +28,6 @@ from mozharness.mozilla.testing.verify_tools import (
     verify_config_options,
 )
 from mozharness.mozilla.tooltool import TooltoolMixin
-
-INSTALLER_SUFFIXES = (
-    ".apk",  # Android
-    ".tar.bz2",
-    ".tar.xz",
-    ".tar.gz",  # Linux
-    ".dmg",  # Mac
-    ".installer-stub.exe",
-    ".installer.exe",
-    ".exe",
-    ".zip",  # Windows
-)
 
 # https://searchfox.org/firefox-main/source/testing/config/tooltool-manifests
 TOOLTOOL_PLATFORM_DIR = {
@@ -201,61 +188,6 @@ class TestingMixin(
 
         return url
 
-    def query_prefixed_build_dir_url(self, suffix):
-        """Resolve a file name prefixed with platform and build details to a potential url
-        in the build upload directory where that file can be found.
-        """
-        if self.test_packages_url:
-            reference_suffixes = [".test_packages.json"]
-            reference_url = self.test_packages_url
-        elif self.installer_url:
-            reference_suffixes = INSTALLER_SUFFIXES
-            reference_url = self.installer_url
-        else:
-            self.fatal(
-                "Can't figure out build directory urls without an installer_url "
-                "or test_packages_url!"
-            )
-
-        url = None
-        for reference_suffix in reference_suffixes:
-            if reference_url.endswith(reference_suffix):
-                url = reference_url[: -len(reference_suffix)] + suffix
-                break
-
-        return url
-
-    def query_symbols_url(self, raise_on_failure=False):
-        if self.symbols_url:
-            return self.symbols_url
-
-        elif self.installer_url:
-            symbols_url = self.query_prefixed_build_dir_url(
-                ".crashreporter-symbols.zip"
-            )
-
-            # Check if the URL exists. If not, use none to allow mozcrash to auto-check for symbols
-            try:
-                if symbols_url:
-                    self._urlopen(symbols_url, timeout=120)
-                    self.symbols_url = symbols_url
-            except Exception as ex:
-                self.warning(
-                    "Cannot open symbols url %s (installer url: %s): %s"
-                    % (symbols_url, self.installer_url, ex)
-                )
-                if raise_on_failure:
-                    raise
-
-        # If no symbols URL can be determined let minidump-stackwalk query the symbols.
-        # As of now this only works for Nightly and release builds.
-        if not self.symbols_url:
-            self.warning(
-                "No symbols_url found. Let minidump-stackwalk query for symbols."
-            )
-
-        return self.symbols_url
-
     def _pre_config_lock(self, rw_config):
         for i, (target_file, target_dict) in enumerate(
             rw_config.all_cfg_files_and_dicts
@@ -375,115 +307,6 @@ You can set this by specifying --test-url URL
         if message:
             self.fatal(message + "Can't run download-and-extract... exiting")
 
-    def _read_packages_manifest(self):
-        dirs = self.query_abs_dirs()
-        source = self.download_file(
-            self.test_packages_url, parent_dir=dirs["abs_work_dir"], error_level=FATAL
-        )
-
-        with self.opened(os.path.realpath(source)) as (fh, err):
-            package_requirements = json.load(fh)
-            if not package_requirements or err:
-                self.fatal(
-                    "There was an error reading test package requirements from %s "
-                    "requirements: `%s` - error: `%s`"
-                    % (source, package_requirements or "None", err or "No error")
-                )
-        return package_requirements
-
-    def _download_test_packages(self, suite_categories, extract_dirs):
-        # Some platforms define more suite categories/names than others.
-        # This is a difference in the convention of the configs more than
-        # to how these tests are run, so we pave over these differences here.
-        aliases = {
-            "mochitest-chrome": "mochitest",
-            "mochitest-media": "mochitest",
-            "mochitest-plain": "mochitest",
-            "mochitest-plain-gpu": "mochitest",
-            "mochitest-webgl1-core": "mochitest",
-            "mochitest-webgl1-ext": "mochitest",
-            "mochitest-webgl2-core": "mochitest",
-            "mochitest-webgl2-ext": "mochitest",
-            "mochitest-webgl2-deqp": "mochitest",
-            "mochitest-webgpu": "mochitest",
-            "geckoview": "mochitest",
-            "geckoview-junit": "mochitest",
-            "reftest-qr": "reftest",
-            "crashtest": "reftest",
-            "crashtest-qr": "reftest",
-            "reftest-debug": "reftest",
-            "crashtest-debug": "reftest",
-        }
-        suite_categories = [aliases.get(name, name) for name in suite_categories]
-
-        dirs = self.query_abs_dirs()
-        test_install_dir = dirs.get(
-            "abs_test_install_dir", os.path.join(dirs["abs_work_dir"], "tests")
-        )
-        self.mkdir_p(test_install_dir)
-        package_requirements = self._read_packages_manifest()
-        target_packages = []
-        c = self.config
-        for category in suite_categories:
-            specified_suites = c.get(f"specified_{category}_suites")
-            if specified_suites:
-                found = False
-                for specified_suite in specified_suites:
-                    if specified_suite in package_requirements:
-                        target_packages.extend(package_requirements[specified_suite])
-                        found = True
-                if found:
-                    continue
-
-            if category in package_requirements:
-                target_packages.extend(package_requirements[category])
-            else:
-                # If we don't harness specific requirements, assume the common zip
-                # has everything we need to run tests for this suite.
-                target_packages.extend(package_requirements["common"])
-
-        # eliminate duplicates -- no need to download anything twice
-        target_packages = list(set(target_packages))
-        self.info(
-            "Downloading packages: %s for test suite categories: %s"
-            % (target_packages, suite_categories)
-        )
-        for file_name in target_packages:
-            target_dir = test_install_dir
-            unpack_dirs = extract_dirs
-
-            if "common.tests" in file_name and isinstance(unpack_dirs, list):
-                # Ensure that the following files are always getting extracted
-                required_files = [
-                    "mach",
-                    "mozinfo.json",
-                ]
-                for req_file in required_files:
-                    if req_file not in unpack_dirs:
-                        self.info(
-                            f"Adding '{req_file}' for extraction from common.tests archive"
-                        )
-                        unpack_dirs.append(req_file)
-
-            if "jsshell-" in file_name or file_name == "target.jsshell.zip":
-                self.info("Special-casing the jsshell zip file")
-                unpack_dirs = None
-                target_dir = dirs["abs_test_bin_dir"]
-
-            if "web-platform" in file_name:
-                self.info("Extracting everything from web-platform archive")
-                unpack_dirs = None
-
-            url = self.query_build_dir_url(file_name)
-            self.download_unpack(url, target_dir, extract_dirs=unpack_dirs)
-
-    def _download_test_zip(self, extract_dirs=None):
-        dirs = self.query_abs_dirs()
-        test_install_dir = dirs.get(
-            "abs_test_install_dir", os.path.join(dirs["abs_work_dir"], "tests")
-        )
-        self.download_unpack(self.test_url, test_install_dir, extract_dirs=extract_dirs)
-
     def structured_output(self, suite_category):
         unstructured_suites = self.config.get("unstructured_suites", [])
         return suite_category not in unstructured_suites
@@ -510,56 +333,6 @@ You can set this by specifying --test-url URL
             suite_category=suite_category, strict=strict, **kwargs
         )
 
-    def _download_installer(self):
-        file_name = None
-        if self.installer_path:
-            file_name = self.installer_path
-        dirs = self.query_abs_dirs()
-        source = self.download_file(
-            self.installer_url,
-            file_name=file_name,
-            parent_dir=dirs["abs_work_dir"],
-            error_level=FATAL,
-        )
-        self.installer_path = os.path.realpath(source)
-
-    def _download_and_extract_symbols(self):
-        dirs = self.query_abs_dirs()
-        if self.config.get("download_symbols") == "ondemand":
-            self.symbols_url = self.retry(
-                action=self.query_symbols_url,
-                kwargs={"raise_on_failure": True},
-                sleeptime=10,
-                failure_status=None,
-            )
-            self.symbols_path = self.symbols_url
-            return
-
-        else:
-            # In the case for 'ondemand', we're OK to proceed without getting a hold of the
-            # symbols right this moment, however, in other cases we need to at least retry
-            # before being unable to proceed (e.g. debug tests need symbols)
-            self.symbols_url = self.retry(
-                action=self.query_symbols_url,
-                kwargs={"raise_on_failure": True},
-                sleeptime=20,
-                error_level=FATAL,
-                error_message="We can't proceed without downloading symbols.",
-            )
-            if not self.symbols_path:
-                self.symbols_path = os.path.join(dirs["abs_work_dir"], "symbols")
-
-            fetched_symbols = None
-            if "abs_fetches_dir" in dirs:
-                fetched_symbols = os.path.join(
-                    dirs["abs_fetches_dir"], "target.crashreporter-symbols.zip"
-                )
-
-            if fetched_symbols and os.path.isfile(fetched_symbols):
-                self.unpack(fetched_symbols, self.symbols_path)
-            elif self.symbols_url:
-                self.download_unpack(self.symbols_url, self.symbols_path)
-
     def _fetched_tests_dirs(self):
         dirs = self.query_abs_dirs()
         tests = os.path.join(dirs["abs_fetches_dir"], "tests")
@@ -569,13 +342,15 @@ You can set this by specifying --test-url URL
         return tests, test_install_dir
 
     def clobber(self):
-        if os.environ.get("MOZHARNESS_USE_FETCHES"):
-            tests, test_install_dir = self._fetched_tests_dirs()
-            if os.path.isdir(test_install_dir) and not os.path.exists(tests):
-                shutil.move(test_install_dir, tests)
+        tests, test_install_dir = self._fetched_tests_dirs()
+        if os.path.isdir(test_install_dir) and not os.path.exists(tests):
+            shutil.move(test_install_dir, tests)
         super().clobber()
 
-    def _use_fetches(self):
+    def download_and_extract(self):
+        """
+        Take the installer, the tests and the symbols from the fetches directory
+        """
         dirs = self.query_abs_dirs()
         installer = os.path.basename(
             urllib.parse.unquote(urlparse(self.installer_url).path)
@@ -593,71 +368,16 @@ You can set this by specifying --test-url URL
             self.fatal(f"Neither {tests} nor {test_install_dir} exists")
         download_symbols = self.config.get("download_symbols")
         if download_symbols == "ondemand":
-            symbols_url = os.environ["MOZ_SYMBOLS_URL"]
-            if self.retry(
-                action=self._urlopen,
-                args=(symbols_url,),
-                kwargs={"timeout": 120},
-                sleeptime=10,
-                failure_status=None,
-            ):
-                self.symbols_url = symbols_url
-                self.symbols_path = symbols_url
+            self.symbols_url = os.environ.get("MOZ_SYMBOLS_URL")
+            if self.symbols_url:
+                self.symbols_path = self.symbols_url
             else:
                 self.warning(
-                    f"Cannot open symbols url {symbols_url}. "
-                    "Let minidump-stackwalk query for symbols."
+                    "No symbols_url found. Let minidump-stackwalk query for symbols."
                 )
         elif download_symbols:
             self.symbols_url = os.environ["MOZ_SYMBOLS_URL"]
             self.symbols_path = os.path.join(dirs["abs_fetches_dir"], "symbols")
-
-    def download_and_extract(self, extract_dirs=None, suite_categories=None):
-        """
-        download and extract test zip / download installer
-        """
-        if os.environ.get("MOZHARNESS_USE_FETCHES"):
-            self._use_fetches()
-            return
-
-        # Swap plain http for https when we're downloading from ftp
-        # See bug 957502 and friends
-        from_ = "http://ftp.mozilla.org"
-        to_ = "https://ftp-ssl.mozilla.org"
-        for attr in "symbols_url", "installer_url", "test_packages_url", "test_url":
-            url = getattr(self, attr)
-            if url and url.startswith(from_):
-                new_url = url.replace(from_, to_)
-                self.info("Replacing url %s -> %s" % (url, new_url))
-                setattr(self, attr, new_url)
-
-        if "test_url" in self.config:
-            # A user has specified a test_url directly, any test_packages_url will
-            # be ignored.
-            if self.test_packages_url:
-                self.error(
-                    'Test data will be downloaded from "%s", the specified test '
-                    ' package data at "%s" will be ignored.'
-                    % (self.config.get("test_url"), self.test_packages_url)
-                )
-
-            self._download_test_zip(extract_dirs)
-        else:
-            if not self.test_packages_url:
-                # The caller intends to download harness specific packages, but doesn't know
-                # where the packages manifest is located. This is the case when the
-                # test package manifest isn't set as a property, which is true
-                # for some self-serve jobs and platforms using parse_make_upload.
-                self.test_packages_url = self.query_prefixed_build_dir_url(
-                    ".test_packages.json"
-                )
-
-            suite_categories = suite_categories or ["common"]
-            self._download_test_packages(suite_categories, extract_dirs)
-
-        self._download_installer()
-        if self.config.get("download_symbols"):
-            self._download_and_extract_symbols()
 
     # create_virtualenv is in VirtualenvMixin.
 

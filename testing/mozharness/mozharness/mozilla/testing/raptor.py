@@ -1213,18 +1213,6 @@ class Raptor(TestingMixin, MercurialScript, CodeCoverageMixin, AndroidMixin):
         finally:
             self.logcat_stop()
 
-    def download_and_extract(self, extract_dirs=None, suite_categories=None):
-        # Use in-tree wptserve for Python 3.10 compatibility
-        extract_dirs = [
-            "bin/*",
-            "tools/wptserve/*",
-            "tools/wpt_third_party/h2/*",
-            "tools/wpt_third_party/pywebsocket3/*",
-        ]
-        return super().download_and_extract(
-            extract_dirs=extract_dirs, suite_categories=["common", "condprof", "raptor"]
-        )
-
     def create_virtualenv(self, **kwargs):
         """VirtualenvMixin.create_virtualenv() assumes we're using
         self.config['virtualenv_modules']. Since we're installing

@@ -157,10 +157,6 @@ def build_artifact_dir(task):
 @transforms.add
 def add_build_fetches(config, tasks):
     for task in tasks:
-        if not task["use-build-fetches"]:
-            yield task
-            continue
-
         upstream, path = installer(config, task)
         fetches = task.setdefault("fetches", {})
         fetches.setdefault(upstream, []).append({
@@ -178,17 +174,17 @@ def add_build_fetches(config, tasks):
                 ),
             })
 
-        env = task.setdefault("worker", {}).setdefault("env", {})
-        env["MOZHARNESS_USE_FETCHES"] = "1"
-
         if upstream == INDEX_DEPENDENCY:
             symbols_source = INDEX_DEPENDENCY
             symbols = f"/{symbols_next_to_installer(path)}"
         else:
             symbols_source = "build"
             symbols = f"/{get_artifact_path(task, artifact_dir + SYMBOLS_ARCHIVE)}"
+        if upstream == INDEX_DEPENDENCY and not task["target"].get("symbols", True):
+            task["mozharness"].pop("download-symbols", None)
         download_symbols = task["mozharness"].get("download-symbols")
         if download_symbols:
+            env = task.setdefault("worker", {}).setdefault("env", {})
             env["MOZ_SYMBOLS_URL"] = {
                 "artifact-reference": f"<{symbols_source}{symbols}>"
             }

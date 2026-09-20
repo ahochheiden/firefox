@@ -628,37 +628,6 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
         if "win" in self.platform_name() and os.path.exists(_python_interp):
             multiprocessing.set_executable(_python_interp)
 
-    def _query_symbols_url(self):
-        """query the full symbols URL based upon binary URL"""
-        # may break with name convention changes but is one less 'input' for script
-        if self.symbols_url:
-            return self.symbols_url
-
-        # Use simple text substitution to determine the symbols_url from the
-        # installer_url. This will not always work: For signed builds, the
-        # installer_url is likely an artifact in a signing task, which may not
-        # have a symbols artifact. It might be better to use the test target
-        # preferentially, like query_prefixed_build_dir_url() does (for future
-        # consideration, if this code proves troublesome).
-        symbols_url = None
-        self.info("finding symbols_url based upon self.installer_url")
-        if self.installer_url:
-            for ext in [".zip", ".dmg", ".tar.bz2", ".tar.xz"]:
-                if ext in self.installer_url:
-                    symbols_url = self.installer_url.replace(
-                        ext, ".crashreporter-symbols.zip"
-                    )
-            if not symbols_url:
-                self.fatal(
-                    "self.installer_url was found but symbols_url could \
-                        not be determined"
-                )
-        else:
-            self.fatal("self.installer_url was not found in self.config")
-        self.info("setting symbols_url as %s" % (symbols_url))
-        self.symbols_url = symbols_url
-        return self.symbols_url
-
     def _get_mozharness_test_paths(self, suite_category, suite):
         # test_paths is the group name, confirm_paths can be the path+testname
         # test_paths will always be the group name, unrelated to if confirm_paths is set or not.
@@ -700,7 +669,8 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
 
             str_format_values = {
                 "binary_path": self.binary_path,
-                "symbols_path": self._query_symbols_url(),
+                # TestingMixin.download_and_extract() sets self.symbols_path.
+                "symbols_path": self.symbols_path,
                 "abs_work_dir": dirs["abs_work_dir"],
                 "abs_app_dir": abs_app_dir,
                 "abs_res_dir": abs_res_dir,
@@ -712,11 +682,6 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
 
             if self.mochitest_flavor:
                 str_format_values.update({"mochitest_flavor": self.mochitest_flavor})
-
-            # TestingMixin._download_and_extract_symbols() will set
-            # self.symbols_path when downloading/extracting.
-            if self.symbols_path:
-                str_format_values["symbols_path"] = self.symbols_path
 
             if suite_category not in SUITE_NO_E10S:
                 if suite_category in SUITE_DEFAULT_E10S and not c["e10s"]:
@@ -1007,27 +972,6 @@ class DesktopUnittest(TestingMixin, MercurialScript, MozbaseMixin, CodeCoverageM
     # create_virtualenv is in VirtualenvMixin.
     # preflight_install is in TestingMixin.
     # install is in TestingMixin.
-
-    def download_and_extract(self):
-        """
-        download and extract test zip / download installer
-        optimizes which subfolders to extract from tests archive
-        """
-        c = self.config
-
-        extract_dirs = None
-
-        if c.get("run_all_suites"):
-            target_categories = SUITE_CATEGORIES
-        else:
-            target_categories = [
-                cat
-                for cat in SUITE_CATEGORIES
-                if self._query_specified_suites(cat) is not None
-            ]
-        super().download_and_extract(
-            extract_dirs=extract_dirs, suite_categories=target_categories
-        )
 
     def unlock_keyring(self):
         if os.environ.get("NEED_GNOME_KEYRING") == "true":

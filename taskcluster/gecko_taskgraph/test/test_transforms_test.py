@@ -882,7 +882,6 @@ def build_fetches_task(make_test_task):
             "mozharness": mozharness,
             "test-platform": test_platform,
             "try-name": suite,
-            "use-build-fetches": True,
             **extra,
         })
 
@@ -899,14 +898,6 @@ def archive_fetches(task):
         for fetch in task["fetches"]["build"]
         if fetch.get("dest", "").startswith("tests")
     ]
-
-
-def test_build_fetches_disabled(run_transform, build_fetches_task):
-    task = run_build_fetches(
-        run_transform, build_fetches_task(**{"use-build-fetches": False})
-    )
-    assert "fetches" not in task
-    assert "worker" not in task
 
 
 def test_build_fetches_desktop_debug(run_transform, build_fetches_task):
@@ -934,7 +925,6 @@ def test_build_fetches_desktop_debug(run_transform, build_fetches_task):
         ]
     }
     assert task["worker"]["env"] == {
-        "MOZHARNESS_USE_FETCHES": "1",
         "MOZ_SYMBOLS_URL": {
             "artifact-reference": (
                 "<build/public/build/target.crashreporter-symbols.zip>"
@@ -1091,13 +1081,20 @@ def test_build_fetches_upstream_target(run_transform, build_fetches_task):
     ]
 
 
-def test_build_fetches_index_target(run_transform, build_fetches_task):
+@pytest.mark.parametrize("download_symbols", ("ondemand", True), ids=("opt", "debug"))
+def test_build_fetches_index_target(
+    run_transform, build_fetches_task, download_symbols
+):
     task = run_build_fetches(
         run_transform,
         build_fetches_task(
             script="raptor_script.py",
-            download_symbols="ondemand",
-            target={"index": "mobile.v2.reference-browser", "name": "target.apk"},
+            download_symbols=download_symbols,
+            target={
+                "index": "mobile.v2.reference-browser",
+                "name": "target.apk",
+                "symbols": False,
+            },
         ),
     )
     label = "fake-kind-index-search-mobile.v2.reference-browser"
@@ -1110,14 +1107,8 @@ def test_build_fetches_index_target(run_transform, build_fetches_task):
         "/public/build/target.condprof.tests.tar.zst",
         "/public/build/target.raptor.tests.tar.zst",
     ]
-    assert task["worker"]["env"] == {
-        "MOZHARNESS_USE_FETCHES": "1",
-        "MOZ_SYMBOLS_URL": {
-            "artifact-reference": (
-                "<indexed-installer/public/target.crashreporter-symbols.zip>"
-            )
-        },
-    }
+    assert "worker" not in task
+    assert "download-symbols" not in task["mozharness"]
 
 
 def test_build_fetches_index_target_symbols(run_transform, build_fetches_task):
@@ -1193,7 +1184,7 @@ def test_build_fetches_without_symbols(run_transform, build_fetches_task):
         build_fetches_task(test_platform="linux64-asan/opt", download_symbols=None),
     )
     assert not any(f.get("dest") == "symbols" for f in task["fetches"]["build"])
-    assert task["worker"]["env"] == {"MOZHARNESS_USE_FETCHES": "1"}
+    assert "worker" not in task
 
 
 def test_perfherder_extra_options(run_transform, make_test_task):

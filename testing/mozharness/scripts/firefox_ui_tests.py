@@ -128,21 +128,6 @@ class FirefoxUIFunctionalTests(TestingMixin, VCSToolsScript, CodeCoverageMixin):
         )
         self.register_virtualenv_module(requirements=[requirements])
 
-    def download_and_extract(self):
-        """Override method from TestingMixin for more specific behavior."""
-        extract_dirs = [
-            "config/*",
-            "firefox-ui/*",
-            "marionette/*",
-            "mozbase/*",
-            "tools/mozterm/*",
-            "tools/wptserve/*",
-            "tools/wpt_third_party/*",
-            "mozpack/*",
-            "mozbuild/*",
-        ]
-        super().download_and_extract(extract_dirs=extract_dirs)
-
     def query_abs_dirs(self):
         if self.abs_dirs:
             return self.abs_dirs

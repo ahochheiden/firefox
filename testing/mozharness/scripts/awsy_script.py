@@ -139,10 +139,6 @@ class AWSY(TestingMixin, MercurialScript, TooltoolMixin, CodeCoverageMixin):
         self.abs_dirs = abs_dirs
         return self.abs_dirs
 
-    def download_and_extract(self, extract_dirs=None, suite_categories=None):
-        ret = super().download_and_extract(suite_categories=["common", "awsy"])
-        return ret
-
     @PreScriptAction("create-virtualenv")
     def _pre_create_virtualenv(self, action):
         requirements_files = [
@@ -251,8 +247,7 @@ class AWSY(TestingMixin, MercurialScript, TooltoolMixin, CodeCoverageMixin):
         cmd.append(
             "--gecko-log=%s" % os.path.join(dirs["abs_blob_upload_dir"], "gecko.log")
         )
-        # TestingMixin._download_and_extract_symbols() should set
-        # self.symbols_path
+        # TestingMixin.download_and_extract() sets self.symbols_path.
         cmd.append("--symbols-path=%s" % self.symbols_path)
 
         if self.config["test_about_blank"]:

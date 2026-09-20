@@ -31,9 +31,11 @@ task-defaults:
                     android-hw.*-aarch64.*/.*:
                         index: mobile.v2.reference-browser.raptor.latest.arm64-v8a
                         name: target.arm64-v8a.apk
+                        symbols: false
                     default:
                         index: mobile.v2.reference-browser.raptor.latest.armeabi-v7a
                         name: target.armeabi-v7a.apk
+                        symbols: false
             default: geckoview_example.apk
     virtualization: hardware
     raptor:

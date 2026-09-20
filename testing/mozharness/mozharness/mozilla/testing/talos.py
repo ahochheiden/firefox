@@ -733,17 +733,6 @@ class Talos(TestingMixin, MercurialScript, TooltoolMixin, CodeCoverageMixin):
     # Action methods. {{{1
     # clobber defined in BaseScript
 
-    def download_and_extract(self, extract_dirs=None, suite_categories=None):
-        # Use in-tree wptserve for Python 3.10 compatibility
-        extract_dirs = [
-            "tools/wptserve/*",
-            "tools/wpt_third_party/h2/*",
-            "tools/wpt_third_party/pywebsocket3/*",
-        ]
-        return super().download_and_extract(
-            extract_dirs=extract_dirs, suite_categories=["common", "talos"]
-        )
-
     def create_virtualenv(self, **kwargs):
         """VirtualenvMixin.create_virtualenv() assuemes we're using
         self.config['virtualenv_modules']. Since we are installing

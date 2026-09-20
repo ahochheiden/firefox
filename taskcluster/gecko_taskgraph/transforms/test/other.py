@@ -251,7 +251,6 @@ def handle_keyed_by(config, tasks):
         "mozharness.requires-signed-builds",
         "build-signing-label",
         "dependencies",
-        "use-build-fetches",
     ]
     for task in tasks:
         for field in fields:
