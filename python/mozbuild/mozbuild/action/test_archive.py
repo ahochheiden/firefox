@@ -9,9 +9,12 @@
 # generation faster.
 
 import argparse
+import atexit
 import itertools
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 import buildconfig
@@ -19,7 +22,8 @@ import mozpack.path as mozpath
 from manifestparser import TestManifest
 from mozpack.archive import create_tar_gz_from_files, create_tar_zst_from_files
 from mozpack.copier import FileRegistry
-from mozpack.files import ExistingFile, FileFinder
+from mozpack.executables import is_executable, may_strip
+from mozpack.files import ExecutableFile, ExistingFile, File, FileFinder
 from mozpack.manifests import InstallManifest
 from mozpack.mozjar import JarWriter
 from reftest import ReftestManifest
@@ -706,6 +710,7 @@ ARCHIVE_FILES = {
                 for f in TRAIN_HOP_DLLS
             ],
             "dest": "bin",
+            "strip": True,
         },
     ],
 }
@@ -789,6 +794,21 @@ def find_generated_harness_files():
     ]
 
 
+STRIP_DIR = None
+
+
+def stripped(f, path):
+    if not may_strip(f.path) or not is_executable(f.path):
+        return f
+    global STRIP_DIR
+    if STRIP_DIR is None:
+        STRIP_DIR = tempfile.mkdtemp()
+        atexit.register(shutil.rmtree, STRIP_DIR, ignore_errors=True)
+    dest = os.path.join(STRIP_DIR, path)
+    ExecutableFile(f.path).copy(dest)
+    return File(dest)
+
+
 def find_files(archive):
     extra_entries = []
     generated_harness_files = find_generated_harness_files()
@@ -847,6 +867,8 @@ def find_files(archive):
         for pattern in patterns:
             for raw_p, f in finder.find(pattern):
                 p = mozpath.join(dest, raw_p) if dest else raw_p
+                if entry.get("strip"):
+                    f = stripped(f, raw_p)
                 yield p, f
 
 
