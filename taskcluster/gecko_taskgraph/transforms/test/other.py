@@ -1251,21 +1251,6 @@ def set_webgpu_ignore_blocklist(config, tasks):
 
 
 @transforms.add
-def add_symbols_to_xpcshell_mochitest(config, tests):
-    for test in tests:
-        name = test.get("test-name", "").lower()
-        if "xpcshell" in name or "mochitest" in name:
-            test_platform = test.get("test-platform", "")
-            if not any(san in test_platform for san in ("asan", "tsan")):
-                fetches = test.setdefault("fetches", {})
-                fetches.setdefault("build", []).append({
-                    "artifact": "target.crashreporter-symbols.zip",
-                    "extract": False,
-                })
-        yield test
-
-
-@transforms.add
 def resolve_openh264_version(config, tasks):
     """Substitute the OpenH264 version into openh264-plugin fetch paths.
 

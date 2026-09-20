@@ -1173,32 +1173,6 @@ def test_add_index_search_tasks(run_transform):
     }
 
 
-@pytest.mark.parametrize(
-    "download_symbols,kept",
-    (
-        pytest.param(True, False, id="extracted-copy-replaces-zip"),
-        pytest.param("ondemand", True, id="zip-stays-without-extracted-copy"),
-    ),
-)
-def test_build_fetches_profiler_symbols_zip(
-    run_transform, build_fetches_task, download_symbols, kept
-):
-    task = build_fetches_task(download_symbols=download_symbols)
-    task["fetches"] = {
-        "build": [{"artifact": "target.crashreporter-symbols.zip", "extract": False}]
-    }
-    task = run_build_fetches(run_transform, task)
-    zips = [
-        f
-        for f in task["fetches"]["build"]
-        if f["artifact"] == "target.crashreporter-symbols.zip"
-    ]
-    assert bool(zips) == kept
-    assert any(f.get("dest") == "symbols" for f in task["fetches"]["build"]) == (
-        download_symbols is True
-    )
-
-
 def test_build_fetches_without_symbols(run_transform, build_fetches_task):
     task = run_build_fetches(
         run_transform,

@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import atexit
+import http.client
 import os
 import platform
 import shutil
@@ -13,6 +14,7 @@ import zipfile
 from functools import cache
 from pathlib import Path
 from urllib.parse import unquote
+from urllib.request import urlopen
 
 from mozlog import get_proxy_logger
 
@@ -25,6 +27,29 @@ LOG = get_proxy_logger("profiler")
 BREAKPAD_SYMBOL_SERVER = "https://symbols.mozilla.org/"
 SYMBOL_SERVER_TIMEOUT = 60  # seconds
 SAMPLY_WAIT_TIMEOUT = 60  # seconds
+
+
+def _download_symbol_zip(url, dest, attempts=3):
+    for attempt in range(1, attempts + 1):
+        try:
+            with urlopen(url, timeout=SYMBOL_SERVER_TIMEOUT) as response:
+                with dest.open("wb") as fh:
+                    shutil.copyfileobj(response, fh)
+            return dest
+        except (OSError, http.client.HTTPException) as e:
+            LOG.warning(f"Downloading {url} failed ({attempt}/{attempts}): {e}")
+            if attempt == attempts:
+                raise
+            time.sleep(5 * attempt)
+
+
+def _extract_symbol_zip(symbol_zip):
+    breakpad_symbol_dir = Path(tempfile.mkdtemp(prefix="breakpad_symbols"))
+    atexit.register(shutil.rmtree, breakpad_symbol_dir, ignore_errors=True)
+    with zipfile.ZipFile(symbol_zip, "r") as zipf:
+        zipf.extractall(breakpad_symbol_dir)
+    LOG.info(f"Extracted symbols to {breakpad_symbol_dir}")
+    return breakpad_symbol_dir
 
 
 @cache
@@ -44,12 +69,13 @@ def get_extracted_symbols():
                 return symbol_dir
             symbol_zip = Path(base_path) / "target.crashreporter-symbols.zip"
             if symbol_zip.exists():
-                breakpad_symbol_dir = Path(tempfile.mkdtemp(prefix="breakpad_symbols"))
-                atexit.register(shutil.rmtree, breakpad_symbol_dir, ignore_errors=True)
-                with zipfile.ZipFile(symbol_zip, "r") as zipf:
-                    zipf.extractall(breakpad_symbol_dir)
-                LOG.info(f"Extracted symbols to {breakpad_symbol_dir}")
-                return breakpad_symbol_dir
+                return _extract_symbol_zip(symbol_zip)
+            symbols_url = os.environ.get("MOZ_SYMBOLS_URL")
+            if symbols_url:
+                with tempfile.TemporaryDirectory() as download_dir:
+                    symbol_zip = Path(download_dir) / "target.crashreporter-symbols.zip"
+                    _download_symbol_zip(symbols_url, symbol_zip)
+                    return _extract_symbol_zip(symbol_zip)
             LOG.warning("Symbol directory not found.")
         else:
             if "MOZ_DEVELOPER_OBJ_DIR" in os.environ:

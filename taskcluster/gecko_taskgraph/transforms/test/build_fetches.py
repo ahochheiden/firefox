@@ -194,11 +194,6 @@ def add_build_fetches(config, tasks):
                 "artifact-reference": f"<{symbols_source}{symbols}>"
             }
         if download_symbols is True:
-            fetches["build"] = [
-                fetch
-                for fetch in fetches["build"]
-                if fetch["artifact"] != SYMBOLS_ARCHIVE
-            ]
             fetches.setdefault(symbols_source, []).append({
                 "artifact": symbols,
                 "dest": SYMBOLS_DEST,
