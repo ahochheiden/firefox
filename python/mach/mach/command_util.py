@@ -183,7 +183,6 @@ MACH_COMMANDS = {
     "mozbuild-reference": MachCommandReference(
         "python/mozbuild/mozbuild/frontend/mach_commands.py",
     ),
-    "mozharness": MachCommandReference("testing/mozharness/mach_commands.py"),
     "mozregression": MachCommandReference("tools/mach_commands.py"),
     "newtab": MachCommandReference("browser/extensions/newtab/mach_commands.py"),
     "node": MachCommandReference("tools/mach_commands.py"),

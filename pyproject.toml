@@ -81,7 +81,6 @@ lint.exclude = [
   "testing/marionette/mach_commands.py",
   "testing/mozharness/examples/**",
   "testing/mozharness/external_tools/**",
-  "testing/mozharness/mach_commands.py",
   "testing/mozharness/manifestparser/**",
   "testing/mozharness/mozprocess/**",
   "testing/parse_build_tests_ccov.py",
