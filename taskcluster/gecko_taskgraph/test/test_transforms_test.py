@@ -915,10 +915,6 @@ def test_build_fetches_desktop_debug(run_transform, build_fetches_task):
                 "dest": "tests",
             },
             {
-                "artifact": "/public/build/target.trainhop.tests.tar.zst",
-                "dest": "tests",
-            },
-            {
                 "artifact": "/public/build/target.crashreporter-symbols.zip",
                 "dest": "symbols",
             },
@@ -1000,7 +996,6 @@ def test_build_fetches_android_shippable_per_test(run_transform, build_fetches_t
         ("/public/build/en-US/target.condprof.tests.tar.zst", "tests"),
         ("/public/build/en-US/target.mochitest.tests.tar.zst", "tests"),
         ("/public/build/en-US/target.reftest.tests.tar.zst", "tests"),
-        ("/public/build/en-US/target.trainhop.tests.tar.zst", "tests"),
         ("/public/build/en-US/target.xpcshell.tests.tar.zst", "tests"),
     ]
     assert task["worker"]["env"]["MOZ_SYMBOLS_URL"] == {
@@ -1051,6 +1046,32 @@ def test_build_fetches_script_categories(
     assert [a for a, _ in archive_fetches(task)] == [
         f"/public/build/target.{name}.tests.tar.zst" for name in expected
     ]
+
+
+@pytest.mark.parametrize(
+    "variant,expected",
+    (
+        pytest.param(None, False, id="no-variant"),
+        pytest.param("xorig", False, id="other-variant"),
+        pytest.param("trainhop-release", True, id="trainhop-release"),
+        pytest.param("trainhop-beta+xorig", True, id="trainhop-beta-composite"),
+    ),
+)
+def test_build_fetches_trainhop_variants(
+    run_transform, build_fetches_task, variant, expected
+):
+    task = run_build_fetches(
+        run_transform,
+        build_fetches_task(
+            attributes={
+                "unittest_suite": "mochitest-browser-chrome",
+                "unittest_category": "mochitest",
+                "unittest_variant": variant,
+            }
+        ),
+    )
+    archives = [a for a, _ in archive_fetches(task)]
+    assert ("/public/build/target.trainhop.tests.tar.zst" in archives) == expected
 
 
 def test_build_fetches_signed_installer(run_transform, build_fetches_task):

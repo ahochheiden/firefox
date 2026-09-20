@@ -25,6 +25,8 @@ SYMBOLS_DEST = "symbols"
 COMMON_ARCHIVE = "target.common.tests.tar.zst"
 JSSHELL_ARCHIVE = "target.jsshell.zip"
 SYMBOLS_ARCHIVE = "target.crashreporter-symbols.zip"
+TRAINHOP_ARCHIVE = "target.trainhop.tests.tar.zst"
+TRAINHOP_VARIANTS = ("trainhop-release", "trainhop-beta")
 MULTI_LOCALE_VARIANTS = (
     "shippable",
     "shippable-qr",
@@ -102,6 +104,9 @@ def test_archives(task):
     for category in suite_categories(task):
         harness = SUITE_CATEGORY_ALIASES.get(category, category)
         archives.update(packages.get(harness, packages["common"]))
+    variant = task["attributes"].get("unittest_variant") or ""
+    if not set(variant.split("+")) & set(TRAINHOP_VARIANTS):
+        archives.discard(TRAINHOP_ARCHIVE)
     return sorted(archives)
 
 
