@@ -4,8 +4,10 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import copy
+import glob
 import os
 import platform
+import plistlib
 import shutil
 import ssl
 import urllib.parse
@@ -356,6 +358,18 @@ You can set this by specifying --test-url URL
             urllib.parse.unquote(urlparse(self.installer_url).path)
         )
         self.installer_path = os.path.join(dirs["abs_fetches_dir"], installer)
+        if installer.endswith(".tar.zst"):
+            apps = glob.glob(os.path.join(dirs["abs_fetches_dir"], "*.app"))
+            if len(apps) != 1:
+                self.fatal(f"Expected one extracted .app in fetches, found {apps}")
+            app_install_dir = dirs.get(
+                "abs_app_install_dir", os.path.join(dirs["abs_work_dir"], "application")
+            )
+            self.mkdir_p(app_install_dir)
+            self.installer_path = os.path.join(
+                app_install_dir, os.path.basename(apps[0])
+            )
+            os.rename(apps[0], self.installer_path)
         tests, test_install_dir = self._fetched_tests_dirs()
         if os.path.isdir(tests):
             self.mkdir_p(os.path.dirname(test_install_dir))
@@ -422,7 +436,15 @@ Did you run with --create-virtualenv? Is mozinstall in virtualenv_modules?"""
         )
 
     def install(self):
-        self.binary_path = self.install_app(app=self.config.get("application"))
+        if os.path.isdir(self.installer_path):
+            plist = os.path.join(self.installer_path, "Contents", "Info.plist")
+            with open(plist, "rb") as fh:
+                executable = plistlib.load(fh)["CFBundleExecutable"]
+            self.binary_path = os.path.join(
+                self.installer_path, "Contents", "MacOS", executable
+            )
+        else:
+            self.binary_path = self.install_app(app=self.config.get("application"))
         self.install_dir = os.path.dirname(self.binary_path)
 
     def uninstall_app(self, install_dir=None):

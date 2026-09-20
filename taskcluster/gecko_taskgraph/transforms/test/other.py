@@ -292,7 +292,10 @@ def set_target(config, tasks):
             target = task["target"]
         if not target:
             if build_platform.startswith("macosx"):
-                target = "target.dmg"
+                if task["mozharness"]["requires-signed-builds"]:
+                    target = "target.dmg"
+                else:
+                    target = "target.tar.zst"
             elif build_platform.startswith("android"):
                 target = "target.apk"
             elif build_platform.startswith("win"):

@@ -166,7 +166,7 @@ def add_build_fetches(config, tasks):
         fetches = task.setdefault("fetches", {})
         fetches.setdefault(upstream, []).append({
             "artifact": f"/{path}",
-            "extract": False,
+            "extract": path.endswith(".tar.zst"),
         })
 
         artifact_dir = build_artifact_dir(task)

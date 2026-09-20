@@ -24,6 +24,7 @@ FORMAT_SUFFIX = {
     "TGZ": ".tar.gz",
     "XZ": ".tar.xz",
     "BZ2": ".tar.bz2",
+    "TZST": ".tar.zst",
     "ZIP": ".zip",
     "DMG": ".dmg",
     "APK": "",
@@ -79,7 +80,7 @@ def main(argv):
     parser.add_argument(
         "--format",
         required=True,
-        choices=("TAR", "TGZ", "XZ", "BZ2", "ZIP", "DMG"),
+        choices=("TAR", "TGZ", "XZ", "BZ2", "TZST", "ZIP", "DMG"),
     )
     parser.add_argument("--cwd", required=True)
     parser.add_argument("--pkg-dir", required=True)
@@ -120,6 +121,12 @@ def main(argv):
         else:
             tar_args = [args.pkg_dir]
         return _run_tar_pipeline(args.tar, cwd, tar_args, output, ["bzip2", "-vf"])
+    if args.format == "TZST":
+        if args.app_name:
+            tar_args = ["-C", args.pkg_dir, args.app_name]
+        else:
+            tar_args = [args.pkg_dir]
+        return _run_tar_pipeline(args.tar, cwd, tar_args, output, ["zstd", "-T0", "-q"])
     if args.format == "ZIP":
         return _zip_package(cwd, args.pkg_dir, output)
     return _make_dmg(

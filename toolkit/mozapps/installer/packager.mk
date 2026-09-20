@@ -141,6 +141,16 @@ make-package-internal: prepare-package make-sourcestamp-file
 	echo $(PACKAGE) > $(ABS_DIST)/package_name.txt
 ifeq ($(MOZ_PKG_FORMAT),DMG)
 	$(call py_action,verify_dmg $(PACKAGE),'$(ABS_DIST)/$(PACKAGE)' '$(MOZ_MACBUNDLE_NAME)')
+ifdef MOZ_AUTOMATION
+	$(call py_action,package TZST, \
+	  --format TZST \
+	  --cwd '$(DIST)' \
+	  --pkg-dir '$(MOZ_PKG_DIR)' \
+	  --output-dir '$(PKG_PATH)' \
+	  --basename '$(PKG_BASENAME)' \
+	  --tar '$(TAR)' \
+	  --app-name '$(MOZ_MACBUNDLE_NAME)')
+endif
 endif
 
 make-package: FORCE
