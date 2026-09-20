@@ -38,6 +38,10 @@ def get_extracted_symbols():
     try:
         if "MOZ_AUTOMATION" in os.environ:
             base_path = os.environ["MOZ_FETCHES_DIR"]
+            symbol_dir = Path(base_path) / "symbols"
+            if symbol_dir.is_dir():
+                LOG.info(f"Using extracted symbols in {symbol_dir}")
+                return symbol_dir
             symbol_zip = Path(base_path) / "target.crashreporter-symbols.zip"
             if symbol_zip.exists():
                 breakpad_symbol_dir = Path(tempfile.mkdtemp(prefix="breakpad_symbols"))
