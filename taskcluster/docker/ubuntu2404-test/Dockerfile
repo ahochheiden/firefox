@@ -32,6 +32,9 @@ RUN     bash /setup/system-setup.sh
 # %include taskcluster/scripts/tester/test-linux.sh
 ADD topsrcdir/taskcluster/scripts/tester/test-linux.sh /builds/worker/bin/test-linux.sh
 
+# %include taskcluster/scripts/misc/fetch-content
+ADD topsrcdir/taskcluster/scripts/misc/fetch-content /usr/local/bin/fetch-content
+
 # Set variable normally configured at login, by the shells parent process, these
 # are taken from GNU su manual
 ENV     LANG            en_US.UTF-8

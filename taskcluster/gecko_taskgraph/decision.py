@@ -284,7 +284,7 @@ def taskgraph_decision(options, parameters):
         to_copy = {
             scripts_dir / "run-task": f"{ARTIFACTS_DIR}/run-task-hg",
             scripts_dir / "tester" / "test-linux.sh": ARTIFACTS_DIR,
-            taskgraph_dir / "run-task" / "fetch-content": ARTIFACTS_DIR,
+            scripts_dir / "misc" / "fetch-content": ARTIFACTS_DIR,
             taskgraph_dir / "run-task" / "run-task": f"{ARTIFACTS_DIR}/run-task-git",
             scripts_dir / "robustcheckout.py": ARTIFACTS_DIR,
         }
