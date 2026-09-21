@@ -139,6 +139,9 @@ make-package-internal: prepare-package make-sourcestamp-file
 	@echo 'Compressing...'
 	$(call MAKE_PACKAGE,$(DIST))
 	echo $(PACKAGE) > $(ABS_DIST)/package_name.txt
+ifeq ($(MOZ_PKG_FORMAT),DMG)
+	$(call py_action,verify_dmg $(PACKAGE),'$(ABS_DIST)/$(PACKAGE)' '$(MOZ_MACBUNDLE_NAME)')
+endif
 
 make-package: FORCE
 	$(MAKE) make-package-internal
