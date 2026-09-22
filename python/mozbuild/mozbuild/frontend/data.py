@@ -403,6 +403,10 @@ class Linkable(ContextDerived):
             return ObjDirPath(self._context, "!" + self.name)
 
     @property
+    def dso_link_flags(self):
+        return []
+
+    @property
     def lto_object_path_flags(self):
         # When linking on macOS, debug info is not linked along with the final
         # binary, and the dwarf data stays in object files until they are
@@ -957,6 +961,20 @@ class SharedLibrary(Library):
             return ObjDirPath(self._context, "!" + self.import_name)
         assert self.import_name == self.name
         return self.output_path
+
+    @property
+    def dso_link_flags(self):
+        if self.config.substs.get("OS_ARCH") != "Darwin":
+            return []
+        return [
+            "-dynamiclib",
+            "-install_name",
+            f"@rpath/{self.lib_name}",
+            "-compatibility_version",
+            "1",
+            "-current_version",
+            "1",
+        ]
 
 
 class HostSharedLibrary(HostMixin, Library):

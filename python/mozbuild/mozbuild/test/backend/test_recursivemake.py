@@ -2084,6 +2084,20 @@ class TestRecursiveMakeBackend(BackendTester):
                 ][0]
                 self.assertEqual(program, expected_program)
 
+    def test_macos_install_name(self):
+        env = self._get_environment(
+            "shared-lib-paths", substs={"OS_ARCH": "Darwin", "DLL_SUFFIX": ".dylib"}
+        )
+        self._consume("shared-lib-paths", RecursiveMakeBackend, env=env)
+
+        with open(os.path.join(env.topobjdir, "dist-bin", "backend.mk")) as fh:
+            content = fh.read()
+        self.assertIn(
+            "EXTRA_DSO_LDOPTS += -dynamiclib -install_name @rpath/libdist-bin.dylib "
+            "-compatibility_version 1 -current_version 1\n",
+            content,
+        )
+
     def test_no_pgo_source(self):
         env = self._consume("no-pgo-source", RecursiveMakeBackend)
 
