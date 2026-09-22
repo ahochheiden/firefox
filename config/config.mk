@@ -199,14 +199,6 @@ ifdef SCCACHE_CLIENT_SIDE
 export SCCACHE_CLIENT_SIDE
 endif
 
-ifeq ($(OS_ARCH),WINNT)
-ifneq (,$(filter msvc clang-cl,$(CC_TYPE)))
-WIN32_EXE_LDFLAGS += $(WIN32_EXE_DEFAULT_LDFLAGS)
-else
-MOZ_PROGRAM_LDFLAGS += $(WIN32_EXE_DEFAULT_LDFLAGS)
-endif
-endif
-
 -include $(topsrcdir)/$(MOZ_BUILD_APP)/app-config.mk
 
 ######################################################################

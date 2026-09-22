@@ -374,9 +374,9 @@ $(PROGRAM): $(PROGOBJS) $(STATIC_LIBS) $(call resfile,$(PROGRAM)) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_Program $(@F))
 ifeq (clang-cl_WINNT,$(CC_TYPE)_$(OS_ARCH))
-	$(LINKER) -OUT:$@ -PDB:$(LINK_PDBFILE) -IMPLIB:$(basename $(@F)).lib $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(MOZ_PROGRAM_LDFLAGS) $($(notdir $@)_OBJS) $(filter %.res,$^) $(STATIC_LIBS) $(SHARED_LIBS) $(OS_LIBS)
+	$(LINKER) -OUT:$@ -PDB:$(LINK_PDBFILE) -IMPLIB:$(basename $(@F)).lib $(WIN32_EXE_LDFLAGS) $(COMPUTED_PROGRAM_LDFLAGS) $(LDFLAGS) $(MOZ_PROGRAM_LDFLAGS) $($(notdir $@)_OBJS) $(filter %.res,$^) $(STATIC_LIBS) $(SHARED_LIBS) $(OS_LIBS)
 else # !WINNT || !clang-cl
-	$(call EXPAND_CC_OR_CXX,$@) -o $@ $(COMPUTED_CXX_LDFLAGS) $($(notdir $@)_OBJS) $(filter %.res,$^) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(STATIC_LIBS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(OS_LIBS)
+	$(call EXPAND_CC_OR_CXX,$@) -o $@ $(COMPUTED_CXX_LDFLAGS) $($(notdir $@)_OBJS) $(filter %.res,$^) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(STATIC_LIBS) $(COMPUTED_PROGRAM_LDFLAGS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(OS_LIBS)
 	$(call py_action,check_binary $(@F),$@)
 endif # WINNT && clang-cl
 
@@ -416,9 +416,9 @@ $(SIMPLE_PROGRAMS):
 	$(REPORT_BUILD)
 	$(call BUILDSTATUS,START_Program $(@F))
 ifeq (clang-cl_WINNT,$(CC_TYPE)_$(OS_ARCH))
-	$(LINKER) -out:$@ -pdb:$(LINK_PDBFILE) $($@_OBJS) $(filter %.res,$^) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(MOZ_PROGRAM_LDFLAGS) $(STATIC_LIBS) $(SHARED_LIBS) $(OS_LIBS)
+	$(LINKER) -out:$@ -pdb:$(LINK_PDBFILE) $($@_OBJS) $(filter %.res,$^) $(WIN32_EXE_LDFLAGS) $(COMPUTED_PROGRAM_LDFLAGS) $(LDFLAGS) $(MOZ_PROGRAM_LDFLAGS) $(STATIC_LIBS) $(SHARED_LIBS) $(OS_LIBS)
 else
-	$(call EXPAND_CC_OR_CXX,$@) $(COMPUTED_CXX_LDFLAGS) -o $@ $($@_OBJS) $(filter %.res,$^) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(STATIC_LIBS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(OS_LIBS)
+	$(call EXPAND_CC_OR_CXX,$@) $(COMPUTED_CXX_LDFLAGS) -o $@ $($@_OBJS) $(filter %.res,$^) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(STATIC_LIBS) $(COMPUTED_PROGRAM_LDFLAGS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(OS_LIBS)
 	$(call py_action,check_binary $(@F),$@)
 endif # WINNT && clang-cl
 

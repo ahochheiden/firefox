@@ -237,6 +237,14 @@ class TestEmitterBasic(unittest.TestCase):
             self.assertEqual(compile_flags[var][0], "-flto=thin")
         self.assertEqual(dict(ldflags.get_flags())["LDFLAGS"][0], "-flto=thin")
 
+    def test_win32_exe_default_ldflags(self):
+        reader = self.reader(
+            "compile-flags",
+            extra_substs={"WIN32_EXE_DEFAULT_LDFLAGS": ["-STACK:8388608"]},
+        )
+        sources, ldflags, lib, flags = self.read_topsrcdir(reader)
+        self.assertEqual(ldflags.flags["WIN32_EXE_DEFAULT"], ["-STACK:8388608"])
+
     def test_pgo_flags(self):
         reader = self.reader(
             "compile-flags",
