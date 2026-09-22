@@ -618,6 +618,16 @@ class CompileFlags(TargetCompileFlags):
                 ("CXXFLAGS",),
             ),
             (
+                "OS_COMPILE_CMFLAGS",
+                context.config.substs.get("OS_COMPILE_CMFLAGS"),
+                ("CMFLAGS",),
+            ),
+            (
+                "OS_COMPILE_CMMFLAGS",
+                context.config.substs.get("OS_COMPILE_CMMFLAGS"),
+                ("CMMFLAGS",),
+            ),
+            (
                 "OS_CPPFLAGS",
                 context.config.substs.get("OS_CPPFLAGS"),
                 ("CXXFLAGS", "CFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
@@ -669,6 +679,8 @@ class CompileFlags(TargetCompileFlags):
             ),
             ("MOZBUILD_CFLAGS", None, ("CFLAGS",)),
             ("MOZBUILD_CXXFLAGS", None, ("CXXFLAGS",)),
+            ("MOZBUILD_CMFLAGS", None, ("CMFLAGS",)),
+            ("MOZBUILD_CMMFLAGS", None, ("CMMFLAGS",)),
             (
                 "COVERAGE",
                 context.config.substs.get("COVERAGE_CFLAGS"),

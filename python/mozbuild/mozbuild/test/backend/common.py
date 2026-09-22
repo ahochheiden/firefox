@@ -54,6 +54,18 @@ CONFIGS = defaultdict(
                 "LIB_SUFFIX": "a",
             },
         },
+        "database-objc": {
+            "defines": {},
+            "substs": {
+                "CC": ["clang"],
+                "CXX": ["clang++"],
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+                "OS_COMPILE_CMFLAGS": ["-fobjc-exceptions"],
+                "OS_COMPILE_CMMFLAGS": ["-fobjc-call-cxx-cdtors"],
+            },
+        },
         "objdir-local-includes": {
             "defines": {},
             "substs": {

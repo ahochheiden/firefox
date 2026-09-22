@@ -1378,11 +1378,7 @@ class TreeMetadataEmitter(LoggingMixin):
                 ])
             context["OS_LIBS"].append("delayimp")
 
-        for v in ["CMFLAGS", "CMMFLAGS"]:
-            if v in context and context[v]:
-                passthru.variables["MOZBUILD_" + v] = context[v]
-
-        for v in ["CXXFLAGS", "CFLAGS"]:
+        for v in ["CXXFLAGS", "CFLAGS", "CMFLAGS", "CMMFLAGS"]:
             if v in context and context[v]:
                 computed_flags.resolve_flags("MOZBUILD_%s" % v, context[v])
 
