@@ -487,6 +487,31 @@ class LinkFlags(BaseCompileFlags):
                 context.config.substs.get("WIN32_EXE_DEFAULT_LDFLAGS"),
                 ("PROGRAM_LDFLAGS",),
             ),
+            (
+                "MACOS_FRAMEWORKS_RPATH",
+                (
+                    ["-Wl,-rpath", "-Wl,@executable_path/Frameworks"]
+                    if context.config.substs.get("TARGET_CPU") == "arm"
+                    and context.config.substs.get("OS_TARGET") == "Darwin"
+                    else []
+                ),
+                ("PROGRAM_LDFLAGS",),
+            ),
+            (
+                # For Mac executables, set the @rpath to be @executable_path by
+                # default so that shared libraries built with an @rpath install
+                # name in the same directory as the executable can be resolved.
+                # Executables not in the same directory should override the
+                # @rpath with a relative path such as @executable_path/../
+                # depending on their install location.
+                "MACOS_RPATH",
+                (
+                    ["-Wl,-rpath,@executable_path"]
+                    if context.config.substs.get("OS_ARCH") == "Darwin"
+                    else []
+                ),
+                ("PROGRAM_LDFLAGS",),
+            ),
         )
         BaseCompileFlags.__init__(self, context)
 

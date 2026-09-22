@@ -245,6 +245,28 @@ class TestEmitterBasic(unittest.TestCase):
         sources, ldflags, lib, flags = self.read_topsrcdir(reader)
         self.assertEqual(ldflags.flags["WIN32_EXE_DEFAULT"], ["-STACK:8388608"])
 
+    def test_macos_program_rpath(self):
+        reader = self.reader(
+            "compile-flags",
+            extra_substs={
+                "OS_ARCH": "Darwin",
+                "OS_TARGET": "Darwin",
+                "TARGET_CPU": "arm",
+            },
+        )
+        sources, ldflags, lib, flags = self.read_topsrcdir(reader)
+        self.assertEqual(
+            ldflags.flags["MACOS_FRAMEWORKS_RPATH"],
+            ["-Wl,-rpath", "-Wl,@executable_path/Frameworks"],
+        )
+        self.assertEqual(ldflags.flags["MACOS_RPATH"], ["-Wl,-rpath,@executable_path"])
+
+    def test_macos_program_rpath_other_os(self):
+        reader = self.reader("compile-flags")
+        sources, ldflags, lib, flags = self.read_topsrcdir(reader)
+        self.assertEqual(ldflags.flags["MACOS_FRAMEWORKS_RPATH"], [])
+        self.assertEqual(ldflags.flags["MACOS_RPATH"], [])
+
     def test_pgo_flags(self):
         reader = self.reader(
             "compile-flags",
