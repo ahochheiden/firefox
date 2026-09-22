@@ -402,6 +402,26 @@ class Linkable(ContextDerived):
         else:
             return ObjDirPath(self._context, "!" + self.name)
 
+    @property
+    def lto_object_path_flags(self):
+        # When linking on macOS, debug info is not linked along with the final
+        # binary, and the dwarf data stays in object files until they are
+        # "linked" with the dsymutil tool.
+        # With LTO, object files are temporary, and are not kept around, which
+        # means there's no object file for dsymutil to do its job. Consequently,
+        # there is no debug info for LTOed compilation units.
+        # The macOS linker has however an option to explicitly keep those object
+        # files, which dsymutil will then find.
+        # The catch is that the linker uses sequential numbers for those object
+        # files, and doesn't avoid conflicts from multiple linkers running at
+        # the same time. So in directories with multiple binaries, object files
+        # from the first linked binaries would be overwritten by those of the
+        # last linked binary. So we use a subdirectory containing the name of
+        # the linked binary.
+        if not self.config.substs.get("MOZ_LTO_OBJECT_PATH"):
+            return []
+        return [f"-Wl,-object_path_lto,{self.name}.lto.o/"]
+
     def link_library(self, obj):
         assert isinstance(obj, BaseLibrary)
         if obj.KIND != self.KIND:
