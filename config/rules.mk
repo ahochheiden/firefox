@@ -219,15 +219,6 @@ ifneq ($(HOST_CPPSRCS),)
 HOST_CPP_PROG_LINK	= 1
 endif
 
-#
-# MINGW32
-#
-ifeq ($(OS_ARCH),WINNT)
-ifneq ($(CC_TYPE),clang-cl)
-DSO_LDOPTS += -Wl,--out-implib -Wl,$(IMPORT_LIBRARY)
-endif
-endif
-
 ifeq ($(USE_TVFS),1)
 IFLAGS1 = -rb
 IFLAGS2 = -rb
