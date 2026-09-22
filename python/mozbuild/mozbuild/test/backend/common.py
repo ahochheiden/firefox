@@ -81,6 +81,12 @@ CONFIGS = defaultdict(
                 "LIB_SUFFIX": "a",
             },
         },
+        "host-cpp-link": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+            },
+        },
         "database-compiler-wrapper": {
             "defines": {},
             "substs": {

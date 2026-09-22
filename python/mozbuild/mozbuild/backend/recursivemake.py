@@ -642,7 +642,7 @@ class RecursiveMakeBackend(MakeBackend):
             self._no_skip["syms"].add(backend_file.relobjdir)
 
         elif isinstance(obj, HostSimpleProgram):
-            self._process_host_simple_program(obj.program, backend_file)
+            self._process_host_simple_program(obj, backend_file)
             self._process_linked_libraries(obj, backend_file)
 
         elif isinstance(obj, LocalInclude):
@@ -1418,6 +1418,8 @@ class RecursiveMakeBackend(MakeBackend):
         backend_file.write(
             "HOST_PROGRAM = %s\n" % self._pretty_path(program.output_path, backend_file)
         )
+        if program.cxx_link:
+            backend_file.write_once("HOST_CPP_PROG_LINK := 1\n")
 
     def _process_rust_program_base(
         self, obj, backend_file, target_variable, target_cargo_variable
@@ -1506,7 +1508,9 @@ class RecursiveMakeBackend(MakeBackend):
         self._add_lto_object_path_flags(obj, obj.program, backend_file)
 
     def _process_host_simple_program(self, program, backend_file):
-        backend_file.write("HOST_SIMPLE_PROGRAMS += %s\n" % program)
+        backend_file.write(f"HOST_SIMPLE_PROGRAMS += {program.program}\n")
+        if program.cxx_link:
+            backend_file.write_once("HOST_CPP_PROG_LINK := 1\n")
 
     def _process_relrhack(self, obj):
         if isinstance(
