@@ -1188,15 +1188,11 @@ class TreeMetadataEmitter(LoggingMixin):
 
         no_pgo = context.get("NO_PGO")
         no_pgo_sources = [f for f, flags in all_flags.items() if flags.no_pgo]
-        if no_pgo:
-            if no_pgo_sources:
-                raise SandboxValidationError(
-                    "NO_PGO and SOURCES[...].no_pgo cannot be set at the same time",
-                    context,
-                )
-            passthru.variables["NO_PROFILE_GUIDED_OPTIMIZE"] = no_pgo
-        if no_pgo_sources:
-            passthru.variables["NO_PROFILE_GUIDED_OPTIMIZE"] = no_pgo_sources
+        if no_pgo and no_pgo_sources:
+            raise SandboxValidationError(
+                "NO_PGO and SOURCES[...].no_pgo cannot be set at the same time",
+                context,
+            )
 
         # A map from "canonical suffixes" for a particular source file
         # language to the range of suffixes associated with that language.
@@ -1295,9 +1291,9 @@ class TreeMetadataEmitter(LoggingMixin):
                     wasm_linkable.sources[suffix] += srcs
 
         for f, flags in sorted(all_flags.items()):
-            if flags.flags:
+            if flags.flags or flags.no_pgo:
                 ext = mozpath.splitext(f)[1]
-                yield PerSourceFlag(context, f, flags.flags)
+                yield PerSourceFlag(context, f, flags.flags, flags.no_pgo)
 
         # If there are any C++ sources, set all the linkables defined here
         # to require the C++ linker.
