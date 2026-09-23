@@ -1577,10 +1577,15 @@ def source_package(command_context, output, upload):
                 )
                 return 1
 
-        command_context._run_make(
-            target="buildid.h",
-            ensure_exit_code=True,
+        rc = command_context._mach_context.commands.dispatch(
+            "build",
+            command_context._mach_context,
+            what=["buildid.h"],
+            directory=".",
+            no_completion_messages=True,
         )
+        if rc != 0:
+            return rc
         with open(os.path.join(command_context.topobjdir, "buildid.h")) as fd:
             _, _, buildid = fd.read().split()
 
