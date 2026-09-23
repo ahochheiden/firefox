@@ -87,6 +87,14 @@ CONFIGS = defaultdict(
                 "COMPILE_ENVIRONMENT": "1",
             },
         },
+        "generated-files-host-tool": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
         "database-compiler-wrapper": {
             "defines": {},
             "substs": {
