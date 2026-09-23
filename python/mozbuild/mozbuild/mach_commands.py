@@ -263,7 +263,7 @@ def cargo(
             build = command_context._spawn(BuildDriver)
             ret = build.build(
                 command_context.metrics,
-                what=["pre-export", "export"],
+                what=["rust-prereqs"],
                 jobs=jobs,
                 verbose=verbose,
                 mach_context=command_context._mach_context,

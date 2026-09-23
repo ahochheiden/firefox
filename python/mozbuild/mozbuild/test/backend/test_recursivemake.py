@@ -585,6 +585,9 @@ class TestRecursiveMakeBackend(BackendTester):
             backend.resolve_targets(["analysis-prereqs"]),
             ["pre-export", "export", "pre-compile"],
         )
+        self.assertEqual(
+            backend.resolve_targets(["rust-prereqs"]), ["pre-export", "export"]
+        )
 
     def test_resolve_targets_sorted(self):
         targets = RecursiveMakeBackend.TARGETS
