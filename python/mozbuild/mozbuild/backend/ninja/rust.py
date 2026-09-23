@@ -931,11 +931,10 @@ class RustMixin:
     def _emit_rust_tests_statements(self, writer):
         if not self._rust_tests:
             return
-        if not self.environment.substs.get("MOZ_RUST_TESTS"):
-            return
         writer.newline()
         writer.comment("------ rust tests ------")
         writer.newline()
+        writer.build(".ninja-force-cargo-tests", "phony")
         stamps = []
         for obj in self._rust_tests:
             cargo_spec = mozpath.join(obj.objdir, ".cargo-tests-spec.json")
@@ -954,7 +953,7 @@ class RustMixin:
                     }
                 ],
                 f"CARGO_TEST {self._rel_n_path(stamp)}",
-                implicit=[self._rel_n_path(cargo_spec)],
+                implicit=[self._rel_n_path(cargo_spec), ".ninja-force-cargo-tests"],
                 order_only=order_only,
                 stamp=True,
                 pool="cargo",
