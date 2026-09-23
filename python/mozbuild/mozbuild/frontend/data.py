@@ -407,6 +407,18 @@ class Linkable(ContextDerived):
         return []
 
     @property
+    def dump_syms(self):
+        """Whether the crash reporter symbols are dumped for this binary.
+
+        Only a binary whose final target is under `dist/bin` is worth
+        symbolicating, whether or not it is installed there, and a binary with
+        an output category is not part of a default build.
+        """
+        if self.KIND != "target" or getattr(self, "output_category", None):
+            return False
+        return bool(mozpath.basedir(self.install_target, ("dist/bin",)))
+
+    @property
     def lto_object_path_flags(self):
         # When linking on macOS, debug info is not linked along with the final
         # binary, and the dwarf data stays in object files until they are
@@ -547,6 +559,13 @@ class SimpleProgram(BaseProgram):
 
     SUFFIX_VAR = "BIN_SUFFIX"
     KIND = "target"
+
+    @property
+    def dump_syms(self):
+        """A profile generate build does not build simple programs."""
+        if self.config.substs.get("MOZ_PROFILE_GENERATE"):
+            return False
+        return super().dump_syms
 
     def source_files(self):
         for srcs in self.sources.values():
