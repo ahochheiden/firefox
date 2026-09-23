@@ -4,9 +4,6 @@
 
 include  $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 
-installer:
-	@$(MAKE) -C mobile/android/installer installer
-
 ifdef MOZ_USE_LEGACY_PACKAGING
 package:
 	@$(MAKE) -C mobile/android/installer
@@ -27,9 +24,6 @@ upload::
 	$(call py_action,package_upload,--ab-cd=$(AB_CD) $(if $(MOZ_SIMPLE_PACKAGE_NAME),--simple-package-name=$(MOZ_SIMPLE_PACKAGE_NAME)) $(addprefix --extra-file=,$(UPLOAD_EXTRA_FILES)))
 endif
 
-deb: package
-	@$(MAKE) -C mobile/android/installer deb
-
 wget-en-US:
 	@$(MAKE) -C mobile/android/locales $@
 
@@ -48,8 +42,4 @@ mochitest-browser-chrome:
 mochitest:: mochitest-browser-chrome
 
 .PHONY: mochitest-browser-chrome
-endif
-
-ifeq ($(OS_TARGET),Linux)
-deb: installer
 endif
