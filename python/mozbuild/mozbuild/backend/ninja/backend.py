@@ -1739,6 +1739,16 @@ class NinjaBackend(
             writer.newline()
             writer.build("stage-files", "phony", inputs=install_outputs)
             all_groups.append("stage-files")
+        faster_outputs = sorted(set(getattr(self, "_install_tracks", {}).values()))
+        faster_outputs += getattr(self, "_pp_install_outputs", [])
+        faster_outputs += self._xpidl_outputs
+        if faster_outputs:
+            writer.newline()
+            writer.build(
+                "faster",
+                "phony",
+                inputs=[self._rel_n_path(o) for o in faster_outputs],
+            )
         # `syms` phony: dumpsymbols + autowinchecksec stamps. Mirrors
         # make's `syms::` target (rules.mk:654) — only built on
         # explicit `ninja syms`, NOT folded into `all` (default build).
