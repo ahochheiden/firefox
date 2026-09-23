@@ -352,6 +352,7 @@ class RecursiveMakeBackend(MakeBackend):
         "analysis-prereqs": ["pre-export", "export", "pre-compile"],
         "gtest": ["recurse_gtest"],
         "rust-prereqs": ["pre-export", "export"],
+        "rusttests": ["recurse_rusttests"],
     }
 
     @classmethod
