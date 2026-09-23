@@ -581,6 +581,10 @@ class TestRecursiveMakeBackend(BackendTester):
 
         hybrid = get_backend_class("FasterMake+RecursiveMake")(env)
         self.assertEqual(hybrid.resolve_targets(["gtest"]), ["recurse_gtest"])
+        self.assertEqual(
+            backend.resolve_targets(["analysis-prereqs"]),
+            ["pre-export", "export", "pre-compile"],
+        )
 
     def test_resolve_targets_sorted(self):
         targets = RecursiveMakeBackend.TARGETS

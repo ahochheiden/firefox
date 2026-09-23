@@ -349,6 +349,7 @@ class RecursiveMakeBackend(MakeBackend):
     INSTALL_MANIFEST_BASES = ("dist/bin", "dist/xpi-stage", "_tests", "dist/include")
     BUILT_INSTALL_MANIFESTS = "_build_manifests/built"
     TARGETS = {
+        "analysis-prereqs": ["pre-export", "export", "pre-compile"],
         "gtest": ["recurse_gtest"],
     }
 

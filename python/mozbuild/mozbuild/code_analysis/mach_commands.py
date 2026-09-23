@@ -846,25 +846,17 @@ def _build_compile_db(command_context, verbose=False):
 
 
 def _build_export(command_context, jobs, verbose=False):
-    def on_line(line):
-        command_context.log(logging.INFO, "build_output", {"line": line}, "{line}")
-
-    # First install what we can through install manifests.
-    # Then build the rest of the build dependencies by running the full
-    # export target, because we can't do anything better.
-    for target in ("pre-export", "export", "pre-compile"):
-        rc = command_context._run_make(
-            directory=command_context.topobjdir,
-            target=target,
-            line_handler=None,
-            print_directory=verbose,
-            log=verbose,
-            silent=not verbose,
-            num_jobs=jobs,
-        )
-        if rc != 0:
-            return rc
-    return 0
+    # Build the dependencies of every compile by running the tiers before
+    # compilation, because we can't do anything better.
+    return command_context._mach_context.commands.dispatch(
+        "build",
+        command_context._mach_context,
+        what=["analysis-prereqs"],
+        directory=".",
+        jobs=jobs,
+        verbose=verbose,
+        no_completion_messages=True,
+    )
 
 
 def _set_clang_tools_paths(command_context):
