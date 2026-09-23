@@ -1132,7 +1132,7 @@ def gtest(
         return 1
 
     res = command_context._mach_context.commands.dispatch(
-        "build", command_context._mach_context, what=["recurse_gtest"]
+        "build", command_context._mach_context, what=["gtest"]
     )
     if res:
         print("Could not build xul-gtest")

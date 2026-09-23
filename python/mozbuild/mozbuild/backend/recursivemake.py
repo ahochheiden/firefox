@@ -348,6 +348,13 @@ class RecursiveMakeBackend(MakeBackend):
 
     INSTALL_MANIFEST_BASES = ("dist/bin", "dist/xpi-stage", "_tests", "dist/include")
     BUILT_INSTALL_MANIFESTS = "_build_manifests/built"
+    TARGETS = {
+        "gtest": ["recurse_gtest"],
+    }
+
+    @classmethod
+    def resolve_targets(cls, what):
+        return [t for name in what for t in cls.TARGETS.get(name, [name])]
 
     def _init(self):
         MakeBackend._init(self)

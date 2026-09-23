@@ -12,6 +12,7 @@ from mozpack.copier import FileRegistry
 from mozpack.manifests import InstallManifest
 from mozunit import main
 
+from mozbuild.backend import get_backend_class
 from mozbuild.backend.recursivemake import RecursiveMakeBackend, RecursiveMakeTraversal
 from mozbuild.backend.test_manifest import TestManifestBackend
 from mozbuild.frontend.emitter import TreeMetadataEmitter
@@ -569,6 +570,21 @@ class TestRecursiveMakeBackend(BackendTester):
             lines = [l.strip() for l in fh.readlines()]
         self.assertIn("data/pre-compile: tool/host", lines)
         self.assertIn("data/target-objects: data/pre-compile", lines)
+
+    def test_resolve_targets(self):
+        env = self._get_environment("stub0")
+        backend = RecursiveMakeBackend(env)
+        self.assertEqual(
+            backend.resolve_targets(["gtest", "recurse_gtest", "binaries"]),
+            ["recurse_gtest", "recurse_gtest", "binaries"],
+        )
+
+        hybrid = get_backend_class("FasterMake+RecursiveMake")(env)
+        self.assertEqual(hybrid.resolve_targets(["gtest"]), ["recurse_gtest"])
+
+    def test_resolve_targets_sorted(self):
+        targets = RecursiveMakeBackend.TARGETS
+        self.assertEqual(list(targets), sorted(targets))
 
     def test_generated_files_pre_export(self):
         env = self._get_environment(

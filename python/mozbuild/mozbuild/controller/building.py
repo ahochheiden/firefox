@@ -1440,9 +1440,12 @@ class BuildDriver(MozbuildObject):
 
             jobs = self.resolve_num_jobs(jobs, job_size)
 
+            backend_cls = get_backend_class(active_backend)
+            if what:
+                what = backend_cls.resolve_targets(what)
+
             if "Make" not in active_backend:
-                backend_cls = get_backend_class(active_backend)(config)
-                status = backend_cls.build(
+                status = backend_cls(config).build(
                     self, output, jobs, verbose, what, append_env=append_env
                 )
 
