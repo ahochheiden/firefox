@@ -68,6 +68,8 @@ ifdef COMPILE_ENVIRONMENT
 xpidl:: $(generated_files)
 endif
 
+export:: xpidl
+
 # See bug 1420119 for why we need the semicolon.
 $(target_file) $(xptdata_h) : $(stub_file) ;
 

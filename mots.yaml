@@ -8,7 +8,7 @@
 # documentation and how to modify this file.
 repo: mozilla-central
 created_at: '2021-10-14T12:50:40.073465'
-updated_at: '2026-09-24T23:31:55.030847+00:00'
+updated_at: '2026-09-30T03:51:55.689170+00:00'
 export:
   path: ./docs/mots/index.md
   format: md
@@ -3622,7 +3622,6 @@ modules:
       runtime type description files from .idl interface description files.
     includes:
       - xpcom/idl-parser/**/*
-      - xpcom/xpidl/**/*
     meta:
       owners_emeritus:
         - Kyle Huey
@@ -5009,5 +5008,5 @@ modules:
         - Ryan Tilder
       group: dev-platform
 hashes:
-  config: 301028ba3a86d477e25bd8ca9382119cd246ab55
-  export: 6119f37ff12ea467dd34f2ff629887cafd9a4b1e
+  config: c6c8a7e944ae57eed39b210e9d3136a74b2e677c
+  export: 90aa36cae66b6598fb72581f2c4b0f018e621e82

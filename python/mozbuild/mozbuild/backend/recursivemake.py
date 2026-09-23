@@ -190,9 +190,10 @@ class BackendMakeFile:
             self.fh.write("NONRECURSIVE_TARGETS += export\n")
             self.fh.write("NONRECURSIVE_TARGETS_export += xpidl\n")
             self.fh.write(
-                "NONRECURSIVE_TARGETS_export_xpidl_DIRECTORY = $(DEPTH)/xpcom/xpidl\n"
+                "NONRECURSIVE_TARGETS_export_xpidl_DIRECTORY = "
+                "$(DEPTH)/config/makefiles/xpidl\n"
             )
-            self.fh.write("NONRECURSIVE_TARGETS_export_xpidl_TARGETS += export\n")
+            self.fh.write("NONRECURSIVE_TARGETS_export_xpidl_TARGETS += xpidl\n")
 
         return self.fh.close()
 
@@ -1387,6 +1388,11 @@ class RecursiveMakeBackend(MakeBackend):
 
         rules = StringIO()
         mk.dump(rules, removal_guard=False)
+
+        xpidl_dir = "config/makefiles/xpidl"
+        self._traversal.add("", dirs=[xpidl_dir])
+        self._traversal.add(xpidl_dir)
+        self._no_skip["export"].add(xpidl_dir)
 
         # Create dependency for output header so we force regeneration if the
         # header was deleted. This ideally should not be necessary. However,
