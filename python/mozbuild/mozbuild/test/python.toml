@@ -74,6 +74,8 @@ skip-if = ["os == 'win'"] # The action only supports platforms that install with
 
 ["codecoverage/test_lcov_rewrite.py"]
 
+["compilation/test_util.py"]
+
 ["compilation/test_warnings.py"]
 
 ["configure/lint.py"]
