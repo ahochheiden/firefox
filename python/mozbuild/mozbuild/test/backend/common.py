@@ -87,6 +87,14 @@ CONFIGS = defaultdict(
                 "COMPILE_ENVIRONMENT": "1",
             },
         },
+        "per-source-object-deps": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+                "LIB_PREFIX": "lib",
+                "LIB_SUFFIX": "a",
+            },
+        },
         "xpidl": {
             "defines": {},
             "substs": {

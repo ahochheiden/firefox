@@ -1636,9 +1636,15 @@ class RecursiveMakeBackend(MakeBackend):
             backend_file.write(
                 "%s_FLAGS += %s\n" % (mozpath.basename(per_source_flag.file_name), flag)
             )
+        stem = mozpath.splitext(mozpath.basename(per_source_flag.file_name))[0]
         if per_source_flag.no_pgo:
-            stem = mozpath.splitext(mozpath.basename(per_source_flag.file_name))[0]
             backend_file.write(f"{stem}.$(OBJ_SUFFIX): COMPUTED_PGO_CFLAGS :=\n")
+        if per_source_flag.object_deps:
+            prerequisites = " ".join(
+                self._pretty_path(p, backend_file)
+                for p in (per_source_flag.path, *per_source_flag.object_deps)
+            )
+            backend_file.write(f"{stem}.$(OBJ_SUFFIX): {prerequisites}\n")
 
     def _process_computed_flags(self, computed_flags, backend_file):
         for var, flags in computed_flags.get_flags():

@@ -2252,6 +2252,22 @@ class TestRecursiveMakeBackend(BackendTester):
         self.assertIn("EXTRA_DSO_LDOPTS += -IMPLIB:dist-bin.lib\n", content)
         self.assertNotIn("--out-implib", content)
 
+    def test_per_source_object_deps(self):
+        env = self._consume("per-source-object-deps", RecursiveMakeBackend)
+
+        with open(mozpath.join(env.topobjdir, "backend.mk")) as fh:
+            lines = fh.readlines()
+
+        self.assertIn("ASFILES += gen.s\n", lines)
+        self.assertIn(
+            "gen.$(OBJ_SUFFIX): gen.s include.S $(srcdir)/included.inc\n", lines
+        )
+        self.assertIn("ASFILES += $(srcdir)/static.s\n", lines)
+        self.assertIn(
+            "static.$(OBJ_SUFFIX): $(srcdir)/static.s $(srcdir)/included.inc\n", lines
+        )
+        self.assertEqual([l for l in lines if l.startswith("plain.$(OBJ_SUFFIX)")], [])
+
     def test_no_pgo_source(self):
         env = self._consume("no-pgo-source", RecursiveMakeBackend)
 

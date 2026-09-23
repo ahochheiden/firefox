@@ -1165,16 +1165,19 @@ class LocalInclude(ContextDerived):
 
 
 class PerSourceFlag(ContextDerived):
-    """Describes compiler flags specified for individual source files."""
+    """Describes compiler flags and dependencies specified for individual source
+    files."""
 
-    __slots__ = ("file_name", "flags", "no_pgo")
+    __slots__ = ("path", "file_name", "flags", "no_pgo", "object_deps")
 
-    def __init__(self, context, file_name, flags, no_pgo=False):
+    def __init__(self, context, path, flags, no_pgo=False, object_deps=()):
         ContextDerived.__init__(self, context)
 
-        self.file_name = file_name
+        self.path = path
+        self.file_name = path.full_path
         self.flags = flags
         self.no_pgo = no_pgo
+        self.object_deps = object_deps
 
 
 class XPIArchive(ContextDerived):
