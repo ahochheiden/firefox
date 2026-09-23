@@ -87,6 +87,12 @@ CONFIGS = defaultdict(
                 "COMPILE_ENVIRONMENT": "1",
             },
         },
+        "xpidl": {
+            "defines": {},
+            "substs": {
+                "COMPILE_ENVIRONMENT": "1",
+            },
+        },
         "generated-files-host-tool": {
             "defines": {},
             "substs": {

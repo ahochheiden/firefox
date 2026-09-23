@@ -365,8 +365,6 @@ class CommonBackend(BuildBackend):
             return True
 
         if isinstance(obj, XPIDLModule):
-            # TODO bug 1240134 tracks not processing XPIDL files during
-            # artifact builds.
             self._idl_manager.link_module(obj)
 
         elif isinstance(obj, ConfigFileSubstitution):
