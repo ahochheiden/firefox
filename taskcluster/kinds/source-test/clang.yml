@@ -7,6 +7,9 @@ task-defaults:
     run-on-projects: ["trunk"]
     platform: linux64/debug
     worker-type: t-linux-docker-amd
+    mozconfig:
+        variant: static-analysis
+        platform: linux64
     attributes:
         code-review: true
     worker:
@@ -99,6 +102,7 @@ unittest:
         code-review: false
     when:
         files-changed:
+            - 'browser/config/mozconfigs/linux64/static-analysis'
             - 'config/mozunit/**'
             - 'python/mach_commands.py'
             - 'python/mach/**'

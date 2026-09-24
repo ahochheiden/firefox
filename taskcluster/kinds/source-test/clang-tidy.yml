@@ -5,6 +5,9 @@
 task-defaults:
     platform: linux64/debug
     worker-type: t-linux-docker-amd
+    mozconfig:
+        variant: static-analysis
+        platform: linux64
     worker:
         docker-image: {in-tree: static-analysis-build}
         max-run-time: 18000
