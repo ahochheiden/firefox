@@ -5,7 +5,8 @@
 """Stage, prepare and archive the application package and write its metadata.
 
 Runs the steps in order: locale inputs, stage, prepare, sourcestamp, archive,
-package_name.txt, Windows installer, mozinfo copy, build information.
+package_name.txt, Windows installer, mozinfo copy, build information, language
+pack.
 """
 
 from __future__ import annotations
@@ -24,9 +25,12 @@ import mozpack.path as mozpath
 
 from mozbuild.action import (
     informulate,
+    l10n_merge,
+    l10n_stage,
     locale_manifest,
     make_sourcestamp_file,
     nsis_build,
+    package_langpack,
     package_prepare,
 )
 from mozbuild.action import package as package_action
@@ -171,6 +175,61 @@ def _windows_installer(
     return 0
 
 
+def _langpack(*, paths: PackagePaths, ab_cd: str) -> int:
+    substs = buildconfig.substs
+    topsrcdir = buildconfig.topsrcdir
+    topobjdir = buildconfig.topobjdir
+    l10n_base = substs["L10NBASEDIR"]
+    locales_dir = substs["MOZ_PKG_LANGPACK_LOCALES_DIR"]
+    merge_dir = mozpath.join(topobjdir, locales_dir, "merge-dir")
+
+    if ab_cd == "en-US":
+        metadata_dir = mozpath.join(topsrcdir, locales_dir, "en-US")
+    else:
+        rc = l10n_merge.main([
+            f"--locale={ab_cd}",
+            f"--config={mozpath.join(topsrcdir, locales_dir, 'l10n.toml')}",
+            f"--l10n-base={l10n_base}",
+            f"--target={merge_dir}",
+        ])
+        if rc:
+            return rc
+        metadata_dir = mozpath.join(merge_dir, ab_cd, mozpath.dirname(locales_dir))
+
+    xpi_stage = mozpath.join(paths.dist_dir, "xpi-stage", f"locale-{ab_cd}")
+    rc = l10n_stage.main([
+        f"--locale={ab_cd}",
+        f"--manifest={mozpath.join(topobjdir, 'l10n-manifest.json')}",
+        f"--merge-tree={mozpath.join(merge_dir, ab_cd)}",
+        f"--dest={xpi_stage}",
+        f"--topsrcdir={topsrcdir}",
+        f"--topobjdir={topobjdir}",
+    ])
+    if rc:
+        return rc
+
+    output = mozpath.join(paths.dist_dir, paths.langpack)
+    os.makedirs(mozpath.dirname(output), exist_ok=True)
+    includes = [
+        "chrome",
+        "localization",
+        *substs.get("MOZ_PKG_LANGPACK_SUBDIRS", []),
+        "manifest.json",
+    ]
+    return package_langpack.main([
+        f"--locale={ab_cd}",
+        f"--xpi-stage={xpi_stage}",
+        f"--metadata={mozpath.join(metadata_dir, 'langpack-metadata.ftl')}",
+        f"--output={output}",
+        f"--eid=langpack-{ab_cd}@{substs['MOZ_LANGPACK_EID_HOST']}",
+        f"--app-version={substs['MOZ_APP_VERSION']}",
+        f"--max-app-ver={substs['MOZ_APP_MAXVERSION']}",
+        f"--app-name={substs['MOZ_APP_DISPLAYNAME']}",
+        f"--l10n-basedir={l10n_base}",
+        *[f"--include={include}" for include in includes],
+    ])
+
+
 def package_application(
     *,
     ab_cd: str = "en-US",
@@ -204,6 +263,7 @@ def package_application(
     rewrite_sanitizer_dylib: bool = False,
     installer: bool = False,
     stub_installer: bool = False,
+    langpack: bool = False,
     source_repo_header: Optional[str] = None,
     package_extra_args: Sequence[str] = (),
 ) -> int:
@@ -458,6 +518,9 @@ def package_application(
         if rc:
             return rc
 
+    if langpack:
+        return _langpack(paths=paths, ab_cd=ab_cd)
+
     return 0
 
 
@@ -587,6 +650,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--stub-installer", action="store_true", help="Also build the stub installer"
+    )
+    parser.add_argument(
+        "--langpack", action="store_true", help="Also build the language pack"
     )
     parser.add_argument(
         "--source-repo-header", metavar="PATH", help="Generated source-repo.h"

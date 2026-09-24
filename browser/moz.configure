@@ -268,3 +268,6 @@ set_config(
     "MOZ_CHROME_LOCALE_ENTRIES",
     ["@RESPATH@/browser/chrome/", "@RESPATH@/chrome/"],
 )
+
+set_config("MOZ_PKG_LANGPACK_LOCALES_DIR", "browser/locales")
+set_config("MOZ_PKG_LANGPACK_SUBDIRS", ["browser"])
