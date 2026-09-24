@@ -7,6 +7,7 @@ loader: taskgraph.loader.transform:loader
 transforms:
     - android_taskgraph.transforms.build_components:transforms
     - gecko_taskgraph.transforms.build_schedules:transforms
+    - gecko_taskgraph.transforms.mozconfig:transforms
     - gecko_taskgraph.transforms.job:transforms
     - gecko_taskgraph.transforms.task:transforms
 
@@ -16,6 +17,9 @@ kind-dependencies:
 
 
 task-defaults:
+    mozconfig:
+        variant: gradle
+        platform: android-arm
     run-on-repo-type: [hg]
     attributes:
         build_platform: android

@@ -25,10 +25,7 @@ def add_common_config(config, tasks):
             "android-gradle-dependencies",
             "linux64-jdk",
         ]
-        fetches["build-fat-aar"] = [
-            "target.maven.zip",
-            {"artifact": "mozconfig", "extract": False},
-        ]
+        fetches["build-fat-aar"] = ["target.maven.zip"]
 
         run = task.setdefault("run", {})
         run["using"] = "gradlew"
@@ -45,9 +42,7 @@ def add_common_config(config, tasks):
         worker["docker-image"]["in-tree"] = "android-components"
         worker["max-run-time"] = 7200
         worker["chain-of-trust"] = True
-        worker.setdefault("env", {}).setdefault(
-            "MOZCONFIG", "/builds/worker/fetches/mozconfig"
-        )
+        worker.setdefault("env", {})
         build_fat_aar = config.kind_dependencies_tasks[
             task["dependencies"]["build-fat-aar"]
         ]

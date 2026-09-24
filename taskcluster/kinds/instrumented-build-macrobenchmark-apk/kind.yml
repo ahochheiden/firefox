@@ -6,6 +6,7 @@ loader: taskgraph.loader.transform:loader
 
 transforms:
     - android_taskgraph.transforms.build_android_app:transforms
+    - gecko_taskgraph.transforms.mozconfig:transforms
     - gecko_taskgraph.transforms.job:transforms
     - gecko_taskgraph.transforms.task:transforms
 
@@ -15,6 +16,14 @@ kind-dependencies:
     - generate-baseline-profile-firebase
 
 task-defaults:
+    mozconfig:
+        variant:
+            by-release-type:
+                beta: beta-fat-aar-gradle
+                release: release-fat-aar-gradle
+                esr.*: release-fat-aar-gradle
+                default: nightly-fat-aar-gradle
+        platform: android-arm
     run-on-repo-type: [hg]
     fetches:
         toolchain:

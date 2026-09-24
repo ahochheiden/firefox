@@ -1,0 +1,2 @@
+. "$topsrcdir/mobile/android/config/mozconfigs/android-arm/release-fat-aar"
+. "$topsrcdir/mobile/android/config/mozconfigs/gradle"

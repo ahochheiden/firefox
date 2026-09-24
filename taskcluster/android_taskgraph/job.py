@@ -96,13 +96,6 @@ def configure_gradlew(config, job, taskdesc):
         "MOZ_BUILD_DATE": config.params["moz_build_date"],
     })
     worker["env"].setdefault(
-        "MOZCONFIG",
-        path.join(
-            topsrc_dir,
-            "mobile/android/config/mozconfigs/android-arm/nightly-android-lints",
-        ),
-    )
-    worker["env"].setdefault(
         "MOZ_ANDROID_FAT_AAR_ARCHITECTURES", "armeabi-v7a,arm64-v8a,x86_64"
     )
 
@@ -145,13 +138,6 @@ def configure_mach_gradle(config, job, taskdesc):
         ),
         "MOZ_BUILD_DATE": config.params["moz_build_date"],
     })
-    worker["env"].setdefault(
-        "MOZCONFIG",
-        path.join(
-            topsrc_dir,
-            "mobile/android/config/mozconfigs/android-arm/nightly-android-lints",
-        ),
-    )
 
     worker["env"].update({
         "GRADLE_PROJECT": run.pop("gradle-project"),

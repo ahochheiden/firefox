@@ -14,24 +14,7 @@ set -x
 
 cd "$GECKO_PATH"
 
-mozconfig=$(mktemp)
-cat > "$mozconfig" <<EOF
-# the corresponding geckoview's mozconfig, to pick up its config options
-. $MOZCONFIG
-# no-compile because we don't need to build native code here
-. $GECKO_PATH/build/mozconfig.no-compile
-
-# Disable Keyfile Loading (and checks)
-# This overrides the settings in the common android mozconfig
-ac_add_options --without-mozilla-api-keyfile
-ac_add_options --without-google-safebrowsing-api-keyfile
-
-ac_add_options --disable-nodejs
-unset NODEJS
-EOF
-
 export GRADLE_MAVEN_REPOSITORIES="file://$MOZ_FETCHES_DIR/android-gradle-dependencies/mozilla,file://$MOZ_FETCHES_DIR/android-gradle-dependencies/google,file://$MOZ_FETCHES_DIR/android-gradle-dependencies/central,file://$MOZ_FETCHES_DIR/android-gradle-dependencies/gradle-plugins"
-export MOZCONFIG="$mozconfig"
 
 export MOZ_OBJDIR=/builds/worker/workspace/obj-build
 

@@ -3,6 +3,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ---
 task-defaults:
+    mozconfig:
+        variant: gradle
+        platform: android-arm
     attributes:
         build_platform: android
         build_type: opt

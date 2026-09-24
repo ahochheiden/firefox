@@ -8,6 +8,7 @@ transforms:
     - android_taskgraph.transforms.build_components:fanout_components
     - android_taskgraph.transforms.build_components:transforms
     - gecko_taskgraph.transforms.build_schedules:transforms
+    - gecko_taskgraph.transforms.mozconfig:transforms
     - gecko_taskgraph.transforms.job:transforms
     - gecko_taskgraph.transforms.task:transforms
 
@@ -20,6 +21,9 @@ kind-dependencies:
 
 tasks:
     build-component:
+        mozconfig:
+            variant: gradle
+            platform: android-arm
         artifact-template:
             type: file
             name: public/build/{artifact_file_name}

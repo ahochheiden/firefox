@@ -256,6 +256,9 @@ linux64-android-gradle-dependencies:
             GRADLE_USER_HOME: "/builds/worker/workspace/build/src/mobile/android/gradle/dotgradle-online"
             ANDROID_SDK_ROOT: "/builds/worker/fetches/android-sdk-linux"
         max-run-time: 2700
+    mozconfig:
+        variant: nightly
+        platform: android-arm-gradle-dependencies
     run:
         script: android-gradle-dependencies.sh
         sparse-profile: null
@@ -303,6 +306,9 @@ linux64-android-gradle-dependencies-appservices:
             ANDROID_SDK_ROOT: "/builds/worker/fetches/android-sdk-linux"
             MOZ_APPSERVICES_IN_TREE: "1"
         max-run-time: 2700
+    mozconfig:
+        variant: nightly
+        platform: android-arm-gradle-dependencies
     run:
         script: android-gradle-dependencies.sh
         sparse-profile: null

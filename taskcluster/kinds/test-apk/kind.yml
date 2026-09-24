@@ -8,6 +8,7 @@ transforms:
     - taskgraph.transforms.task_context
     # While not a build, the build optimization works well for these tasks.
     - gecko_taskgraph.transforms.build_schedules:transforms
+    - gecko_taskgraph.transforms.mozconfig:transforms
     - gecko_taskgraph.transforms.job:transforms
     - gecko_taskgraph.transforms.task:transforms
 
@@ -16,6 +17,9 @@ kind-dependencies:
     - build-fat-aar
 
 task-defaults:
+    mozconfig:
+        variant: gradle
+        platform: android-arm
     run-on-repo-type: [hg]
     attributes:
         build_platform: android

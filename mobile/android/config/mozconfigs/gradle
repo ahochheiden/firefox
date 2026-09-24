@@ -1,0 +1,10 @@
+# no-compile because we don't need to build native code here
+. "$topsrcdir/build/mozconfig.no-compile"
+
+# Disable Keyfile Loading (and checks)
+# This overrides the settings in the common android mozconfig
+ac_add_options --without-mozilla-api-keyfile
+ac_add_options --without-google-safebrowsing-api-keyfile
+
+ac_add_options --disable-nodejs
+unset NODEJS
