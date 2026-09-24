@@ -21,8 +21,6 @@ class HazRunSchema(Schema, kw_only=True):
     using: Literal["hazard"]
     # The command to run within the task image (passed through to the worker)
     command: str
-    # The mozconfig to use; default in the script is used if omitted
-    mozconfig: Optional[str] = None
     # The set of secret names to which the task has access; these are prefixed
     # with `project/releng/gecko/{treeherder.kind}/level-{level}/`.   Setting
     # this will enable any worker features required and set the task's scopes
@@ -55,10 +53,6 @@ def docker_worker_hazard(config, job, taskdesc):
         "MOZ_BUILD_DATE": config.params["moz_build_date"],
         "MOZ_SCM_LEVEL": config.params["level"],
     })
-
-    # script parameters
-    if run.get("mozconfig"):
-        env["MOZCONFIG"] = run.pop("mozconfig")
 
     run["using"] = "run-task"
     run["cwd"] = run["workdir"]

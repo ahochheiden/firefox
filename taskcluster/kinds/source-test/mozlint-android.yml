@@ -15,11 +15,13 @@ task-defaults:
         kind: test
         tier: 1
     worker-type: t-linux-docker-amd
+    mozconfig:
+        variant: nightly-android-lints
+        platform: android-arm
     worker:
         docker-image: {in-tree: android-build}
         env:
             GRADLE_USER_HOME: /builds/worker/checkouts/gecko/mobile/android/gradle/dotgradle-offline
-            MOZCONFIG: mobile/android/config/mozconfigs/android-arm/nightly-android-lints
             MOZ_OBJDIR: obj-firefox
             PERFHERDER_EXTRA_OPTIONS: android-lints
             TINDERBOX_OUTPUT: '1'

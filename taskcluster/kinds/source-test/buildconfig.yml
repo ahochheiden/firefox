@@ -9,6 +9,9 @@ task-defaults:
         using: run-task
         cwd: '{checkout}'
     worker-type: t-linux-docker-amd
+    mozconfig:
+        variant: nightly-android-lints
+        platform: android-arm
     worker:
         artifacts:
             - type: directory
@@ -18,7 +21,6 @@ task-defaults:
         max-run-time: 1800
         env:
             GRADLE_USER_HOME: "/builds/worker/checkouts/gecko/mobile/android/gradle/dotgradle-online"
-            MOZCONFIG: "/builds/worker/checkouts/gecko/mobile/android/config/mozconfigs/android-arm/nightly-android-lints"
             ANDROID_SDK_ROOT: "/builds/worker/fetches/android-sdk-linux"
     platform: lint/opt
     treeherder:
