@@ -4,6 +4,8 @@
 
 """Helpers shared by configure and packaging."""
 
+from __future__ import annotations
+
 import shlex
 from typing import Iterable, Optional
 
@@ -87,3 +89,14 @@ def jsshell_name(*, platform: str, simple_name: Optional[str] = None) -> str:
     if simple_name:
         return f"{simple_name}.jsshell.zip"
     return f"jsshell-{platform}.zip"
+
+
+def all_locales(locales: Iterable[str]) -> list[str]:
+    locales = [*locales]
+    if "en-US" not in locales:
+        locales.append("en-US")
+    return locales
+
+
+def multilocale_content(locales: Iterable[str]) -> str:
+    return ",".join(all_locales(locales)) + "\n"

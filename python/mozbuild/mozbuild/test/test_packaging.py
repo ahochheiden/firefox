@@ -6,8 +6,10 @@ import mozunit
 
 from mozbuild.packaging import (
     NO_PKG_FILES,
+    all_locales,
     jsshell_name,
     langpack_basename,
+    multilocale_content,
     no_pkg_files,
     package_basename,
     quote_defines,
@@ -119,6 +121,22 @@ def test_jsshell_name():
 
 def test_jsshell_name_simple_name():
     assert jsshell_name(platform="win64", simple_name="target") == "target.jsshell.zip"
+
+
+def test_all_locales():
+    assert all_locales(["de", "fr"]) == ["de", "fr", "en-US"]
+
+
+def test_all_locales_with_en_us():
+    assert all_locales(["en-US", "de"]) == ["en-US", "de"]
+
+
+def test_all_locales_empty():
+    assert all_locales([]) == ["en-US"]
+
+
+def test_multilocale_content():
+    assert multilocale_content(["de", "fr"]) == "de,fr,en-US\n"
 
 
 if __name__ == "__main__":

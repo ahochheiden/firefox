@@ -4,13 +4,11 @@
 
 import sys
 
+from mozbuild.packaging import multilocale_content
+
 
 def main(output, *locales):
-    locales = list(locales)
-    if "en-US" not in locales:
-        locales.append("en-US")
-
-    print(",".join(locales), file=output)
+    output.write(multilocale_content(locales))
 
 
 if __name__ == "__main__":
