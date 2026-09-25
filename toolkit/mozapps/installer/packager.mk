@@ -149,12 +149,12 @@ endif
 endif
 ifdef MOZ_AUTOMATION
 	cp $(DEPTH)/mozinfo.json $(MOZ_MOZINFO_FILE)
-	$(PYTHON3) $(MOZILLA_DIR)/toolkit/mozapps/installer/informulate.py \
+	$(call py_action,informulate $(MOZ_BUILDINFO_FILE), \
 		$(MOZ_BUILDINFO_FILE) $(MOZ_BUILDHUB_JSON) $(MOZ_BUILDID_INFO_TXT_FILE) \
 		$(if $(or $(filter-out mobile/android,$(MOZ_BUILD_APP)),$(MOZ_ANDROID_WITH_FENNEC)), \
 		--package=$(DIST)/$(PACKAGE) --installer=$(INSTALLER_PACKAGE), \
 		--no-download \
-	  )
+	  ))
 endif
 	$(TOUCH) $@
 

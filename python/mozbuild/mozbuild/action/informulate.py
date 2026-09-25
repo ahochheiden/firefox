@@ -6,13 +6,14 @@
 # Generate build info files for use by other tools.
 # This script assumes it is being run in a Mozilla CI build.
 
-from argparse import ArgumentParser
 import datetime
-import buildconfig
 import json
-import mozinfo
 import os
 import sys
+from argparse import ArgumentParser
+
+import buildconfig
+import mozinfo
 
 
 def main(argv):
@@ -65,11 +66,11 @@ def main(argv):
         "moz_pkg_platform": pkg_platform,
     })
 
-    with open(args.output_json, "wt") as f:
+    with open(args.output_json, "w") as f:
         json.dump(all_key_value_pairs, f, indent=2, sort_keys=True)
         f.write("\n")
 
-    with open(args.buildhub_json, "wt") as f:
+    with open(args.buildhub_json, "w") as f:
         build_time = datetime.datetime.strptime(build_id, "%Y%m%d%H%M%S")
         s = buildconfig.substs
         record = {
@@ -118,8 +119,8 @@ def main(argv):
         json.dump(record, f, indent=2, sort_keys=True)
         f.write("\n")
 
-    with open(args.output_txt, "wt") as f:
-        f.write("buildID={}\n".format(build_id))
+    with open(args.output_txt, "w") as f:
+        f.write(f"buildID={build_id}\n")
 
 
 if __name__ == "__main__":
