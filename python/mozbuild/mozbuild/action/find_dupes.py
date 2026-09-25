@@ -2,16 +2,18 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import sys
-import hashlib
+import argparse
 import functools
+import hashlib
+import sys
+from io import StringIO
+
+import buildconfig
+from mozpack.files import DeflatedFile
+from mozpack.packager.unpack import UnpackFinder
+
 from mozbuild.preprocessor import Preprocessor
 from mozbuild.util import DefinesAction
-from mozpack.packager.unpack import UnpackFinder
-from mozpack.files import DeflatedFile
-from io import StringIO
-import argparse
-import buildconfig
 
 """
 Find files duplicated in a given packaged directory, independently of its
@@ -45,8 +47,9 @@ def normalize_path(p):
 
 
 class AllowedDupes:
-    files = set()
-    paths = set()
+    def __init__(self):
+        self.files = set()
+        self.paths = set()
 
     def add(self, string):
         if string.endswith("/*"):
@@ -90,7 +93,7 @@ def find_dupes(source, allowed_dupes, bail=True):
         if len(paths) > 1:
             _compressed = " (%d compressed)" % compressed if compressed != size else ""
             _times = " (%d times)" % (len(paths) - 1) if len(paths) > 2 else ""
-            print("Duplicates {} bytes{}{}:".format(size, _compressed, _times))
+            print(f"Duplicates {size} bytes{_compressed}{_times}:")
             print("".join("  %s\n" % p for p in paths))
             total += (len(paths) - 1) * size
             total_compressed += (len(paths) - 1) * compressed
@@ -109,20 +112,20 @@ def find_dupes(source, allowed_dupes, bail=True):
             else "uncompressed"
         )
         print(
-            "WARNING: Found {} duplicated files taking {} bytes ({})".format(
-                num_dupes, total, total_compressed
-            )
+            f"WARNING: Found {num_dupes} duplicated files taking {total} bytes ({total_compressed})"
         )
 
     if unexpected_dupes:
         errortype = "ERROR" if bail else "WARNING"
-        print("{}: The following duplicated files are not allowed:".format(errortype))
+        print(f"{errortype}: The following duplicated files are not allowed:")
         print("\n".join(unexpected_dupes))
         if bail:
-            sys.exit(1)
+            return 1
+
+    return 0
 
 
-def main():
+def main(argv):
     parser = argparse.ArgumentParser(description="Find duplicate files in directory.")
     parser.add_argument(
         "--warning",
@@ -142,7 +145,7 @@ def main():
     parser.add_argument("-U", action="append", default=[])
     parser.add_argument("directory", help="The directory to check for duplicates in")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     allowed_dupes = AllowedDupes()
     for filename in args.dupes_files:
@@ -159,8 +162,10 @@ def main():
         for line in pp.out.getvalue().splitlines():
             allowed_dupes.add(line.partition("#")[0].rstrip())
 
-    find_dupes(args.directory, bail=not args.warning, allowed_dupes=allowed_dupes)
+    return find_dupes(
+        args.directory, bail=not args.warning, allowed_dupes=allowed_dupes
+    )
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main(sys.argv[1:]))

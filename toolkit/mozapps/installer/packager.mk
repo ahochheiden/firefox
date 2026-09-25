@@ -42,7 +42,7 @@ stage-package: multilocale.txt locale-manifest.in $(MOZ_PKG_MANIFEST)
 
 prepare-package: stage-package
 ifdef RUN_FIND_DUPES
-	$(PYTHON3) $(MOZILLA_DIR)/toolkit/mozapps/installer/find-dupes.py $(DEFINES) $(ACDEFINES) $(MOZ_PKG_DUPEFLAGS) $(DIST)/$(MOZ_PKG_DIR)
+	$(call py_action,find_dupes $(MOZ_PKG_DIR),$(DEFINES) $(ACDEFINES) $(MOZ_PKG_DUPEFLAGS) $(DIST)/$(MOZ_PKG_DIR))
 endif # RUN_FIND_DUPES
 ifdef RUN_MOZHARNESS_ZIP
 	# Package mozharness
