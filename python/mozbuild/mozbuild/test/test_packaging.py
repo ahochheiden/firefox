@@ -6,6 +6,7 @@ import mozunit
 
 from mozbuild.packaging import (
     NO_PKG_FILES,
+    PackagePaths,
     all_locales,
     jsshell_name,
     langpack_basename,
@@ -14,6 +15,17 @@ from mozbuild.packaging import (
     package_basename,
     quote_defines,
 )
+
+_SUBSTS = {
+    "MOZ_PKG_APPNAME": "firefox",
+    "MOZ_PKG_VERSION": "156.0a1",
+    "MOZ_PKG_PLATFORM": "win64",
+    "PKG_SUFFIX": ".zip",
+    "MOZ_PKG_DIR_DEFAULT": "firefox",
+    "JSSHELL_NAME": "jsshell-win64.zip",
+    "OS_ARCH": "WINNT",
+    "OS_TARGET": "WINNT",
+}
 
 
 def test_no_pkg_files_with_manifest():
@@ -121,6 +133,99 @@ def test_jsshell_name():
 
 def test_jsshell_name_simple_name():
     assert jsshell_name(platform="win64", simple_name="target") == "target.jsshell.zip"
+
+
+def test_package_paths_locale():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist", ab_cd="de")
+
+    assert paths.basename == "firefox-156.0a1.de.win64"
+    assert paths.package == "firefox-156.0a1.de.win64.zip"
+    assert paths.pkg_dir == "firefox"
+
+
+def test_package_paths_pkg_dir():
+    paths = PackagePaths(
+        substs=_SUBSTS, dist_dir="/obj/dist", pkg_dir="snap/source/usr/lib/firefox"
+    )
+
+    assert paths.pkg_dir == "snap/source/usr/lib/firefox"
+
+
+def test_package_paths_metadata():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist")
+
+    assert paths.sourcestamp_file == "/obj/dist/firefox-156.0a1.en-US.win64.txt"
+    assert paths.buildinfo_file == "/obj/dist/firefox-156.0a1.en-US.win64.json"
+    assert paths.buildhub_json == "/obj/dist/buildhub.json"
+    assert (
+        paths.buildid_info_txt_file == "/obj/dist/firefox-156.0a1.en-US.win64_info.txt"
+    )
+    assert paths.mozinfo_file == "/obj/dist/firefox-156.0a1.en-US.win64.mozinfo.json"
+    assert paths.jsshell == "/obj/dist/jsshell-win64.zip"
+
+
+def test_package_paths_pkg_path():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist", pkg_path="win64/")
+
+    assert paths.pkg_output_dir == "/obj/dist/win64/"
+    assert paths.package == "win64/firefox-156.0a1.en-US.win64.zip"
+    assert paths.sourcestamp_file == "/obj/dist/win64/firefox-156.0a1.en-US.win64.txt"
+    assert (
+        paths.symbol_archive_basename
+        == "firefox-156.0a1.en-US.win64.crashreporter-symbols"
+    )
+
+
+def test_package_paths_pkg_path_without_slash():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist", pkg_path="win64")
+
+    assert paths.package == "win64/firefox-156.0a1.en-US.win64.zip"
+
+
+def test_package_paths_installer():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist")
+
+    assert paths.installer_basename == "firefox-156.0a1.en-US.win64.installer"
+    assert (
+        paths.installer_package == "/obj/dist/firefox-156.0a1.en-US.win64.installer.exe"
+    )
+    assert paths.stub_installer_basename == "firefox-156.0a1.en-US.win64.installer-stub"
+
+    elsewhere = PackagePaths(
+        substs={**_SUBSTS, "OS_TARGET": "Linux"}, dist_dir="/obj/dist"
+    )
+
+    assert elsewhere.installer_package is None
+
+
+def test_package_paths_update_framework_archive():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist")
+
+    assert paths.update_framework_artifacts_archive_basename is None
+
+    mac = PackagePaths(substs={**_SUBSTS, "OS_ARCH": "Darwin"}, dist_dir="/obj/dist")
+
+    assert (
+        mac.update_framework_artifacts_archive_basename
+        == "firefox-156.0a1.en-US.win64.update_framework_artifacts"
+    )
+
+
+def test_package_paths_suffix():
+    paths = PackagePaths(substs=_SUBSTS, dist_dir="/obj/dist")
+
+    assert paths.package == "firefox-156.0a1.en-US.win64.zip"
+
+
+def test_package_paths_simple_name():
+    paths = PackagePaths(
+        substs={**_SUBSTS, "MOZ_SIMPLE_PACKAGE_NAME": "target"},
+        dist_dir="/obj/dist",
+    )
+
+    assert paths.basename == "target"
+    assert paths.package == "target.zip"
+    assert paths.sourcestamp_file == "/obj/dist/target.txt"
 
 
 def test_all_locales():
