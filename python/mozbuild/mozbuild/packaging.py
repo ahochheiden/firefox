@@ -259,6 +259,109 @@ def files_to_upload(
     return [f for f in dict.fromkeys(candidates) if f and os.path.exists(f)]
 
 
+def lproj_root(*, ab_cd: str, cocoa: bool) -> str:
+    if cocoa and ab_cd == "zh-TW":
+        return ab_cd.replace("-", "_")
+    return ab_cd.split("-", maxsplit=1)[0]
+
+
+def _bare_define(token: str) -> str:
+    if not token.startswith("-D"):
+        raise ValueError(f"expected a -D define, got {token}")
+    return token[2:]
+
+
+def package_defines(*, substs: Mapping[str, str], ab_cd: str = "en-US") -> list[str]:
+    cocoa = substs.get("MOZ_WIDGET_TOOLKIT") == "cocoa"
+    tokens = shlex.split(substs.get("PACKAGE_MANIFEST_DEFINES") or "")
+    tokens += shlex.split(substs.get("PACKAGE_TOOLKIT_DEFINES") or "")
+    tokens.append(f"-DLPROJ_ROOT={lproj_root(ab_cd=ab_cd, cocoa=cocoa)}")
+    # ACDEFINES stores dollar signs doubled. Restore them before preprocessing.
+    tokens += shlex.split((substs.get("ACDEFINES") or "").replace("$$", "$"))
+    tokens.append(f"-DAB_CD={ab_cd}")
+    return [_bare_define(token) for token in tokens]
+
+
+def _optional_step(environ: Mapping[str, str], name: str, automation: bool) -> bool:
+    """An environment variable set to anything turns a step on, one set to
+    nothing turns it off, and one left unset follows automation."""
+    value = environ.get(name)
+    return bool(value) if value is not None else automation
+
+
+def package_options(
+    *,
+    substs: Mapping[str, str],
+    topobjdir: str,
+    environ: Mapping[str, str],
+    ab_cd: Optional[str] = None,
+    locales: Optional[Sequence[str]] = None,
+    mode: str = "package",
+) -> dict:
+    ab_cd = ab_cd or substs.get("MOZ_UI_LOCALE") or "en-US"
+    if locales is None:
+        locales = (environ.get("MOZ_CHROME_MULTILOCALE") or "").split()
+    automation = bool(substs.get("MOZ_AUTOMATION"))
+    omni = substs.get("MOZ_PACKAGER_FORMAT") == "omni"
+    jarlog = substs.get("PGO_JARLOG_PATH") or mozpath.join(
+        topobjdir, "jarlog", f"{ab_cd}.log"
+    )
+    sanitizer = any(substs.get(name) for name in ("MOZ_ASAN", "LIBFUZZER", "MOZ_UBSAN"))
+    cocoa = substs.get("MOZ_WIDGET_TOOLKIT") == "cocoa"
+
+    return dict(
+        mode=mode,
+        ab_cd=ab_cd,
+        pkg_dir=environ.get("MOZ_PKG_DIR") or None,
+        simple_package_name=environ.get("MOZ_SIMPLE_PACKAGE_NAME") or None,
+        locales=locales,
+        locale_entries=substs.get("MOZ_CHROME_LOCALE_ENTRIES") or [],
+        defines=package_defines(substs=substs, ab_cd=ab_cd),
+        manifest=substs.get("MOZ_PKG_MANIFEST") or None,
+        removals=substs.get("MOZ_PKG_REMOVALS") or None,
+        non_resources=(
+            shlex.split(substs.get("NON_OMNIJAR_FILES") or "") if omni else []
+        ),
+        no_pkg_files=list(
+            no_pkg_files(
+                has_manifest=bool(substs.get("MOZ_PKG_MANIFEST")),
+                dmd=bool(substs.get("MOZ_DMD")),
+            )
+        ),
+        minify=bool(substs.get("MOZ_PACKAGER_MINIFY")),
+        minify_js=bool(substs.get("MOZ_PACKAGER_MINIFY_JS")),
+        minify_pdfjs=bool(substs.get("MOZ_PACKAGER_MINIFY_PDFJS")),
+        jarlog=jarlog if os.path.exists(jarlog) else None,
+        compress=substs.get("JAR_COMPRESSION") or "deflate",
+        ignore_errors=not substs.get("MOZ_PKG_FATAL_WARNINGS"),
+        ignore_broken_symlinks=not automation,
+        find_dupes=_optional_step(environ, "RUN_FIND_DUPES", automation),
+        allowed_dupes=substs.get("MOZ_PKG_ALLOWED_DUPES") or [],
+        mozharness_zip=_optional_step(environ, "RUN_MOZHARNESS_ZIP", automation),
+        jsshell=bool(substs.get("MOZ_PACKAGE_JSSHELL")),
+        automation=automation,
+        artifact_build_symbols=substs.get("MOZ_ARTIFACT_BUILD_SYMBOLS") or None,
+        upload_dir=environ.get("UPLOAD_DIR"),
+        code_coverage=bool(substs.get("MOZ_CODE_COVERAGE")),
+        mozsearch=bool(substs.get("ENABLE_MOZSEARCH_PLUGIN")),
+        moz_fetches_dir=environ.get("MOZ_FETCHES_DIR"),
+        rewrite_sanitizer_dylib=(
+            cocoa and substs.get("OS_ARCH") == "Darwin" and sanitizer
+        ),
+        installer=substs.get("OS_ARCH") == "WINNT",
+        stub_installer=bool(substs.get("MOZ_STUB_INSTALLER")),
+        langpack=bool(substs.get("MOZ_PKG_LANGPACK_LOCALES_DIR"))
+        and "FasterMake+RecursiveMake" not in (substs.get("BUILD_BACKENDS") or []),
+        destdir=environ.get("DESTDIR", ""),
+        source_repo_header=(
+            mozpath.join(topobjdir, "source-repo.h")
+            if substs.get("MOZ_INCLUDE_SOURCE_INFO")
+            else None
+        ),
+        package_extra_args=shlex.split(substs.get("MOZ_PACKAGE_EXTRA_ARGS") or ""),
+    )
+
+
 def all_locales(locales: Iterable[str]) -> list[str]:
     locales = [*locales]
     if "en-US" not in locales:

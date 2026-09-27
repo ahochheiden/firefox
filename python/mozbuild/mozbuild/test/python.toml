@@ -27,6 +27,8 @@ subsuite = "mozbuild"
 
 ["action/test_package_compare.py"]
 
+["action/test_package_configured.py"]
+
 ["action/test_package_install.py"]
 skip-if = ["os == 'win'"] # The action only supports platforms that install with a prefix
 

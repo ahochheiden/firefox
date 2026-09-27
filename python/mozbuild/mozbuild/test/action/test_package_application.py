@@ -151,6 +151,10 @@ class TestPackageApplication(unittest.TestCase):
                     package_name = f.read()
         return rc, calls, package_name
 
+    def test_unknown_mode(self):
+        with self.assertRaisesRegex(ValueError, "unknown mode bogus, expected one of"):
+            self._run(mode="bogus")
+
     def test_step_order(self):
         order = []
         with tempfile.TemporaryDirectory() as tmp:
@@ -322,6 +326,13 @@ class TestPackageApplication(unittest.TestCase):
             argv[argv.index("--basename") + 1], "firefox-156.0a1.en-US.win64"
         )
         self.assertEqual(package_name, b"firefox-156.0a1.en-US.win64.zip\n")
+
+    def test_archive_simple_package_name(self):
+        _, calls, package_name = self._run(simple_package_name="target")
+
+        argv = calls["archive"].call_args.args[0]
+        self.assertEqual(argv[argv.index("--basename") + 1], "target")
+        self.assertEqual(package_name, b"target.zip\n")
 
     def test_archive_extra_args(self):
         _, calls, _ = self._run(package_extra_args=["--strong-compression"])
@@ -538,6 +549,11 @@ class TestLangpack(unittest.TestCase):
 
         self.assertEqual(calls["l10n_stage"].call_count, 0)
         self.assertEqual(calls["package_langpack"].call_count, 0)
+
+    def test_langpack_stage_mode(self):
+        _, calls, _ = self._run(langpack=True, mode="stage")
+
+        self.assertEqual(calls["l10n_stage"].call_count, 0)
 
     def test_langpack_stage_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
