@@ -147,8 +147,9 @@ CARGO_SPEC_FILES = {
 }
 
 # The Cargo environment adds its own LTO and PGO flags around the computed
-# flags, so these categories are left out of the flags passed to Cargo.
-RUST_EXCLUDED_FLAG_CATEGORIES = ("LTO", "PGO", "PGO_DEFINES")
+# flags, and host compiles only ever received `NSPR_CFLAGS` from Make, so these
+# categories are left out of the flags passed to Cargo.
+RUST_EXCLUDED_FLAG_CATEGORIES = ("LTO", "NSPR", "PGO", "PGO_DEFINES")
 
 
 @dataclass
