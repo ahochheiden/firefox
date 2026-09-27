@@ -117,6 +117,14 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
                             # installed, we only want to run the command once.
                             dep = self._generated_files_map[dep]
                         self._dependencies[dep_target].append(dep)
+            if isinstance(obj, FinalTargetPreprocessedFiles):
+                dep_target = "install-%s" % obj.install_target
+                for dep in obj.extra_deps:
+                    if isinstance(dep, ObjDirPath):
+                        dep = mozpath.relpath(dep.full_path, self.environment.topobjdir)
+                        self._dependencies[dep_target].append(
+                            self._generated_files_map.get(dep, dep)
+                        )
 
         elif isinstance(obj, ChromeManifestEntry) and obj.install_target.startswith(
             "dist/bin"

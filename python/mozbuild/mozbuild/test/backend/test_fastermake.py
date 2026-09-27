@@ -59,6 +59,13 @@ class TestFasterMakeBackend(BackendTester):
         self.assertEqual([l for l in lines if "bar.c" in l], [])
         self.assertIn("install-dist/bin: $(TOPOBJDIR)/baz.js", lines)
 
+    def test_pp_files_extra_deps(self):
+        env = self._consume("pp-files-extra-deps-generated", FasterMakeBackend)
+
+        with open(mozpath.join(env.topobjdir, "faster", "Makefile")) as fh:
+            lines = [l.rstrip() for l in fh]
+        self.assertIn("install-dist/bin: $(TOPOBJDIR)/generated-header.h", lines)
+
 
 class TestJarLocaleConstraint(BackendTester):
     """A `locales translated:` section reaches the backend only for a repack."""
