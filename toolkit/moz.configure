@@ -1076,9 +1076,9 @@ set_config("MOZ_PACKAGER_MINIFY_PDFJS", True, when="--enable-minify-pdfjs")
 
 
 option(
-    "--disable-legacy-packaging",
+    "--enable-legacy-packaging",
     env="MOZ_USE_LEGACY_PACKAGING",
-    help="Disable the legacy Make driven application packaging",
+    help="Enable the legacy Make driven application packaging",
 )
 
 
