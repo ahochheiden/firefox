@@ -36,6 +36,8 @@ skip-if = ["os == 'win'"] # The action only supports platforms that install with
 
 ["action/test_package_stage.py"]
 
+["action/test_package_symbols.py"]
+
 ["action/test_package_upload.py"]
 
 ["action/test_process_install_manifest.py"]

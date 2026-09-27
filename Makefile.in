@@ -117,45 +117,15 @@ include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
 
 endif
 
-.PHONY: prepsymbolsarchive
-prepsymbolsarchive:
-	echo packing symbols
-	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
-
 ifndef MOZ_AUTOMATION
-prepsymbolsarchive: recurse_syms
+buildsymbols: recurse_syms
 endif
 
-.PHONY: symbolsfullarchive
-symbolsfullarchive: prepsymbolsarchive
-	$(RM) '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).tar.zst'
-	$(call py_action,symbols_archive $(SYMBOL_FULL_ARCHIVE_BASENAME).tar.zst,'$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).tar.zst' \
-                                     $(abspath $(DIST)/crashreporter-symbols) \
-                                     --full-archive)
-
-.PHONY: symbolsarchive
-symbolsarchive: prepsymbolsarchive
-	$(RM) '$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip'
-	$(call py_action,symbols_archive $(SYMBOL_ARCHIVE_BASENAME).zip,'$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip' \
-                                     $(abspath $(DIST)/crashreporter-symbols))
-
-# Set MOZ_ENABLE_FULL_SYMBOLS to enable generation and upload of the full
-# crashreporter symbols archives
-ifdef MOZ_ENABLE_FULL_SYMBOLS
-buildsymbols: symbolsfullarchive symbolsarchive
-else
-ifdef MOZ_CRASHREPORTER
-buildsymbols: symbolsarchive
-else
 buildsymbols:
-	@echo "Skipping symbols generation because MOZ_CRASHREPORTER is not set."
-endif # MOZ_CRASHREPORTER
-endif # MOZ_ENABLE_FULL_SYMBOLS
+	$(call py_action,package_symbols)
 
 uploadsymbols:
-ifdef MOZ_ENABLE_FULL_SYMBOLS
-	$(PYTHON3) -u $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.py '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).tar.zst'
-endif
+	$(call py_action,package_symbols,--upload)
 
 .PHONY: package-generated-sources
 package-generated-sources:
