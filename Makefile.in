@@ -129,7 +129,7 @@ uploadsymbols:
 
 .PHONY: package-generated-sources
 package-generated-sources:
-	$(call py_action,package_generated_sources,'$(DIST)/$(PKG_PATH)$(GENERATED_SOURCE_FILE_PACKAGE)')
+	$(call py_action,package_generated_sources)
 
 ifdef JS_STANDALONE
 # Delegate js-specific rules to js

@@ -12,12 +12,27 @@ from mozpack.archive import create_tar_gz_from_files
 from mozpack.files import BaseFile
 
 from mozbuild.generated_sources import get_generated_sources
+from mozbuild.packaging import PackagePaths
 
 
 def main(argv):
     parser = argparse.ArgumentParser(description="Produce archive of generated sources")
-    parser.add_argument("outputfile", help="File to write output to")
+    parser.add_argument(
+        "outputfile",
+        nargs="?",
+        help="File to write output to. Defaults to the generated files package "
+        "in dist.",
+    )
     args = parser.parse_args(argv)
+
+    if not args.outputfile:
+        paths = PackagePaths(
+            substs=buildconfig.substs,
+            dist_dir=mozpath.join(buildconfig.topobjdir, "dist"),
+        )
+        args.outputfile = mozpath.join(
+            paths.pkg_output_dir, paths.generated_source_file_package
+        )
 
     objdir_abspath = mozpath.abspath(buildconfig.topobjdir)
 
