@@ -31,15 +31,3 @@ wget-en-US:
 # with parallel builds
 merge-% chrome-%:
 	$(MAKE) -j1 -C mobile/android/locales $@
-
-ifdef ENABLE_TESTS
-# Implemented in testing/testsuite-targets.mk
-
-mochitest-browser-chrome:
-	$(RUN_MOCHITEST) --flavor=browser
-	$(CHECK_TEST_ERROR)
-
-mochitest:: mochitest-browser-chrome
-
-.PHONY: mochitest-browser-chrome
-endif
