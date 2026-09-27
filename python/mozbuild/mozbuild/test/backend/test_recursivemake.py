@@ -1360,7 +1360,6 @@ class TestRecursiveMakeBackend(BackendTester):
             "x86_64-unknown-linux-gnu/release-custom/libprofile_library.a",
             "CARGO_FILE := $(srcdir)/Cargo.toml",
             f"CARGO_TARGET_DIR := {env.topobjdir}",
-            "RUST_LIBRARY_CARGO_PROFILE_SUFFIX := custom",
         ]
 
         self.assertEqual(lines, expected)
