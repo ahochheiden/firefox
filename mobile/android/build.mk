@@ -24,9 +24,6 @@ upload::
 	$(call py_action,package_upload,--ab-cd=$(AB_CD) $(if $(MOZ_SIMPLE_PACKAGE_NAME),--simple-package-name=$(MOZ_SIMPLE_PACKAGE_NAME)) $(addprefix --extra-file=,$(UPLOAD_EXTRA_FILES)))
 endif
 
-wget-en-US:
-	@$(MAKE) -C mobile/android/locales $@
-
 # make -j1 because dependencies in l10n build targets don't work
 # with parallel builds
 merge-% chrome-%:
