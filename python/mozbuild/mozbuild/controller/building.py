@@ -32,6 +32,13 @@ import mozpack.path as mozpath
 from mach.mixin.logging import LoggingMixin
 from mach.util import get_state_dir, get_virtualenv_base_dir
 from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
+from mozversioncontrol import (
+    InvalidRepoPath,
+    MissingVCSInfo,
+    MissingVCSTool,
+    StaleWorkspaceError,
+    get_repository_object,
+)
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
@@ -1256,6 +1263,45 @@ def write_buildid(topobjdir, substs, environ):
         fh.write(f"{buildid}\n")
 
 
+SOURCE_REPO_FILE = "source-repo.txt"
+
+
+def write_source_repo(topobjdir, topsrcdir, substs):
+    # We only want to resolve the source changeset once per build, and Android
+    # keeps the one it was first given.
+    path = mozpath.join(topobjdir, SOURCE_REPO_FILE)
+    if substs.get("MOZ_BUILD_APP") == "mobile/android" and os.path.exists(path):
+        return
+    # We allow the source repo and changeset to be specified via the
+    # environment (see configure)
+    repo = substs.get("MOZ_SOURCE_REPO")
+    changeset = substs.get("MOZ_SOURCE_CHANGESET")
+    if not changeset:
+        try:
+            vcs = get_repository_object(topsrcdir)
+            changeset = vcs.head_rev
+            if not repo:
+                repo = vcs.get_remote_url()
+        except (
+            InvalidRepoPath,
+            MissingVCSInfo,
+            MissingVCSTool,
+            StaleWorkspaceError,
+            subprocess.CalledProcessError,
+        ):
+            pass
+        if substs.get("MOZ_SOURCE_REPO") and not changeset:
+            raise Exception(
+                "could not resolve changeset; try setting MOZ_SOURCE_CHANGESET"
+            )
+    if repo and not substs.get("MOZ_SOURCE_REPO"):
+        if repo.startswith("ssh://"):
+            repo = "https://" + repo[6:]
+        repo = repo.rstrip("/")
+    with FileAvoidWrite(path) as fh:
+        fh.write(f"{changeset or ''}\n{repo or ''}\n")
+
+
 class BuildDriver(MozbuildObject):
     """Provides a high-level API for build actions."""
 
@@ -1459,6 +1505,7 @@ class BuildDriver(MozbuildObject):
                 self.ensure_backend_current()
 
             write_buildid(self.topobjdir, substs, os.environ)
+            write_source_repo(self.topobjdir, self.topsrcdir, substs)
 
             jobs = self.resolve_num_jobs(jobs, job_size)
 

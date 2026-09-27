@@ -114,6 +114,8 @@ skip-if = ["os == 'win'"] # The action only supports platforms that install with
 
 ["controller/test_clobber.py"]
 
+["controller/test_source_repo.py"]
+
 ["frontend/test_context.py"]
 
 ["frontend/test_emitter.py"]
