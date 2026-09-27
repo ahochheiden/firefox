@@ -12,6 +12,7 @@ from tempfile import mkdtemp
 
 import buildconfig
 import mozpack.path as mozpath
+from mach.util import get_state_dir
 from mozfile import which
 from mozpack.files import FileFinder
 from mozunit import main
@@ -31,9 +32,9 @@ def make_path():
         return buildconfig.substs["GMAKE"]
     except KeyError:
         fetches_dir = os.environ.get("MOZ_FETCHES_DIR")
-        extra_search_dirs = ()
+        extra_search_dirs = (os.path.join(get_state_dir(), "mozmake"),)
         if fetches_dir:
-            extra_search_dirs = (os.path.join(fetches_dir, "mozmake"),)
+            extra_search_dirs += (os.path.join(fetches_dir, "mozmake"),)
         # Fallback for when running the test without an objdir.
         for name in ("gmake", "make", "mozmake", "gnumake", "mingw32-make"):
             path = which(name, extra_search_dirs=extra_search_dirs)
