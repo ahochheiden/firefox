@@ -69,22 +69,6 @@ force-cargo-library-build:
 	$(call BUILDSTATUS,START_Rust $(notdir $(RUST_LIBRARY_FILE)))
 	$(call RUN_CARGO_ACTION,.cargo-library-spec.json,$(cargo_action_rustc_flags))
 	$(call BUILDSTATUS,END_Rust $(notdir $(RUST_LIBRARY_FILE)))
-# When we are building in --enable-release mode; we add an additional check to confirm
-# that we are not importing any networking-related functions in rust code. This reduces
-# the chance of proxy bypasses originating from rust code.
-# The check only works when rust code is built with -Clto but without MOZ_LTO_RUST_CROSS.
-# Sanitizers and sancov also fail because compiler-rt hooks network functions.
-ifndef MOZ_PROFILE_GENERATE
-ifeq ($(OS_ARCH), Linux)
-ifeq (,$(RUST_SANCOV_FLAGS)$(MOZ_ASAN)$(MOZ_TSAN)$(MOZ_UBSAN))
-ifndef MOZ_LTO_RUST_CROSS
-ifdef RUST_LIBRARY_LTO
-	$(call py_action,check_binary $(@F),--networking $(RUST_LIBRARY_FILE))
-endif
-endif
-endif
-endif
-endif
 
 $(eval $(call make_cargo_rule,$(RUST_LIBRARY_FILE),force-cargo-library-build,.cargo-library-spec.json $(cargo_action_deps)))
 

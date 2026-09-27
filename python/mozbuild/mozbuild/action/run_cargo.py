@@ -16,6 +16,7 @@ from mozshellutil import quote as shell_quote
 
 from mozbuild.rust_commands import (
     CargoInvocation,
+    applies_library_lto,
     cargo_profile_dir,
     compose_cargo_build_edge_argv,
     compose_env,
@@ -44,6 +45,29 @@ def stage_test_libs(command, substs, topobjdir):
     pattern = f"{substs.get('DLL_PREFIX')}*{substs.get('DLL_SUFFIX')}"
     for lib in sorted(Path(topobjdir, "dist", "bin").glob(pattern)):
         shutil.copy(lib, bindir)
+
+
+def check_networking(command, substs, topobjdir):
+    # When we are building in --enable-release mode; we add an additional check to confirm
+    # that we are not importing any networking-related functions in rust code. This reduces
+    # the chance of proxy bypasses originating from rust code.
+    # The check only works when rust code is built with -Clto but without MOZ_LTO_RUST_CROSS.
+    # Sanitizers and sancov also fail because compiler-rt hooks network functions.
+    if (
+        command.kind != "library"
+        or substs.get("OS_ARCH") != "Linux"
+        or substs.get("MOZ_PROFILE_GENERATE")
+        or substs.get("RUST_SANCOV_FLAGS")
+        or substs.get("MOZ_ASAN")
+        or substs.get("MOZ_TSAN")
+        or substs.get("MOZ_UBSAN")
+        or substs.get("MOZ_LTO_RUST_CROSS")
+        or not applies_library_lto(command.kind, command.lto, substs)
+    ):
+        return 0
+    from mozbuild.action import check_binary
+
+    return check_binary.main(["--networking", str(Path(topobjdir, command.outputs[0]))])
 
 
 def copy_program_pdbs(command, topobjdir):
@@ -112,6 +136,7 @@ def main(argv):
     ).returncode
     if returncode == 0:
         copy_program_pdbs(command, topobjdir)
+        returncode = check_networking(command, substs, topobjdir)
     return returncode
 
 

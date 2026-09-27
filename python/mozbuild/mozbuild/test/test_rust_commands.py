@@ -229,7 +229,7 @@ class TestCargoSpec(unittest.TestCase):
     def test_undeclared_key_raises(self):
         config = CargoConfig({"CARGO": "cargo"})
         self.assertEqual(config.get("CARGO"), "cargo")
-        for key in ("MOZ_APP_NAME", "MOZ_WIDGET_TOOLKIT", "MOZ_TSAN", "CC_TYPE"):
+        for key in ("MOZ_APP_NAME", "MOZ_WIDGET_TOOLKIT", "MOZ_DEBUG", "CC_TYPE"):
             for read in (
                 lambda: config.get(key),
                 lambda: config[key],

@@ -62,6 +62,7 @@ CARGO_CONFIG_KEYS = {
     "GLEAN_PARSER_VENV": _as_str,
     "HOST_AR": _as_str,
     "IPHONEOS_SDK_DIR": _as_str,
+    "MOZ_ASAN": _bool,
     "MOZ_CARGO_BUILD_STD_ARGS": _as_list,
     "MOZ_CARGO_CC": _as_list,
     "MOZ_CARGO_CC_ENV_SUFFIX": _as_str,
@@ -101,6 +102,8 @@ CARGO_CONFIG_KEYS = {
     "MOZ_LIBCLANG_PATH": _as_str,
     "MOZ_LTO_LDFLAGS": _as_list,
     "MOZ_LTO_OBJECT_PATH": _bool,
+    "MOZ_LTO_RUST_CROSS": _bool,
+    "MOZ_PROFILE_GENERATE": _bool,
     "MOZ_RUSTC_BOOTSTRAP_DEFAULT": _as_str,
     "MOZ_RUSTC_BOOTSTRAP_FORCE": _as_str,
     "MOZ_RUSTC_WRAPPER": _as_str,
@@ -113,6 +116,8 @@ CARGO_CONFIG_KEYS = {
     "MOZ_RUST_DEFAULT_FLAGS": _as_list,
     "MOZ_RUST_LIBRARY_RUSTCFLAGS": _as_list,
     "MOZ_RUST_SANITIZER_OPTION_VARS": _as_list,
+    "MOZ_TSAN": _bool,
+    "MOZ_UBSAN": _bool,
     "OS_ARCH": _as_str,
     "PKG_CONFIG": _as_str,
     "PKG_CONFIG_LIBDIR": _as_str,
@@ -155,8 +160,8 @@ class CargoCommand:
     ``rustflags`` and ``rustc_flags`` hold the edge's own additions to
     ``RUSTFLAGS`` and to the flags after ``--``. ``lto`` is whether a library
     uses link time optimization in a build that enables it for Rust libraries.
-    ``outputs`` are the program files Cargo leaves in its target directory,
-    relative to the object directory.
+    ``outputs`` are the library or program files Cargo leaves in its target
+    directory, relative to the object directory.
     """
 
     kind: str
