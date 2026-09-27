@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from collections import Counter, namedtuple
+from datetime import datetime
 from itertools import dropwhile, islice, takewhile
 from pathlib import Path
 from textwrap import TextWrapper
@@ -1236,6 +1237,25 @@ class CCacheStats:
         return ((major << 8) + minor) >= ((3 << 8) + 7)
 
 
+BUILDID_FILE = "buildid.txt"
+
+
+def write_buildid(topobjdir, substs, environ):
+    # We only want to choose the build id once per build, and Android keeps the
+    # one it was first given.
+    path = mozpath.join(topobjdir, BUILDID_FILE)
+    if substs.get("MOZ_BUILD_APP") == "mobile/android" and os.path.exists(path):
+        return
+    buildid = environ.get("MOZ_BUILD_DATE")
+    if buildid and len(buildid) != 14:
+        print(f"Ignoring invalid MOZ_BUILD_DATE: {buildid}", file=sys.stderr)
+        buildid = None
+    if not buildid:
+        buildid = datetime.now().strftime("%Y%m%d%H%M%S")
+    with FileAvoidWrite(path) as fh:
+        fh.write(f"{buildid}\n")
+
+
 class BuildDriver(MozbuildObject):
     """Provides a high-level API for build actions."""
 
@@ -1437,6 +1457,8 @@ class BuildDriver(MozbuildObject):
 
             if not config_rc:
                 self.ensure_backend_current()
+
+            write_buildid(self.topobjdir, substs, os.environ)
 
             jobs = self.resolve_num_jobs(jobs, job_size)
 
