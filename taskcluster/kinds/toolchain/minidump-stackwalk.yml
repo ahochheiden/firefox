@@ -89,6 +89,10 @@ win64-minidump-stackwalk:
 # minidump-stackwalk, so it lives here for historical reasons.
 linux64-breakpad-injector:
     description: "breakpad injector toolchain build"
+    mozconfig:
+        app: tools/crashreporter/injector
+        variant: toolchain
+        platform: linux64
     run:
         script: build-breakpad-injector.sh
         toolchain-artifact: public/build/injector.tar.zst

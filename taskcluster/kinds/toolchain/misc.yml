@@ -137,6 +137,10 @@ linux64-mar-tools:
         toolchain:
             - linux64-clang-toolchain
             - sysroot-x86_64-linux-gnu
+    mozconfig:
+        app: tools/update-packaging
+        variant: toolchain
+        platform: linux64
     run:
         script: build-mar-tools.sh
         sparse-profile: null
@@ -158,6 +162,10 @@ linux64-zucchini-bin:
         toolchain:
             - linux64-clang-toolchain
             - sysroot-x86_64-linux-gnu
+    mozconfig:
+        app: tools/zucchini
+        variant: toolchain
+        platform: linux64
     run:
         script: build-zucchini.sh
         sparse-profile: null
