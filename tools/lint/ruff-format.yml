@@ -11,6 +11,7 @@ ruff-format:
         - py
     # Format Python inside dot-directories too (e.g. .agents, .claude skills).
     find-dotfiles: true
+    chunk-paths: false
     support-files:
         - 'tools/lint/python/**'
         - '**/.ruff.toml'

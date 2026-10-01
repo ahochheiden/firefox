@@ -77,6 +77,8 @@ Each `.yml` file must have at least one linter defined in it. Here are the suppo
 - setup - A function that sets up external dependencies (optional)
 - support-files - A list of glob patterns matching configuration files (optional)
 - find-dotfiles - If set to `true`, run on dot files (.\*) (optional)
+- chunk-paths - If set to `false`, do not split the paths across one job per CPU. Use this for
+  linters that already lint their paths in parallel (optional)
 - ignore-case - If set to `true` and `type` is regex, ignore the case (optional)
 
 Note that a linter may not have both `extensions` and `exclude_extensions` specified at the

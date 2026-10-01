@@ -296,6 +296,36 @@ def test_max_paths_per_job_global(monkeypatch, lint, linters, files, max_paths):
 
 @pytest.mark.skipif(
     platform.system() == "Windows",
+    reason="monkeypatch issues with multiprocessing on Windows",
+)
+@pytest.mark.parametrize("num_procs", [4, 8, 16])
+def test_number_of_jobs_unchunked(monkeypatch, lint, linters, files, num_procs):
+    monkeypatch.setattr(sys.modules[lint.__module__], "_run_worker", fake_run_worker)
+
+    lint.read(linters("unchunked"))
+    num_jobs = len(lint.roll(files, num_procs=num_procs).issues["count"])
+
+    assert num_jobs == 1
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="monkeypatch issues with multiprocessing on Windows",
+)
+@pytest.mark.parametrize("max_paths,expected_jobs", [(2, 2), (16, 1)])
+def test_max_paths_per_job_unchunked(
+    monkeypatch, lint, linters, files, max_paths, expected_jobs
+):
+    monkeypatch.setattr(sys.modules[lint.__module__], "_run_worker", fake_run_worker)
+
+    lint.MAX_PATHS_PER_JOB = max_paths
+    lint.read(linters("unchunked"))
+    num_jobs = len(lint.roll(files, num_procs=16).issues["count"])
+    assert num_jobs == expected_jobs
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
     reason="signal.CTRL_C_EVENT isn't causing a KeyboardInterrupt on Windows",
 )
 def test_keyboard_interrupt():
