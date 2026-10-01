@@ -428,5 +428,23 @@ def test_setup_all_skipped(lint, linters, filedir, capfd):
     assert lint.result.failed_setup == set()
 
 
+def test_setup_roll(lint, linters, filedir, capfd):
+    lint.read(linters("setup"))
+    lint.roll(os.path.join(filedir, "foobar.py"))
+    out, err = capfd.readouterr()
+    assert "setup passed" not in out
+
+    lint.roll(os.path.join(filedir, "foobar.js"))
+    out, err = capfd.readouterr()
+    assert "setup passed" in out
+
+
+def test_setup_roll_failed(lint, linters, filedir):
+    lint.read(linters("setupfailed"))
+    result = lint.roll(os.path.join(filedir, "foobar.js"))
+    assert result.failed_setup == set(["SetupFailedLinter"])
+    assert result.returncode == 1
+
+
 if __name__ == "__main__":
     mozunit.main()

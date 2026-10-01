@@ -459,18 +459,23 @@ def run(
             outgoing = True
             workdir = "all"
 
-        # Always run bootstrapping, but return early if --setup was passed in.
-        ret = lint.setup(virtualenv_manager=virtualenv_manager)
-        if setup or not lint.linters:
-            return ret
+        if setup:
+            return lint.setup(virtualenv_manager=virtualenv_manager)
 
         if linters_info["linters_not_found"] != []:
             raise NoValidLinter
 
         # run all linters
         result = lint.roll(
-            paths, outgoing=outgoing, workdir=workdir, rev=rev, num_procs=num_procs
+            paths,
+            outgoing=outgoing,
+            workdir=workdir,
+            rev=rev,
+            num_procs=num_procs,
+            virtualenv_manager=virtualenv_manager,
         )
+        if not lint.linters:
+            return 1
     except NoValidLinter as e:
         result = lint.result
         print(str(e))

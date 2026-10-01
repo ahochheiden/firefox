@@ -192,6 +192,7 @@ class LintRoller:
             self.vcs = None
 
         self.linters = []
+        self._setup_done = set()
         self.lintargs = lintargs
         self.lintargs["root"] = root
         self._setupargs = setupargs or {}
@@ -231,14 +232,20 @@ class LintRoller:
                 exclude.extend(self.third_party_exclude)
             self.linters.append(linter)
 
-    def setup(self, virtualenv_manager=None):
-        """Run setup for applicable linters"""
+    def setup(self, virtualenv_manager=None, names=None):
+        """Run setup for applicable linters
+
+        :param names: Only set up the linters with these names (optional).
+        """
         if not self.linters:
             raise NoValidLinter
 
         for linter in self.linters:
-            if "setup" not in linter:
+            if "setup" not in linter or linter["name"] in self._setup_done:
                 continue
+            if names is not None and linter["name"] not in names:
+                continue
+            self._setup_done.add(linter["name"])
 
             try:
                 setupargs = copy.deepcopy(self.lintargs)
@@ -367,13 +374,25 @@ class LintRoller:
         except Exception:
             log.exception("Sub-process raised an error:")
 
-    def roll(self, paths=None, outgoing=None, workdir=None, rev=None, num_procs=None):
+    def roll(
+        self,
+        paths=None,
+        outgoing=None,
+        workdir=None,
+        rev=None,
+        num_procs=None,
+        virtualenv_manager=None,
+    ):
         """Run all of the registered linters against the specified file paths.
+
+        Linters that have files to lint are set up first, unless `setup` has
+        already run for them.
 
         :param paths: An iterable of files and/or directories to lint.
         :param outgoing: Lint files touched by commits that are not on the remote repository.
         :param workdir: Lint all files touched in the working directory.
         :param num_procs: The number of processes to use. Default: cpu count
+        :param virtualenv_manager: Passed to the linters' setup functions.
         :return: A :class:`~result.ResultSummary` instance.
         """
         if not self.linters:
@@ -439,6 +458,10 @@ class LintRoller:
 
         num_procs = num_procs or cpu_count()
         jobs = list(self._generate_jobs(paths, vcs_paths, num_procs))
+
+        if jobs:
+            self.setup(virtualenv_manager, names={linter["name"] for linter, _ in jobs})
+            jobs = [job for job in jobs if job[0]["name"] not in self.result.skipped]
 
         # Make sure we never spawn more processes than we have jobs.
         num_procs = min(len(jobs), num_procs) or 1
