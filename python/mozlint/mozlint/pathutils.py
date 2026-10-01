@@ -150,6 +150,34 @@ def collapse(paths, base=None, dotfiles=False):
     return list(covered)
 
 
+def _find_globs(base, patterns, skip):
+    """Yield the paths under `base`, relative to it, that match one of
+    `patterns`, without descending into a match or into a directory in
+    `skip`. Dot files are ignored.
+    """
+    matches = mozpath.matcher([mozpath.normsep(p) for p in patterns])
+    stack = [(base, "")]
+    while stack:
+        dirpath, rel = stack.pop()
+        try:
+            entries = list(os.scandir(dirpath))
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            p = f"{rel}/{entry.name}" if rel else entry.name
+            if entry.is_dir(follow_symlinks=False):
+                if entry.path in skip:
+                    continue
+                if matches(p):
+                    yield p
+                else:
+                    stack.append((entry.path, p))
+            elif matches(p):
+                yield p
+
+
 def filterpaths(
     root,
     paths,
@@ -191,6 +219,8 @@ def filterpaths(
     exclude = list(map(normalize, exclude or []))
     excludepaths = [p for p in exclude if p.exists]
     excludeglobs = [p.path for p in exclude if not p.exists]
+    excludedirs = {p.path for p in excludepaths if p.isdir}
+    findglobs = [p for p in excludeglobs if "*" in p]
 
     keep = set()
     discard = set()
@@ -241,8 +271,8 @@ def filterpaths(
 
         # Next expand excludes with globs in them so we can add them to
         # the set of files to discard.
-        for pattern in excludeglobs:
-            for p, f in path.finder.find(pattern):
+        if findglobs and path.isdir and not any(e.contains(path) for e in excludepaths):
+            for p in _find_globs(path.path, findglobs, excludedirs):
                 discard.add(path.join(p))
 
     if expand_excludes:

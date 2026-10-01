@@ -156,13 +156,31 @@ def match(path, pattern):
     """
     if not pattern:
         return True
+    return _pattern_re(pattern).match(path) is not None
+
+
+def _pattern_re(pattern):
     if pattern not in re_cache:
         p = re.escape(pattern)
         p = MATCH_STAR_STAR_RE.sub(r"\1(?:.+/)?", p)
         p = MATCH_STAR_STAR_END_RE.sub(r"(?:\1.+)?", p)
         p = p.replace(r"\*", "[^/]*") + "(?:/.*)?$"
         re_cache[pattern] = re.compile(p)
-    return re_cache[pattern].match(path) is not None
+    return re_cache[pattern]
+
+
+def matcher(patterns):
+    """
+    Return a function that returns whether a path matches any of the given
+    patterns, following the same rules as ``match``. Testing many paths against
+    the returned function is faster than calling ``match`` for each pattern.
+    """
+    if not patterns:
+        return lambda path: False
+    if not all(patterns):
+        return lambda path: True
+    regex = re.compile("|".join(f"(?:{_pattern_re(p).pattern})" for p in patterns))
+    return lambda path: regex.match(path) is not None
 
 
 def rebase(oldbase, base, relativepath):

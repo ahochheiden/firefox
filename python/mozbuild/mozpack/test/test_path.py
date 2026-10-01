@@ -14,6 +14,7 @@ from mozpack.path import (
     dirname,
     join,
     match,
+    matcher,
     normpath,
     rebase,
     relpath,
@@ -125,6 +126,18 @@ class TestPath(unittest.TestCase):
         self.assertTrue(match("foo/bar/baz.qux", "foo/**/bar/**"))
         self.assertFalse(match("foo/nobar/baz.qux", "foo/**/bar/**"))
         self.assertTrue(match("foo/bar", "foo/**/bar/**"))
+
+    def test_matcher(self):
+        self.assertFalse(matcher([])("foo"))
+        self.assertTrue(matcher(["bar", ""])("foo"))
+        m = matcher(["**/node_modules", "foo/*/baz.qux", "qux"])
+        self.assertTrue(m("node_modules"))
+        self.assertTrue(m("foo/node_modules/bar"))
+        self.assertTrue(m("foo/bar/baz.qux"))
+        self.assertTrue(m("qux/foo"))
+        self.assertFalse(m("foo/baz.qux"))
+        self.assertFalse(m("foo/qux"))
+        self.assertFalse(m("node_modules_foo"))
 
     def test_rebase(self):
         self.assertEqual(rebase("foo", "foo/bar", "bar/baz"), "baz")
