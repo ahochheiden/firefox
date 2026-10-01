@@ -37,8 +37,9 @@ def _get_mozcheck_target_dir(root, topobjdir):
     return os.path.join(root, "tools", "lint", "mozcheck", "target")
 
 
-# Resolved binary per (root, topobjdir). Populated by `setup` in the parent
-# process so that forked mozlint workers don't resolve it again.
+# Resolved binary per (root, topobjdir). Workers are spawned rather than
+# forked on macOS and Windows, so they read the binary `setup` resolved from
+# `MOZCHECK` instead of this cache.
 _binary_cache = {}
 
 
@@ -54,6 +55,9 @@ def _find_mozcheck_binary(log, root, topobjdir=None):
 
 def _resolve_mozcheck_binary(log, root, topobjdir=None):
     exe = ".exe" if sys.platform == "win32" else ""
+
+    if (binary := os.environ.get("MOZCHECK")) and os.path.isfile(binary):
+        return binary
 
     # In CI, the binary is fetched by the task itself. Use it directly rather
     # than going through bootstrap_toolchain, which spawns `mach taskgraph` to
@@ -110,7 +114,10 @@ def setup(root, **lintargs):
     # Resolve the binary once, here in the parent process, rather than letting
     # every mozlint worker race to fetch or build it (bug 2058685).
     log = lintargs.get("log")
-    _find_mozcheck_binary(log, _resolve_root(root), lintargs.get("topobjdir"))
+    if binary := _find_mozcheck_binary(
+        log, _resolve_root(root), lintargs.get("topobjdir")
+    ):
+        os.environ["MOZCHECK"] = binary
 
 
 def lint(paths, config, fix=None, **lintargs):
