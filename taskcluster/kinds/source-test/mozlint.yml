@@ -314,25 +314,77 @@ license:
             - 'tools/lint/license/**'
             - 'tools/lint/license.yml'
 
-lintpref:
-    description: Check for duplicates between all.js and StaticPrefList.yaml.
+quick:
+    description: Linters that each take a few seconds, run in one task
     treeherder:
-        symbol: misc(pref)
+        symbol: misc(quick)
     run:
-        mach: lint -v -l lintpref -f treeherder -f json:/builds/worker/mozlint.json .
+        mach: >-
+            lint -v
+            -l gecko-trace
+            -l glean-parser
+            -l header-guards
+            -l lintpref
+            -l mingw-capitalization
+            -l node-package-names
+            -l python-sites
+            -l review-context-toml
+            -l ruff
+            -l ruff-format
+            -l shellcheck
+            -l spidermonkey
+            -l test-manifest-toml
+            -l updatebot
+            -l wpt-subsuite-tagging
+            -l yaml
+            -f treeherder -f json:/builds/worker/mozlint.json .
     when:
         files-changed:
-            - 'modules/libpref/init/all.js'
-            - 'modules/libpref/init/StaticPrefList.yaml'
-            - 'browser/app/profile/firefox.js'
-            - 'devtools/client/preferences/debugger.js'
-            - 'mobile/android/app/geckoview-prefs.js'
-            - 'browser/branding/official/pref/firefox-branding.js'
-            - 'browser/branding/nightly/pref/firefox-branding.js'
-            - 'browser/branding/unofficial/pref/firefox-branding.js'
-            - 'browser/branding/aurora/pref/firefox-branding.js'
+            - '**/*.c'
+            - '**/*.cc'
+            - '**/*.configure'
+            - '**/*.cpp'
+            - '**/*.h'
+            - '**/*.hpp'
+            - '**/*.mozbuild'
+            - '**/*.py'
+            - '**/*.sh'
+            - '**/*.toml'
+            - '**/*.yaml'
+            - '**/*.yml'
+            - '**/*metrics.yaml'
+            - '**/.ruff.toml'
+            - '**/.ymllint'
+            - '**/gecko-trace.yaml'
+            - '**/gecko-trace.yml'
+            - '**/moz.build'
+            - '**/moz.yaml'
+            - '**/package.json'
+            - '**/pings.yaml'
             - 'browser/app/profile/channel-prefs.js'
-            - 'tools/lint/lintpref.yml'
+            - 'browser/app/profile/firefox.js'
+            - 'browser/branding/aurora/pref/firefox-branding.js'
+            - 'browser/branding/nightly/pref/firefox-branding.js'
+            - 'browser/branding/official/pref/firefox-branding.js'
+            - 'browser/branding/unofficial/pref/firefox-branding.js'
+            - 'devtools/client/preferences/debugger.js'
+            - 'intl/components/**/*.h'
+            - 'js/public/**'
+            - 'js/src/**'
+            - 'memory/mozalloc/**/*.h'
+            - 'mfbt/**/*.h'
+            - 'mobile/android/app/geckoview-prefs.js'
+            - 'modules/libpref/init/StaticPrefList.yaml'
+            - 'modules/libpref/init/all.js'
+            - 'mozglue/**/*.h'
+            - 'pyproject.toml'
+            - 'python/sites/**'
+            - 'review-context.toml'
+            - 'taskcluster/gecko_taskgraph/util/chunking.py'
+            - 'testing/web-platform/meta/**'
+            - 'testing/web-platform/mozilla/meta/**'
+            - 'testing/web-platform/mozilla/tests/**'
+            - 'testing/web-platform/tests/**'
 
 node-licenses:
     description: Lint for node licenses issues
@@ -370,41 +422,6 @@ node-licenses:
             - stylelint-plugin-mozilla
             - terser
 
-node-package-names:
-    description: Lint for node package name issues
-    treeherder:
-        symbol: misc(npn)
-    run:
-        mach: lint -v -l node-package-names -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/package.json'
-            - 'tools/lint/node-package-names.yml'
-
-mingw-cap:
-    description: lint for MinGW Capitalization issues
-    treeherder:
-        symbol: misc(mingw)
-    run:
-        mach: lint -v -l mingw-capitalization -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*.cpp'
-            - '**/*.cc'
-            - '**/*.c'
-            - '**/*.h'
-            - 'tools/lint/mingw-capitalization.yml'
-
-updatebot:
-    description: Ensure moz.yaml files are valid per schema
-    treeherder:
-        symbol: misc(mozyaml)
-    run:
-        mach: lint -v -l updatebot -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/moz.yaml'
-
 mscom-init:
     description: Lint for Microsoft COM initialization
     treeherder:
@@ -420,94 +437,6 @@ mscom-init:
             - '**/*.rs'
             - 'tools/lint/mscom-init.yml'
 
-py-ruff-format:
-    description: ruff format run over the gecko codebase
-    treeherder:
-        symbol: py(ruff-format)
-    run:
-        mach: lint -v -l ruff-format -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            # The list of extensions should match tools/lint/ruff-format.yml
-            - '**/*.py'
-            - '**/moz.build'
-            - '**/*.configure'
-            - '**/*.mozbuild'
-            - 'pyproject.toml'
-            - 'tools/lint/ruff-format.yml'
-            - 'tools/lint/python/ruff.py'
-
-py-ruff:
-    description: Run ruff over the gecko codebase
-    treeherder:
-        symbol: py(ruff)
-    run:
-        mach: lint -v -l ruff -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*.py'
-            - '**/*.configure'
-            - '**/.ruff.toml'
-            - 'pyproject.toml'
-            - 'tools/lint/ruff.yml'
-            - 'tools/lint/python/ruff.py'
-
-
-python-sites:
-    description: Lint for python sites
-    treeherder:
-        symbol: misc(pysites)
-    run:
-        mach: lint -v -l python-sites -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - 'python/sites/**'
-
-
-spidermonkey:
-    description: "SpiderMonkey #include style, MacroAssembler and bytecode doc checks"
-    treeherder:
-        symbol: js(SM)
-    run:
-        mach: lint -v -l spidermonkey -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - 'intl/components/**/*.h'
-            - 'js/public/**'
-            - 'js/src/**'
-            - 'memory/mozalloc/**/*.h'
-            - 'mfbt/**/*.h'
-            - 'mozglue/**/*.h'
-            - 'tools/lint/spidermonkey.yml'
-            - 'tools/lint/spidermonkey/**'
-
-test-manifest:
-    description: lint test manifests
-    treeherder:
-        symbol: tests(test-manifest)
-    run:
-        mach: lint -v -l test-manifest-toml -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*.toml'
-            - 'python/mozlint/**'
-            - 'tools/lint/test/files/test_manifest_toml/**'
-            - 'tools/lint/test/test_manifest_toml.py'
-            - 'tools/lint/test-manifest-toml/**'
-
-review-context-toml:
-    description: Validate review-context.toml against the review context schema
-    treeherder:
-        symbol: misc(review-context)
-    run:
-        mach: lint -v -l review-context-toml -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - 'review-context.toml'
-            - 'tools/lint/review-context-toml.yml'
-            - 'tools/lint/python/review_context_schema.py'
-            - 'tools/lint/python/review_context_toml.py'
-
 wptlint-gecko:
     description: web-platform-tests linter
     treeherder:
@@ -519,34 +448,6 @@ wptlint-gecko:
             - 'testing/web-platform/tests/**'
             - 'testing/web-platform/mozilla/tests/**'
             - 'tools/lint/wpt.yml'
-
-wpt-subsuite-tagging:
-    description: Checks WPT tests in subsuite directories have subsuite tags
-    treeherder:
-        symbol: tests(wpt-sub)
-    run:
-        mach: lint -v -l wpt-subsuite-tagging -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - 'testing/web-platform/tests/**'
-            - 'testing/web-platform/mozilla/tests/**'
-            - 'testing/web-platform/meta/**'
-            - 'testing/web-platform/mozilla/meta/**'
-            - 'taskcluster/gecko_taskgraph/util/chunking.py'
-            - 'tools/lint/wpt-subsuite-tagging/**'
-            - 'tools/lint/wpt-subsuite-tagging.yml'
-
-yaml:
-    description: yamllint run over the gecko codebase
-    treeherder:
-        symbol: pedantic(yaml)
-    run:
-        mach: lint -v -l yaml -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*.yml'
-            - '**/*.yaml'
-            - '**/.ymllint'
 
 md:
     description: Markdown linters run over the gecko codebase
@@ -562,18 +463,6 @@ md:
             - 'tools/lint/md.yml'
             - 'tools/lint/rumdl.toml'
             - 'tools/lint/python/rumdl.py'
-
-shellcheck:
-    description: shellcheck run over the gecko codebase
-    treeherder:
-        symbol: misc(shell)
-    run:
-        mach: lint -v -l shellcheck -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*.sh'
-            - 'tools/lint/shellcheck.yml'
-
 
 localization:
     description: l10n tests for strings with errors
@@ -873,19 +762,6 @@ fluent-lint:
             - 'tools/lint/fluent-lint.yml'
             - 'tools/lint/fluent-lint/exclusions.yml'
 
-glean-parser:
-    description: Lint Glean telemetry configuration files
-    treeherder:
-        symbol: misc(glean-parser)
-    run:
-        mach: lint -v -l glean-parser -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*metrics.yaml'
-            - '**/pings.yaml'
-            - 'tools/lint/glean-parser.yml'
-            - 'tools/lint/glean-parser/**'
-
 trojan-source:
     description: Trojan Source attack - CVE-2021-42572
     platform: lint/opt
@@ -953,19 +829,6 @@ c-includes:
             - 'tools/lint/includes/**'
             - 'mfbt/api.yml'
 
-header-guards:
-    description: Checks include header guards
-    treeherder:
-        symbol: cpp(guards)
-    run:
-        mach: lint -l header-guards -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/*.h'
-            - '**/*.hpp'
-            - 'tools/lint/header-guards.yml'
-            - 'tools/lint/header_guards/**'
-
 android-expired-strings:
     description: Check for references to Android strings marked for removal
     treeherder:
@@ -979,14 +842,3 @@ android-expired-strings:
             - 'mobile/android/**/*.xml'
             - 'tools/lint/android-expired-strings.yml'
             - 'tools/lint/android-expired-strings/**'
-
-gecko-trace:
-    description: Check that all `gecko-trace.yaml` files are correct
-    treeherder:
-        symbol: misc(gecko-trace)
-    run:
-        mach: lint -l gecko-trace -f treeherder -f json:/builds/worker/mozlint.json .
-    when:
-        files-changed:
-            - '**/gecko-trace.yaml'
-            - '**/gecko-trace.yml'
