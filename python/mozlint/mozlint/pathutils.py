@@ -427,8 +427,35 @@ def expand_exclusions(paths, config, root):
             if mozpath.commonprefix((path, e)) == path
         ]
 
-        finder = FileFinder(path, ignore=ignore, find_dotfiles=find_dotfiles)
-        for p, f in finder.find("**"):
-            if extensions and os.path.splitext(p)[1] not in extensions:
-                continue
+        for p in _walk(path, ignore, find_dotfiles, extensions):
             yield os.path.join(path, p)
+
+
+def _walk(base, ignore, find_dotfiles, extensions):
+    """Yield the files under `base`, relative to it, in the order that
+    `FileFinder(base, ignore=ignore, find_dotfiles=find_dotfiles).find("**")`
+    yields them, keeping only the extensions in `extensions` if it is not
+    empty.
+    """
+    ignored = mozpath.matcher([mozpath.normsep(p) for p in ignore])
+
+    def walk(rel):
+        if ignored(rel):
+            return
+        entries = []
+        with os.scandir(os.path.join(base, rel)) as scan:
+            for entry in scan:
+                if entry.name.startswith(".") and not find_dotfiles:
+                    continue
+                entries.append((entry.name, entry.is_dir()))
+        entries.sort()
+        for name, is_dir in entries:
+            child = mozpath.join(rel, name)
+            if is_dir:
+                yield from walk(child)
+            elif (
+                not extensions or os.path.splitext(name)[1] in extensions
+            ) and not ignored(child):
+                yield child
+
+    yield from walk("")
