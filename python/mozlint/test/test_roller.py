@@ -525,5 +525,15 @@ def test_setup_roll_failed(lint, linters, filedir):
     assert result.returncode == 1
 
 
+def test_setup_roll_env(lint, linters, filedir):
+    lint.read(linters("string", "setupenv"))
+    try:
+        result = lint.roll(os.path.join(filedir, "foobar.js"), num_procs=1)
+    finally:
+        os.environ.pop("MOZLINT_TEST_SETUP_ENV", None)
+    rules = {i.rule for issues in result.issues.values() for i in issues}
+    assert "env" in rules
+
+
 if __name__ == "__main__":
     mozunit.main()

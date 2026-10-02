@@ -59,7 +59,9 @@ def _setup_logger(log, show_verbose):
         log.setLevel(logging.WARNING)
 
 
-def _run_worker(config, paths, **lintargs):
+def _run_worker(config, paths, env=None, **lintargs):
+    if env:
+        os.environ.update(env)
     log = logging.LoggerAdapter(
         logger, {"lintname": config.get("name"), "pid": os.getpid()}
     )
@@ -515,7 +517,7 @@ class LintRoller:
         num_procs = num_procs or cpu_count()
         jobs = list(self._generate_jobs(paths, vcs_paths, num_procs))
 
-        if jobs:
+        if jobs and self.lintargs.get("fix"):
             self.setup(virtualenv_manager, names={linter["name"] for linter, _ in jobs})
             jobs = [job for job in jobs if job[0]["name"] not in self.result.skipped]
 
@@ -564,10 +566,35 @@ class LintRoller:
                     group_futures.append(future)
                 futures_wait(group_futures)
         else:
+
+            def submit(linter_jobs, env=None):
+                for job in linter_jobs:
+                    future = executor.submit(
+                        _run_worker, *job, env=env, **self.lintargs
+                    )
+                    future.add_done_callback(self._collect_results)
+                    futures.append(future)
+
+            needs_setup = {}
+            ready = []
             for job in jobs:
-                future = executor.submit(_run_worker, *job, **self.lintargs)
-                future.add_done_callback(self._collect_results)
-                futures.append(future)
+                linter = job[0]
+                if "setup" in linter and linter["name"] not in self._setup_done:
+                    needs_setup.setdefault(linter["name"], []).append(job)
+                else:
+                    ready.append(job)
+            try:
+                submit(ready)
+                for name, linter_jobs in needs_setup.items():
+                    before = dict(os.environ)
+                    self.setup(virtualenv_manager, names={name})
+                    if name in self.result.skipped:
+                        continue
+                    env = {k: v for k, v in os.environ.items() if before.get(k) != v}
+                    submit(linter_jobs, env)
+            except RuntimeError:
+                # The executor was shut down by the SIGINT handler.
+                pass
         executor.shutdown()
         signal.signal(signal.SIGINT, orig_sigint)
         return self.result

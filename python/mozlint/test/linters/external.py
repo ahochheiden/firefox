@@ -60,6 +60,16 @@ def passes(files, config, **lintargs):
     return []
 
 
+def setupenv(**lintargs):
+    os.environ["MOZLINT_TEST_SETUP_ENV"] = "1"
+
+
+def envcheck(files, config, **lintargs):
+    if os.environ.get("MOZLINT_TEST_SETUP_ENV") != "1":
+        return []
+    return [result.from_config(config, path=files[0], lineno=1, rule="env")]
+
+
 def setup(**lintargs):
     print("setup passed")
 
