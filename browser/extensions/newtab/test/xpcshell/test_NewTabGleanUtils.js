@@ -110,6 +110,64 @@ add_task(async function test_registerMetricsAndPings_validFormat() {
   sandbox.restore();
 });
 
+add_task(async function test_registerMetricsAndPings_skipsCompiled() {
+  const sandbox = test_setup();
+
+  NewTabGleanUtils.readJSON.returns({
+    pings: {
+      newtab: {
+        includeClientId: true,
+        sendIfEmpty: false,
+        preciseTimestamps: true,
+        includeInfoSections: true,
+        enabled: true,
+        schedulesPings: [],
+        reasonCodes: [],
+        followsCollectionEnabled: true,
+        uploaderCapabilities: [],
+      },
+    },
+    metrics: {
+      newtab: {
+        newtab_category: {
+          type: "string",
+          description: "test-description",
+          lifetime: "application",
+          pings: ["newtab"],
+          disabled: false,
+        },
+        runtime_only_metric: {
+          type: "text",
+          description: "test-description",
+          lifetime: "ping",
+          pings: ["newtab"],
+          disabled: false,
+        },
+      },
+    },
+  });
+
+  let result =
+    await NewTabGleanUtils.registerMetricsAndPings(TEST_RESOURCE_URI);
+  Assert.ok(result, "Registration success with compiled definitions");
+  Assert.equal(
+    Glean.newtab.pingRegistered.newtab.testGetValue(),
+    null,
+    "Compiled ping is skipped"
+  );
+  Assert.equal(
+    Glean.newtab.metricRegistered.newtab_category.testGetValue(),
+    null,
+    "Compiled metric is skipped"
+  );
+  Assert.ok(
+    Glean.newtab.metricRegistered.runtime_only_metric.testGetValue(),
+    "Metric missing from a compiled category is registered"
+  );
+
+  sandbox.restore();
+});
+
 /**
  * Test case: Handle ping configuration options name from runtime-metrics JSON
  * Verifies successful registration of pings with ping config options (such as `include_client_id`)

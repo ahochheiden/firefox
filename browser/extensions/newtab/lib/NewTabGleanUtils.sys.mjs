@@ -147,7 +147,7 @@ export const NewTabGleanUtils = {
       let metricName = this.dottedSnakeToCamel(name);
 
       if (categoryName in Glean && metricName in Glean[categoryName]) {
-        lazy.logConsole.warn(
+        lazy.logConsole.debug(
           `Fail to register metric ${name} in category ${category} as it already exists`
         );
         return;
@@ -220,7 +220,7 @@ export const NewTabGleanUtils = {
     try {
       let pingName = this.kebabToCamel(name);
       if (pingName in GleanPings) {
-        lazy.logConsole.warn(
+        lazy.logConsole.debug(
           `Fail to register ping ${name} as it already exists`
         );
         return;

@@ -1,5 +1,7 @@
 [DEFAULT]
 
+["test_gen_runtime_metrics.py"]
+
 ["test_jogfile_output_key.py"]
 
 ["test_mach_commands_spawn.py"]

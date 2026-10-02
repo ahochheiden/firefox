@@ -181,24 +181,11 @@ Similar to `FeatureManifest.yaml`, these metric and ping definitions are often p
 
 This means it is possible to land new metrics and pings for New Tab, but to maintain backwards compatibility, and use those metrics and pings on the Beta and Release channel before the `metrics.yaml` or `pings.yaml` files have reached those channels.
 
-This is handled automatically at build time. The `GENERATED_FILES` rules in `browser/extensions/newtab/webext-glue/moz.build` run `metrics/gen_runtime_metrics.py` to diff Nightly's metrics and pings against an older Firefox version. The result is written to a `runtime-metrics-N.json` file, where `N` is that major version (e.g. `runtime-metrics-142.json`). These files go into the objdir and are packaged into the XPI; they are **not** checked into the source tree, and no manual step is required before a train-hop.
+This is handled automatically at build time. The `GENERATED_FILES` rules in `browser/extensions/newtab/webext-glue/moz.build` run `metrics/gen_runtime_metrics.py` to convert Nightly's metrics and pings into a `runtime-metrics-N.json` file, where `N` is the major version of an older Firefox (e.g. `runtime-metrics-142.json`). These files go into the objdir and are packaged into the XPI; they are **not** checked into the source tree, and no manual step is required before a train-hop.
 
-Each payload is diffed against the `FIREFOX_BETA_N_BASE` tag for its version rather than a branch head, so it stays correct for all of that version's betas, RC and releases. Payloads are generated for the three versions below the one being built, to cover Beta and Release through the merge-day transition.
+Each payload holds every New Tab metric and ping. When the XPI runs on an older Firefox, `NewTabGleanUtils` skips the metrics and pings that version already has compiled in and registers the rest, so the build needs no network access and the payload stays correct for all of that version's betas, RC and releases. Payloads are generated for the three versions below the one being built, to cover Beta and Release through the merge-day transition.
 
-Generating a diff requires that version's `metrics.yaml`/`pings.yaml`, which are fetched over the network. Whether that fetch runs depends on the build:
-
-- **Shipped XPI builds and CI builds** set `MOZ_BROWSER_NEWTAB_METRICS_FETCH=1`. For shipped XPIs this is configured in the [xpi-manifest](https://github.com/mozilla-extensions/xpi-manifest) repo; for CI it is set on the `build-extensions` task in `taskcluster/kinds/build-extensions/kind.yml`. This fetches the comparison definitions over the network, and a fetch failure fails the build, so these builds never contain stale runtime metrics.
-- **Every other build** leaves the flag unset and writes an empty payload, so ordinary local and try builds have no network dependency. This is safe because runtime metrics are only consumed once the XPI is train-hopped onto Beta or Release.
-
-If you are building an XPI locally that you intend to install, for example to test a train-hop, set the flag for that build as well:
-
-```
-MOZ_BROWSER_NEWTAB_METRICS_FETCH=1 ./mach build
-```
-
-Run this as a clean build, for example after `./mach clobber`, if you have previously built without the flag.
-
-The same diff can still be produced on demand for inspection with:
+The diff against an older version can be produced on demand for inspection with:
 
 ```
 $ ./mach newtab channel-metrics-diff --channel beta

@@ -24,8 +24,8 @@ FINAL_TARGET_FILES["webext-glue"] += [
 ]
 
 # Bug 2057616: Generate New Tab's runtime Glean metrics/pings for train-hop
-# compatibility by diffing the local metrics.yaml/pings.yaml against each older
-# Firefox version the XPI can land on, then package the result into the XPI.
+# compatibility from the local metrics.yaml/pings.yaml for each older Firefox
+# version the XPI can land on, then package the result into the XPI.
 # See metrics/gen_runtime_metrics.py.
 #
 # Bug 2067207: the offsets cover every version that can be a host while central
@@ -47,7 +47,6 @@ if CONFIG["MOZ_APP_VERSION"]:
             "/browser/components/newtab/metrics.yaml",
             "/browser/components/newtab/pings.yaml",
         ]
-        GENERATED_FILES[runtime_metrics_file].flags = ["%d" % target_version]
         FINAL_TARGET_FILES["webext-glue"].metrics += ["!" + runtime_metrics_file]
 else:
     warning("New Tab runtime metrics not generated: MOZ_APP_VERSION is unavailable.")
