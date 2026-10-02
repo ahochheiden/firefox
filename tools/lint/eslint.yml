@@ -12,6 +12,7 @@ eslint:
     support-files:
         - '**/.eslintrc.js'
         - '.eslintrc*.js'
+        - 'eslint*.config.mjs'
         - 'tools/lint/eslint/**'
         - '.prettier*'
         # Files that can influence global variables
