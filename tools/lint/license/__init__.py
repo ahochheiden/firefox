@@ -149,29 +149,36 @@ def _declarations(path):
     return Declarations(tree)
 
 
-def _declared_in_tree(config, root):
-    """The set of ids named under LICENSES anywhere in the tree.
+def _declared_in_tree(config, root, parsed):
+    """The set of ids named under LICENSES anywhere in the tree, and the
+    moz.build files it was gathered from. The declarations of each file that
+    parses are stored in `parsed`.
 
     Gathered from every moz.build rather than from the ones being linted,
     because a notice is usually declared far from the code referencing it: the
     shared texts in toolkit/content/licenses cover the whole tree.
     """
     declared = set()
+    files = []
     for path in expand_exclusions([root], config, root):
+        files.append(path)
         try:
-            declarations = _declarations(Path(path))
+            declarations = parsed[path] = _declarations(Path(path))
         except (OSError, SyntaxError):
             # Reported by the loop in lint() when it covers the same tree; a
             # run over a subset of it reports nothing here, so a file it cannot
             # read leaves the declared set short.
             continue
         declared.update(declarations.named)
-    return declared
+    return declared, files
 
 
 def lint(paths, config, **lintargs):
     root = lintargs["root"]
-    declared_in_tree = _declared_in_tree(config, root)
+    parsed = {}
+    declared_in_tree, tree = _declared_in_tree(config, root, parsed)
+    targets = [mozpath.normpath(p) for p in paths]
+    prefixes = tuple(f"{p.rstrip('/')}/" for p in targets)
 
     licensing = get_spdx_licensing()
     manifests = {}
@@ -189,9 +196,12 @@ def lint(paths, config, **lintargs):
             )
         )
 
-    for path in sorted(expand_exclusions(paths, config, root)):
+    for path in sorted(tree):
+        normalized = mozpath.normpath(path)
+        if normalized not in targets and not normalized.startswith(prefixes):
+            continue
         try:
-            declarations = _declarations(Path(path))
+            declarations = parsed.get(path) or _declarations(Path(path))
         except SyntaxError as e:
             report(
                 path,
