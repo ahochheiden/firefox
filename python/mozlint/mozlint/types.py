@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import io
 import os
 import re
 import sys
@@ -116,6 +117,9 @@ class LineType(BaseType):
     def condition(payload, line, config):
         pass
 
+    def may_match(self, payload, content, config):
+        return True
+
     def _lint(self, path, config, **lintargs):
         if os.path.isdir(path):
             return self._lint_dir(path, config, **lintargs)
@@ -123,15 +127,21 @@ class LineType(BaseType):
         payload = config["payload"]
         errors = []
         with open(path, errors="replace") as fh:
-            for i, line in enumerate(fh):
-                if self.condition(payload, line, config):
-                    errors.append(result.from_config(config, path=path, lineno=i + 1))
+            content = fh.read()
+        if not self.may_match(payload, content, config):
+            return errors
+        for i, line in enumerate(io.StringIO(content)):
+            if self.condition(payload, line, config):
+                errors.append(result.from_config(config, path=path, lineno=i + 1))
 
         return errors
 
 
 class StringType(LineType):
     """Linter type that checks whether a substring is found."""
+
+    def may_match(self, payload, content, config):
+        return payload in content
 
     def condition(self, payload, line, config):
         return payload in line
@@ -140,12 +150,19 @@ class StringType(LineType):
 class RegexType(LineType):
     """Linter type that checks whether a regex match is found."""
 
-    def condition(self, payload, line, config):
+    def _flags(self, config):
         flags = 0
         if config.get("ignore-case"):
             flags |= re.IGNORECASE
+        return flags
 
-        return re.search(payload, line, flags)
+    def may_match(self, payload, content, config):
+        if re.search(r"\\[AZz]|\(\?<", payload):
+            return True
+        return re.search(payload, content, self._flags(config) | re.MULTILINE)
+
+    def condition(self, payload, line, config):
+        return re.search(payload, line, self._flags(config))
 
 
 class ExternalType(BaseType):

@@ -9,6 +9,7 @@ import mozunit
 import pytest
 
 from mozlint.result import Issue, ResultSummary
+from mozlint.types import RegexType, StringType
 
 
 @pytest.fixture
@@ -97,6 +98,21 @@ def test_global_directory_without_extensions(lint, lintdir, filedir, path):
     assert path("foobar.js") in result.issues
     assert path("foobar.py") in result.issues
     assert path("no_foobar.js") not in result.issues
+
+
+@pytest.mark.parametrize(
+    "linter_type,payload,content,expected",
+    [
+        (StringType, "foobar", "a\nb\n", False),
+        (StringType, "foobar", "a\nfoobar\n", True),
+        (RegexType, "^b$", "a\nb\n", True),
+        (RegexType, "^c", "a\nb\n", False),
+        (RegexType, r"\Ab", "a\nb\n", True),
+        (RegexType, r"(?<!a)b", "a\nb\n", True),
+    ],
+)
+def test_line_type_may_match(linter_type, payload, content, expected):
+    assert bool(linter_type().may_match(payload, content, {})) == expected
 
 
 if __name__ == "__main__":
