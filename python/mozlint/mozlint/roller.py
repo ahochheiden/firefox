@@ -356,7 +356,11 @@ class LintRoller:
 
         # Lint the whole tree when a `support-file` is modified.
         return any(
-            os.path.isfile(p) and mozpath.match(p, pattern)
+            os.path.isfile(p)
+            and (
+                mozpath.match(p, pattern)
+                or mozpath.match(mozpath.relpath(p, self.root), pattern)
+            )
             for pattern in linter.get("support-files", [])
             for p in vcs_paths
         )
