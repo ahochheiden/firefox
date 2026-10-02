@@ -408,8 +408,10 @@ class LintRoller:
                     lpaths = lpaths[chunk_size:]
                 continue
 
-            if linter.get("split-dirs") or linter["type"] in ("string", "regex"):
-                lpaths = _split_dirs(lpaths, linter.get("find-dotfiles", False))
+            split_dirs = linter.get("split-dirs")
+            if split_dirs or linter["type"] in ("string", "regex"):
+                depth = split_dirs if type(split_dirs) is int else 2
+                lpaths = _split_dirs(lpaths, linter.get("find-dotfiles", False), depth)
 
             num_jobs = max(
                 min(num_procs, len(lpaths)),
