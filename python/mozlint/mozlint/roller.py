@@ -115,6 +115,21 @@ def _run_worker(config, paths, **lintargs):
     return result
 
 
+def _split_dirs(paths, find_dotfiles, depth=2):
+    split = []
+    for path in sorted(paths):
+        if not os.path.isdir(path) or os.path.basename(path).startswith("."):
+            split.append(path)
+            continue
+        for name in sorted(os.listdir(path)):
+            if name.startswith(".") and not find_dotfiles:
+                continue
+            split.append(os.path.join(path, name))
+    if depth > 1:
+        return _split_dirs(split, find_dotfiles, depth - 1)
+    return split
+
+
 def _ancestors(path):
     parent = os.path.dirname(path)
     while parent != path:
@@ -381,19 +396,27 @@ class LintRoller:
                 if not lpaths:
                     continue
 
-            chunk_size = (
-                min(self.MAX_PATHS_PER_JOB, int(ceil(len(lpaths) / num_procs))) or 1
-            )
             if linter["type"] == "global":
                 # Global linters lint the entire tree in one job.
-                chunk_size = len(lpaths) or 1
-            elif not linter.get("chunk-paths", True):
-                chunk_size = self.MAX_PATHS_PER_JOB
-            assert chunk_size > 0
+                yield linter, lpaths
+                continue
 
-            while lpaths:
-                yield linter, lpaths[:chunk_size]
-                lpaths = lpaths[chunk_size:]
+            if not linter.get("chunk-paths", True):
+                chunk_size = self.MAX_PATHS_PER_JOB
+                while lpaths:
+                    yield linter, lpaths[:chunk_size]
+                    lpaths = lpaths[chunk_size:]
+                continue
+
+            if linter.get("split-dirs") or linter["type"] in ("string", "regex"):
+                lpaths = _split_dirs(lpaths, linter.get("find-dotfiles", False))
+
+            num_jobs = max(
+                min(num_procs, len(lpaths)),
+                int(ceil(len(lpaths) / self.MAX_PATHS_PER_JOB)),
+            )
+            for i in range(num_jobs):
+                yield linter, lpaths[i::num_jobs]
 
     def _collect_results(self, future):
         if future.cancelled():

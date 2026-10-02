@@ -79,6 +79,9 @@ Each `.yml` file must have at least one linter defined in it. Here are the suppo
 - find-dotfiles - If set to `true`, run on dot files (.\*) (optional)
 - chunk-paths - If set to `false`, do not split the paths across one job per CPU. Use this for
   linters that already lint their paths in parallel (optional)
+- split-dirs - If set to `true`, split each directory into the entries two levels below it
+  before dividing the paths into jobs, skipping dot files unless `find-dotfiles` is set. Use
+  this for linters that lint a directory the same way as each of its entries (optional)
 - ignore-case - If set to `true` and `type` is regex, ignore the case (optional)
 
 Note that a linter may not have both `extensions` and `exclude_extensions` specified at the

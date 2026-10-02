@@ -15,7 +15,7 @@ import pytest
 
 from mozlint.errors import LintersNotConfigured, NoValidLinter
 from mozlint.result import Issue, ResultSummary
-from mozlint.roller import LintRoller, _group_jobs
+from mozlint.roller import LintRoller, _group_jobs, _split_dirs
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -432,6 +432,36 @@ def test_support_files(lint, linters, filedir, monkeypatch, files):
         "`--fix` with `--rev` on a `support-files` change should "
         "avoid linting the entire root."
     )
+
+
+@pytest.mark.parametrize(
+    "find_dotfiles,expected",
+    [
+        (False, ["a.js", "sub/b.js", "sub/deep"]),
+        (True, [".hidden", "a.js", "sub/.d.js", "sub/b.js", "sub/deep"]),
+    ],
+)
+def test_split_dirs(tmp_path, find_dotfiles, expected):
+    for path in (".hidden/x.js", "a.js", "sub/.d.js", "sub/b.js", "sub/deep/c.js"):
+        (tmp_path / "top" / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "top" / path).write_text("")
+    top = tmp_path / "top"
+    split = _split_dirs([str(top)], find_dotfiles, depth=2)
+    assert [os.path.relpath(p, top) for p in split] == [
+        os.path.normpath(p) for p in expected
+    ]
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="monkeypatch issues with multiprocessing on Windows",
+)
+def test_split_dirs_jobs(monkeypatch, lint, linters, filedir):
+    monkeypatch.setattr(sys.modules[lint.__module__], "_run_worker", fake_run_worker)
+
+    lint.read(linters("string"))
+    num_jobs = len(lint.roll(filedir, num_procs=16).issues["count"])
+    assert num_jobs == len(os.listdir(filedir))
 
 
 def test_group_jobs(filedir):
