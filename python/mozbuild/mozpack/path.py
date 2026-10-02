@@ -179,8 +179,26 @@ def matcher(patterns):
         return lambda path: False
     if not all(patterns):
         return lambda path: True
-    regex = re.compile("|".join(f"(?:{_pattern_re(p).pattern})" for p in patterns))
-    return lambda path: regex.match(path) is not None
+    literals = {p for p in patterns if "*" not in p}
+    globs = [p for p in patterns if "*" in p]
+    regex = (
+        re.compile("|".join(f"(?:{_pattern_re(p).pattern})" for p in globs))
+        if globs
+        else None
+    )
+
+    def matches(path):
+        if literals:
+            end = path.find("/")
+            while end != -1:
+                if path[:end] in literals:
+                    return True
+                end = path.find("/", end + 1)
+            if path in literals:
+                return True
+        return regex is not None and regex.match(path) is not None
+
+    return matches
 
 
 def rebase(oldbase, base, relativepath):

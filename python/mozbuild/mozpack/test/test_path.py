@@ -139,6 +139,30 @@ class TestPath(unittest.TestCase):
         self.assertFalse(m("foo/qux"))
         self.assertFalse(m("node_modules_foo"))
 
+        patterns = ["foo/bar", "baz/", "/abs", "qux", "a/**/b", "c*"]
+        m = matcher(patterns)
+        for path in (
+            "foo",
+            "foo/bar",
+            "foo/bar/x",
+            "foo/barx",
+            "baz",
+            "baz/",
+            "baz/x",
+            "baz//x",
+            "/abs",
+            "/abs/x",
+            "abs",
+            "qux",
+            "x/qux",
+            "a/b",
+            "a/x/b/y",
+            "cat/x",
+            "x/cat",
+            "",
+        ):
+            self.assertEqual(m(path), any(match(path, p) for p in patterns), repr(path))
+
     def test_rebase(self):
         self.assertEqual(rebase("foo", "foo/bar", "bar/baz"), "baz")
         self.assertEqual(rebase("foo", "foo", "bar/baz"), "bar/baz")
