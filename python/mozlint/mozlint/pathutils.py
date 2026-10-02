@@ -396,13 +396,16 @@ def expand_exclusions(paths, config, root):
             return path
         return mozpath.join(root, path)
 
+    global_exclude = config.get("global_exclude", [])
     exclude = list(map(normalize, config.get("exclude", [])))
+    exclude += [normalize(e) for e in global_exclude if not e.startswith("**/")]
     # We need excluded extensions in both the ignore for the FileFinder and in
     # the exclusion set. If we don't put it in the exclusion set, we would
     # return files that are passed explicitly and whose extensions are in the
     # exclusion set. If we don't put it in the ignore set, the FileFinder
     # would return files in (sub)directories passed to us.
     base_ignore = [f"**/*.{ext}" for ext in exclude_extensions]
+    base_ignore += [e for e in global_exclude if e.startswith("**/")]
     exclude += base_ignore
     for path in paths:
         path = mozpath.normsep(path)

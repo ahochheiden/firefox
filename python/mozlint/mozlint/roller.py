@@ -250,6 +250,7 @@ class LintRoller:
         for linter in chain(*[self.parse(p) for p in paths]):
             # Add only the excludes present in paths
             linter["local_exclude"] = linter.get("exclude", [])[:]
+            linter["global_exclude"] = self.exclude[:]
             # Add in our global excludes
             exclude = linter.setdefault("exclude", [])
             exclude.extend(self.exclude)
