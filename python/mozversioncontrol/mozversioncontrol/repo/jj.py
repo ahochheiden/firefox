@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import string
@@ -31,6 +32,17 @@ from mozversioncontrol.repo.base import Repository
 from mozversioncontrol.repo.git import GitRepository
 
 
+@functools.cache
+def _git_root(jj: str, path: str) -> str:
+    return subprocess.run(
+        (jj, "--quiet", "git", "root"),
+        cwd=path,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
 class JjVersionError(Exception):
     """Raised when the installed jj version is too old."""
 
@@ -50,7 +62,7 @@ class JujutsuRepository(Repository):
         self._git = GitRepository(path, git=git)
 
         try:
-            git_dir = self._run("git", "root", stderr=subprocess.PIPE)
+            git_dir = _git_root(str(self._tool), self.path)
         except subprocess.CalledProcessError as e:
             stderr = e.stderr or ""
             if "working copy is stale" in stderr.lower():
