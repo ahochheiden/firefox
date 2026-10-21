@@ -1,0 +1,10 @@
+ac_add_options --enable-project=mobile/ios/appservices
+ac_add_options --target=aarch64-apple-ios
+ac_add_options --enable-ios-target=15.0
+ac_add_options --disable-tests
+ac_add_options --disable-debug-symbols
+
+export MOZ_AUTOMATION_PACKAGE_GENERATED_SOURCES=0
+
+. "$topsrcdir/build/mozconfig.cache"
+. "$topsrcdir/build/mozconfig.automation"

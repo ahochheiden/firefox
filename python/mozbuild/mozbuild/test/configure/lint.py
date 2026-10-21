@@ -20,6 +20,7 @@ PROJECTS = (
     "js",
     "memory",
     "mobile/android",
+    "mobile/ios/appservices",
 )
 
 ALLOWED_UNREFERENCED_CONFIGS = (

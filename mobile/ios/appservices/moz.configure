@@ -1,0 +1,22 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+
+fold_libs = dependable(True)
+
+set_config("MOZ_FOLD_LIBS", fold_libs)
+set_config("MOZ_NSS_STATIC", True)
+
+
+include(
+    "../../../build/moz.configure/rust.configure", when="--enable-compile-environment"
+)
+include(
+    "../../../build/moz.configure/nspr.configure", when="--enable-compile-environment"
+)
+include(
+    "../../../build/moz.configure/bindgen.configure",
+    when="--enable-compile-environment",
+)
+include("../../../build/moz.configure/nss.configure")

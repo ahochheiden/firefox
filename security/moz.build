@@ -5,11 +5,6 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "Security: PSM")
 
-DIRS += [
-    "/security/lockstore",
-    "/security/mls",
-]
-
 with Files("generate*.py"):
     BUG_COMPONENT = ("Firefox Build System", "General")
 

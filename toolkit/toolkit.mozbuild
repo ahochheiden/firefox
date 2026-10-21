@@ -23,6 +23,8 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
     DIRS += [
         "/config/external",
         "/security",
+        "/security/lockstore",
+        "/security/mls",
     ]
 
 if not CONFIG["MOZ_OVERRIDE_GKRUST"]:
