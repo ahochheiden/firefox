@@ -8,3 +8,6 @@ DIRS += [
     "/third_party/application-services/megazords/ios-rust",
     "/third_party/application-services/megazords/ios-rust/focus",
 ]
+
+if not CONFIG["IPHONEOS_IS_SIMULATOR"]:
+    DIRS += ["/third_party/application-services/tools/uniffi-bindgen-library-mode"]
