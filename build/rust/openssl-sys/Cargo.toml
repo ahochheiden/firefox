@@ -1,0 +1,8 @@
+[package]
+name = "openssl-sys"
+version = "0.9.999"
+edition = "2018"
+license = "MPL-2.0"
+
+[lib]
+path = "lib.rs"

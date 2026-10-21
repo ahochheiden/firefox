@@ -64,6 +64,8 @@ members = [
   "third_party/application-services/components/webext-storage",
   "third_party/application-services/components/webext-storage/ffi",
   "third_party/application-services/megazords/full",
+  "third_party/application-services/megazords/ios-rust",
+  "third_party/application-services/megazords/ios-rust/focus",
   "toolkit/components/uniffi-bindgen-gecko-js",
   "toolkit/crashreporter/android/export",
   "toolkit/crashreporter/client/app",
@@ -148,8 +150,6 @@ exclude = [
   "third_party/application-services/megazords/full",
   # Temporarily in excludes until everyone is on the same `ohttp`/`bhttp` version
   "third_party/application-services/components/as-ohttp-client",
-  # Excluded because of the `viaduct-reqwest` dependency
-  "third_party/application-services/megazords/ios-rust",
 ]
 
 # Use the new dependency resolver to reduce some of the platform-specific dependencies.
@@ -252,6 +252,12 @@ redox_syscall = { path = "build/rust/redox_syscall" }
 # Patch hermit-abi to an empty crate
 hermit-abi = { path = "build/rust/hermit-abi" }
 
+base64_23 = { package = "base64", path = "build/rust/base64-0.23" }
+openssl = { path = "build/rust/openssl" }
+openssl-probe = { path = "build/rust/openssl-probe" }
+openssl-sys = { path = "build/rust/openssl-sys" }
+schannel = { path = "build/rust/schannel" }
+
 # mls-rs pulls these in unconditionally (or for non-Gecko targets), but their
 # code paths are gated on `cfg(not(feature = "std"))` or
 # `cfg(not(target_has_atomic = "ptr"))`, neither of which Gecko ever hits.
@@ -336,6 +342,7 @@ toml_0_9 = { package = "toml", path = "build/rust/toml" }
 # https://github.com/rust-lang/cargo/issues/6179
 js-sys = { path = "build/rust/dummy-web/js-sys" }
 wasm-bindgen = { path = "build/rust/dummy-web/wasm-bindgen" }
+wasm-bindgen-futures = { path = "build/rust/dummy-web/wasm-bindgen-futures" }
 web-sys = { path = "build/rust/dummy-web/web-sys" }
 
 

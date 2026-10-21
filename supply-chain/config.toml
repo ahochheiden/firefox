@@ -43,6 +43,10 @@ notes = "This is the upstream code plus a few local fixes, see bug 1685697."
 audit-as-crates-io = false
 notes = "Backwards-compatible patching crate for base64 0.21."
 
+[policy."base64:0.23.999"]
+audit-as-crates-io = false
+notes = "Patching crate that forwards base64 0.23 to 0.22."
+
 [policy."bindgen:0.72.999"]
 audit-as-crates-io = false
 notes = "Backwards-compatible patching crate for bindgen 0.72."
