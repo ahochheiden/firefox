@@ -24,7 +24,26 @@ if CONFIG["MOZ_SYSTEM_NSS"]:
     OS_LIBS += CONFIG["NSS_LIBS"]
 
 include("/build/gyp_base.mozbuild")
-if CONFIG["MOZ_FOLD_LIBS"]:
+if CONFIG["MOZ_NSS_STATIC"]:
+    Library("nss_rustlib")
+    BUILD_STATIC_LIB_ARCHIVE = True
+    DIST_INSTALL = True
+
+    nss_static_libs = [
+        "certdb",
+        "certhi",
+        "cryptohi",
+        "mozpkix",
+        "nss_static",
+        "nssb",
+        "nssdev",
+        "nsspki",
+        "nssutil",
+        "pk11wrap_static",
+    ]
+    USE_LIBS += nss_static_libs
+    USE_LIBS += ["nspr4", "plc4", "plds4"]
+elif CONFIG["MOZ_FOLD_LIBS"]:
     GeckoSharedLibrary("nss")
     # TODO: The library name can be changed when bug 845217 is fixed.
     SHARED_LIBRARY_NAME = "nss3"
@@ -103,7 +122,7 @@ gyp_vars["zlib_libs"] = "-lz"
 gyp_vars["ssl_enable_zlib"] = 0
 # System sqlite here is the in-tree mozsqlite.
 gyp_vars["use_system_sqlite"] = 1
-gyp_vars["sqlite_libs"] = "sqlite"
+gyp_vars["sqlite_libs"] = "" if CONFIG["MOZ_NSS_STATIC"] else "sqlite"
 gyp_vars["enable_draft_hpke"] = 1
 # This makes a block in security/nss/coreconf/config.gypi happy, but it
 # doesn't actually matter because it's for xcode settings, which the
@@ -146,7 +165,10 @@ if CONFIG["GCC_USE_GNU_LD"]:
 GYP_DIRS += ["nss"]
 GYP_DIRS["nss"].input = "nss/nss.gyp"
 GYP_DIRS["nss"].variables = gyp_vars
-GYP_DIRS["nss"].install_static_libs = ["mozpkix"]
+if CONFIG["MOZ_NSS_STATIC"]:
+    GYP_DIRS["nss"].root_targets = nss_static_libs
+else:
+    GYP_DIRS["nss"].install_static_libs = ["mozpkix"]
 
 sandbox_vars = {
     # NSS explicitly exports its public symbols

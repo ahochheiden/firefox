@@ -65,13 +65,23 @@ pub fn link_nss() {
 }
 
 /// Like `link_nss`, plus static linkage of `mozpkix` and `pure_virtual`.
+/// With `MOZ_NSS_STATIC`, links the static `nss_rustlib` archive instead,
+/// which holds NSS, NSPR and `mozpkix`.
 /// Use from crates that produce a self-contained Rust artifact (megazord
 /// cdylib, rusttests). Not safe inside libxul's dependency graph: libxul
 /// already links mozpkix itself.
 pub fn link_nss_rustlib() {
-    link_nss();
     let dist_lib = TOPOBJDIR.join("dist").join("lib");
     println!("cargo:rustc-link-search=native={}", dist_lib.display());
+    if config::MOZ_NSS_STATIC {
+        println!("cargo:rustc-link-lib=static=nss_rustlib");
+        println!(
+            "cargo:rerun-if-changed={}",
+            dist_lib.join("libnss_rustlib.a").display()
+        );
+        return;
+    }
+    link_nss();
     println!("cargo:rustc-link-lib=static=mozpkix");
     println!("cargo:rustc-link-lib=static=pure_virtual");
 }

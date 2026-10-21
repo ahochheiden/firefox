@@ -134,6 +134,7 @@ def generate(output):
 
     # Write out some useful booleans from the buildconfig.
     output.write(generate_bool("MOZ_FOLD_LIBS"))
+    output.write(generate_bool("MOZ_NSS_STATIC"))
     output.write(generate_bool("MOZ_GLUE_IN_PROGRAM"))
     output.write(generate_bool("NIGHTLY_BUILD"))
     output.write(generate_bool("RELEASE_OR_BETA"))
