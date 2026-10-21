@@ -5,4 +5,6 @@
 DIRS += [
     "/config/external/nspr",
     "/security",
+    "/third_party/application-services/megazords/ios-rust",
+    "/third_party/application-services/megazords/ios-rust/focus",
 ]
