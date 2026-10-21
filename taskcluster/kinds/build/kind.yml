@@ -25,6 +25,7 @@ tasks-from:
     - android-asan.yml
     - android-stuff.yml
     - ios.yml
+    - ios-appservices.yml
     - linux.yml
     - linux-base-toolchains.yml
     - macosx.yml
