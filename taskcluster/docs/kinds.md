@@ -34,6 +34,11 @@ If you want to run this task locally, you need to specify these environment vari
 - each of MOZ_ANDROID_FAT_AAR_ARM64_V8A, MOZ_ANDROID_FAT_AAR_ARMEABI_V7A,
   and MOZ_ANDROID_FAT_AAR_X86_64 must be a path relative to MOZ_FETCHES_DIR.
 
+## xcframework-appservices
+
+Combine the application-services iOS device and simulator archives into
+XCFrameworks.
+
 ## build-signing
 
 Many builds must be signed. The build-signing task takes the unsigned `build`

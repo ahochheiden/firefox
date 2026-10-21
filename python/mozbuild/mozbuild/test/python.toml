@@ -15,6 +15,8 @@ subsuite = "mozbuild"
 
 ["action/test_langpack_manifest.py"]
 
+["action/test_make_appservices_xcframework.py"]
+
 ["action/test_l10n_repackage.py"]
 
 ["action/test_nsis_build.py"]

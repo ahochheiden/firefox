@@ -1,0 +1,59 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+---
+loader: taskgraph.loader.transform:loader
+
+kind-dependencies:
+    - build
+
+transforms:
+    - gecko_taskgraph.transforms.job:transforms
+    - gecko_taskgraph.transforms.task:transforms
+
+tasks:
+    opt:
+        description: "ios application-services XCFramework"
+        run-on-projects: []
+        index:
+            product: firefox
+            job-name: ios-appservices-xcframework-opt
+        treeherder:
+            platform: ios/opt
+            symbol: xcf-as
+            kind: build
+            tier: 3
+        worker-type: b-linux-medium
+        worker:
+            docker-image: {in-tree: "lint"}
+            max-run-time: 600
+            artifacts:
+                - name: public/build
+                  path: /builds/worker/artifacts/
+                  type: directory
+        run:
+            using: mach
+            mach: >-
+                python -m mozbuild.action.make_appservices_xcframework
+                --device $MOZ_FETCHES_DIR/ios
+                --simulator $MOZ_FETCHES_DIR/ios-sim
+                --output-dir /builds/worker/artifacts
+            sparse-profile: mach
+        dependencies:
+            ios-appservices-opt: build-ios-appservices/opt
+            ios-sim-appservices-opt: build-ios-sim-appservices/opt
+        fetches:
+            ios-appservices-opt:
+                - artifact: FocusRustComponents.zip
+                  extract: false
+                  dest: ios
+                - artifact: MozillaRustComponents.zip
+                  extract: false
+                  dest: ios
+            ios-sim-appservices-opt:
+                - artifact: FocusRustComponents.zip
+                  extract: false
+                  dest: ios-sim
+                - artifact: MozillaRustComponents.zip
+                  extract: false
+                  dest: ios-sim
