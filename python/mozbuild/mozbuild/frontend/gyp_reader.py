@@ -131,12 +131,14 @@ def process_gyp_result(
     no_chromium = gyp_dir_attrs.no_chromium
     no_unified = gyp_dir_attrs.no_unified
 
-    # Process all targets from the given gyp files and its dependencies.
-    # The path given to AllTargets needs to use os.sep, while the frontend code
-    # gives us paths normalized with forward slash separator.
-    for target in sorted(
-        gyp.common.AllTargets(flat_list, targets, path.replace("/", os.sep))
-    ):
+    if gyp_dir_attrs.root_targets:
+        selected = flat_list
+    else:
+        # Process all targets from the given gyp files and its dependencies.
+        # The path given to AllTargets needs to use os.sep, while the frontend code
+        # gives us paths normalized with forward slash separator.
+        selected = gyp.common.AllTargets(flat_list, targets, path.replace("/", os.sep))
+    for target in sorted(selected):
         build_file, target_name, toolset = gyp.common.ParseQualifiedTarget(target)
 
         # Each target is given its own objdir. The base of that objdir
@@ -460,7 +462,7 @@ class GypProcessor:
             "parallel": False,
             "generator_flags": {},
             "build_files": [path],
-            "root_targets": None,
+            "root_targets": gyp_dir_attrs.root_targets,
         }
 
         if gyp_dir_attrs.no_chromium:

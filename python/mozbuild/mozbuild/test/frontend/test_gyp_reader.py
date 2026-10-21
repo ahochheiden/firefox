@@ -11,6 +11,7 @@ from unittest import mock
 import mozpack.path as mozpath
 from mozunit import main
 
+from mozbuild.frontend.context import VARIABLES
 from mozbuild.frontend.gyp_reader import GypProcessor
 from mozbuild.frontend.reader import BuildReader
 from mozbuild.test.common import MockConfig
@@ -32,7 +33,7 @@ class TestGypProcessor(unittest.TestCase):
                 "CC_BASE_FLAGS": ["-fno-foo"],
             },
         )
-        gyp_dir_attrs = SimpleNamespace(no_chromium=True, variables={})
+        gyp_dir_attrs = SimpleNamespace(no_chromium=True, variables={}, root_targets=[])
         path = mozpath.join(config.topsrcdir, "test.gyp")
         with BuildReader(config)._gyp_worker_pool as executor:
             processor = GypProcessor(
@@ -57,6 +58,31 @@ class TestGypProcessor(unittest.TestCase):
                 "TEST_CFLAGS=-fno-foo",
             ],
         )
+
+
+class TestGypRootTargets(unittest.TestCase):
+    def processed_libraries(self, root_targets):
+        config = MockConfig(
+            mozpath.join(data_path, "gyp-root-targets"),
+            extra_substs={"CC_TYPE": "clang", "OS_TARGET": "Linux"},
+        )
+        gyp_dirs = VARIABLES["GYP_DIRS"][0]()
+        gyp_dirs += ["out"]
+        gyp_dir_attrs = gyp_dirs["out"]
+        gyp_dir_attrs.no_chromium = True
+        gyp_dir_attrs.root_targets = root_targets
+        path = mozpath.join(config.topsrcdir, "test.gyp")
+        with BuildReader(config)._gyp_worker_pool as executor:
+            processor = GypProcessor(
+                config, gyp_dir_attrs, path, "out", executor, {}, []
+            )
+            return sorted(context["LIBRARY_NAME"] for context in processor.results)
+
+    def test_gyp_root_targets_unset(self):
+        self.assertEqual(self.processed_libraries([]), ["a", "b", "c"])
+
+    def test_gyp_root_targets(self):
+        self.assertEqual(self.processed_libraries(["a", "d"]), ["a", "b", "d"])
 
 
 if __name__ == "__main__":
