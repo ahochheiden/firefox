@@ -8742,6 +8742,7 @@ dependencies = [
  "camino",
  "cargo_metadata",
  "clap",
+ "mozilla-central-workspace-hack",
  "uniffi",
  "uniffi_bindgen",
 ]
