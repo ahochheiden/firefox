@@ -9160,16 +9160,16 @@ start = "2019-03-01"
 end = "2027-05-01"
 
 [[trusted.http-body]]
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-01"
-end = "2027-05-01"
+end = "2027-11-01"
 
 [[trusted.http-body-util]]
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-01"
-end = "2027-05-01"
+end = "2027-11-01"
 
 [[trusted.httparse]]
 criteria = "safe-to-deploy"
@@ -9178,16 +9178,22 @@ start = "2019-07-03"
 end = "2027-05-01"
 
 [[trusted.hyper]]
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-01"
-end = "2027-05-01"
+end = "2027-11-01"
+
+[[trusted.hyper-tls]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-19"
+end = "2027-11-01"
 
 [[trusted.hyper-util]]
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-01"
-end = "2027-05-01"
+end = "2027-11-01"
 
 [[trusted.indexmap]]
 criteria = "safe-to-deploy"
@@ -9411,11 +9417,23 @@ user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-03-30"
 end = "2024-05-03"
 
+[[trusted.reqwest]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-04"
+end = "2027-11-01"
+
 [[trusted.rustix]]
 criteria = "safe-to-deploy"
 user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-10-29"
 end = "2027-04-07"
+
+[[trusted.rustls-pki-types]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2023-08-31"
+end = "2027-11-01"
 
 [[trusted.ryu]]
 criteria = "safe-to-deploy"
@@ -9520,10 +9538,10 @@ start = "2020-06-16"
 end = "2024-04-25"
 
 [[trusted.tokio]]
-criteria = "safe-to-run"
+criteria = "safe-to-deploy"
 user-id = 6741 # Alice Ryhl (Darksonn)
 start = "2020-12-25"
-end = "2027-07-30"
+end = "2027-11-01"
 
 [[trusted.tokio-macros]]
 criteria = "safe-to-deploy"
@@ -9566,6 +9584,24 @@ criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
 start = "2025-07-08"
 end = "2026-11-12"
+
+[[trusted.tower]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2024-09-09"
+end = "2027-11-01"
+
+[[trusted.tower-http]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2024-09-23"
+end = "2027-11-01"
+
+[[trusted.tower-layer]]
+criteria = "safe-to-deploy"
+user-id = 10 # Carl Lerche (carllerche)
+start = "2019-04-27"
+end = "2027-11-01"
 
 [[trusted.typeid]]
 criteria = "safe-to-deploy"

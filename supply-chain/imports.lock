@@ -364,6 +364,13 @@ user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
 
+[[publisher.hyper-tls]]
+version = "0.6.0"
+when = "2023-11-27"
+user-id = 359
+user-login = "seanmonstar"
+user-name = "Sean McArthur"
+
 [[publisher.hyper-util]]
 version = "0.1.20"
 when = "2026-02-02"
@@ -639,6 +646,13 @@ user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
+[[publisher.reqwest]]
+version = "0.13.5"
+when = "2026-09-08"
+user-id = 359
+user-login = "seanmonstar"
+user-name = "Sean McArthur"
+
 [[publisher.rust_cascade]]
 version = "1.5.0"
 when = "2023-04-05"
@@ -652,6 +666,13 @@ when = "2026-02-22"
 user-id = 6825
 user-login = "sunfishcode"
 user-name = "Dan Gohman"
+
+[[publisher.rustls-pki-types]]
+version = "1.15.1"
+when = "2026-07-23"
+user-id = 4556
+user-login = "djc"
+user-name = "Dirkjan Ochtman"
 
 [[publisher.ryu]]
 version = "1.0.12"
@@ -792,6 +813,27 @@ when = "2026-07-14"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
+
+[[publisher.tower]]
+version = "0.5.3"
+when = "2026-01-12"
+user-id = 359
+user-login = "seanmonstar"
+user-name = "Sean McArthur"
+
+[[publisher.tower-http]]
+version = "0.6.11"
+when = "2026-05-18"
+user-id = 359
+user-login = "seanmonstar"
+user-name = "Sean McArthur"
+
+[[publisher.tower-layer]]
+version = "0.1.0"
+when = "2019-04-27"
+user-id = 10
+user-login = "carllerche"
+user-name = "Carl Lerche"
 
 [[publisher.typeid]]
 version = "1.0.3"
@@ -1670,6 +1712,12 @@ who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
 delta = "3.5.0 -> 3.6.0"
 notes = "Dependency updates and new optimized trait implementations, but otherwise everything looks normal."
+
+[[audits.bytecode-alliance.audits.tokio-native-tls]]
+who = "Pat Hickey <phickey@fastly.com>"
+criteria = "safe-to-deploy"
+version = "0.3.1"
+notes = "unsafety is used for smuggling std::task::Context as a raw pointer. Lifetime and type safety appears to be taken care of correctly."
 
 [[audits.bytecode-alliance.audits.tracing-subscriber]]
 who = "Pat Hickey <phickey@fastly.com>"
@@ -3987,6 +4035,13 @@ criteria = "safe-to-deploy"
 version = "0.3.2"
 aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.sync_wrapper]]
+who = "Alex Franchuk <afranchuk@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "1.0.2"
+notes = "Simple crate, nothing out of the ordinary."
+aggregated-from = "https://raw.githubusercontent.com/mozilla/cargo-vet/main/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.termtree]]
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-run"
@@ -4010,6 +4065,12 @@ who = "Lars Eggert <lars@eggert.org>"
 criteria = "safe-to-deploy"
 delta = "0.1.2 -> 0.1.4"
 aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.tower-layer]]
+who = "Alex Franchuk <afranchuk@mozilla.com>"
+criteria = "safe-to-deploy"
+delta = "0.1.0 -> 0.3.3"
+aggregated-from = "https://raw.githubusercontent.com/mozilla/cargo-vet/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.xshell]]
 who = "Jan-Erik Rediger <jrediger@mozilla.com>"
